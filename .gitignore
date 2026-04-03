@@ -11,6 +11,14 @@ node_modules
 dist
 dist-ssr
 *.local
+src-tauri/target/
+src-tauri/binaries/
+sidecar/dist/
+sidecar/build/
+sidecar/*.spec
+sidecar/.venv*/
+
+OLD/
 
 # Editor directories and files
 .vscode/*

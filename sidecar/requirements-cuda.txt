@@ -1,0 +1,13 @@
+# WhisperX and its core deps
+whisperx
+faster-whisper
+ctranslate2
+
+# PyTorch with CUDA 12.1 support
+# For other CUDA versions see https://pytorch.org/get-started/locally/
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchaudio
+
+# Build tool
+pyinstaller>=6.0

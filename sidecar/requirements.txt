@@ -1,0 +1,13 @@
+# WhisperX and its core deps
+whisperx
+faster-whisper
+ctranslate2
+
+# PyTorch — CPU-only build keeps bundle smaller; users with CUDA get auto-upgraded
+# at runtime via whisperx's own dependency resolution.
+# For a CUDA build, replace with the appropriate torch+cuda index.
+torch
+torchaudio
+
+# Build tool
+pyinstaller>=6.0
