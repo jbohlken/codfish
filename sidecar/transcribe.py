@@ -111,6 +111,29 @@ def download_model_with_progress(model_id: str, percent_start: int, percent_end:
     progress(percent_end, f"Model downloaded.")
 
 
+def _check_has_audio(file_path: str):
+    """Raise a clear RuntimeError if the file has no audio stream."""
+    import subprocess
+    import imageio_ffmpeg
+    ffprobe_exe = str(Path(imageio_ffmpeg.get_ffmpeg_exe()).parent / "ffprobe")
+    try:
+        out = subprocess.check_output(
+            [ffprobe_exe, "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", file_path],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        if not out:
+            raise RuntimeError(
+                f"No audio stream found in \"{Path(file_path).name}\". "
+                "This file cannot be transcribed."
+            )
+    except FileNotFoundError:
+        # ffprobe not available — skip the check and let load_audio fail naturally
+        pass
+    except subprocess.CalledProcessError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True, help="Path to audio/video file")
@@ -140,6 +163,7 @@ def main():
 
         # ── 3. Load audio ──────────────────────────────────────────────────
         progress(30, "Loading audio…")
+        _check_has_audio(args.file)
         audio = whisperx.load_audio(args.file)
 
         # ── 4. Transcribe ──────────────────────────────────────────────────
@@ -203,7 +227,12 @@ def main():
         emit({"type": "result", "words": words})
 
     except Exception as e:
-        emit({"type": "error", "message": traceback.format_exc()})
+        msg = str(e)
+        # Surface a clear message for the most common user-facing errors
+        if "does not contain any stream" in msg or "No audio stream" in msg:
+            emit({"type": "error", "message": f"No audio stream found in \"{Path(args.file).name}\". This file cannot be transcribed."})
+        else:
+            emit({"type": "error", "message": traceback.format_exc()})
         sys.exit(1)
 
 
