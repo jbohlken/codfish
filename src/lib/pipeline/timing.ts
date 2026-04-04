@@ -58,7 +58,7 @@ export function enforceTiming(
         available = next.start - block.end;
       } else {
         // Pause — leave room for minimum gap
-        available = next.start - block.end - config.minGapSeconds;
+        available = next.start - block.end - config.minGapSeconds.value;
       }
 
       if (available > 0) {
@@ -88,7 +88,7 @@ export function enforceTiming(
     if (gapSeconds < 0) {
       // Overlap — pull current end back
       current.end = next.start;
-    } else if (gapSeconds > 0 && gapSeconds < config.minGapSeconds) {
+    } else if (gapSeconds > 0 && gapSeconds < config.minGapSeconds.value) {
       // Flicker zone — close to seamless
       current.end = next.start;
     }

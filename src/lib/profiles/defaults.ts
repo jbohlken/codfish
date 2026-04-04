@@ -15,7 +15,7 @@ export const DEFAULT_PROFILES: CaptionProfile[] = [
       extendToFill: true,
       extendToFillMax: 0.5,
       gapCloseThreshold: 0.5,
-      minGapSeconds: 0.4,
+      minGapSeconds: rule(0.4, true),
       defaultFps: 30.0,
     },
     formatting: {
@@ -41,7 +41,7 @@ export const DEFAULT_PROFILES: CaptionProfile[] = [
       extendToFill: true,
       extendToFillMax: 0.5,
       gapCloseThreshold: 0.5,
-      minGapSeconds: 0.4,
+      minGapSeconds: rule(0.4, true),
       defaultFps: 30.0,
     },
     formatting: {
@@ -67,7 +67,7 @@ export const DEFAULT_PROFILES: CaptionProfile[] = [
       extendToFill: true,
       extendToFillMax: 0.5,
       gapCloseThreshold: 0.5,
-      minGapSeconds: 0.2,
+      minGapSeconds: rule(0.2, true),
       defaultFps: 23.976,
     },
     formatting: {
@@ -93,7 +93,7 @@ export const DEFAULT_PROFILES: CaptionProfile[] = [
       extendToFill: true,
       extendToFillMax: 0.4,
       gapCloseThreshold: 0.4,
-      minGapSeconds: 0.4,
+      minGapSeconds: rule(0.4, true),
       defaultFps: 25.0,
     },
     formatting: {

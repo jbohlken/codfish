@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { XIcon as X } from "@phosphor-icons/react";
 
 export const errorModal = signal<string | null>(null);
 
@@ -19,7 +20,7 @@ export function ErrorModal() {
       <div class="error-modal" onClick={(e) => e.stopPropagation()}>
         <div class="error-modal-header">
           <span class="error-modal-title">Error</span>
-          <button class="btn btn-ghost btn-icon" onClick={() => { errorModal.value = null; }}>✕</button>
+          <button class="btn btn-ghost btn-icon" onClick={() => { errorModal.value = null; }}><X size={14} /></button>
         </div>
         <pre class="error-modal-body">{message}</pre>
         <div class="error-modal-footer">

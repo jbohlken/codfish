@@ -99,6 +99,7 @@ def main():
         "--workpath", str(SCRIPT_DIR / "build"),
         "--specpath", str(SCRIPT_DIR),
         # Collect all submodules and data files
+        "--collect-all", "imageio_ffmpeg",
         "--collect-all", "whisperx",
         "--collect-all", "faster_whisper",
         "--collect-all", "ctranslate2",

@@ -1,9 +1,13 @@
 import { useEffect } from "preact/hooks";
+import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FloppyDiskIcon as FloppyDisk, PencilSimpleIcon as PencilSimple } from "@phosphor-icons/react";
 import { signal } from "@preact/signals";
-import { project, selectedMediaId, pushHistory } from "../../store/app";
+import { project, selectedMediaId, pushHistory, isDirty } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
+  saveCurrentProject,
+  saveCurrentProjectAs,
+  savedFlash,
   importMedia,
   relinkMediaItem,
   fileExists,
@@ -47,6 +51,29 @@ export function ProjectPanel() {
     <div class="panel project-panel">
       <div class="panel-header">
         <span class="panel-header-title">Project</span>
+        <div style="display:flex;align-items:center;gap:2px">
+          <button class="btn btn-ghost btn-icon" data-tooltip="New project" onClick={newProjectGuarded}>
+            <FilePlus size={14} />
+          </button>
+          <button class="btn btn-ghost btn-icon" data-tooltip="Open project" onClick={openProjectGuarded}>
+            <FolderOpen size={14} />
+          </button>
+          {proj && (
+            <>
+              <button class="btn btn-ghost btn-icon" data-tooltip="Save As…" onClick={saveCurrentProjectAs}>
+                <PencilSimple size={14} />
+              </button>
+              <button
+                class={`btn btn-ghost btn-icon${savedFlash.value ? " btn-icon--active" : isDirty.value ? " btn-icon--dirty" : ""}`}
+                data-tooltip="Save (Ctrl+S)"
+                disabled={!isDirty.value && !savedFlash.value}
+                onClick={saveCurrentProject}
+              >
+                <FloppyDisk size={14} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div class="panel-body scrollable">
@@ -55,8 +82,8 @@ export function ProjectPanel() {
             <span class="empty-state-title">No project open</span>
             <span class="empty-state-body">Create or open a project to get started.</span>
             <div class="project-panel-actions">
-              <button class="btn btn-primary" onClick={newProjectGuarded}>New Project</button>
-              <button class="btn btn-secondary" onClick={openProjectGuarded}>Open…</button>
+              <button class="btn btn-primary btn-sm" onClick={newProjectGuarded}><FilePlus size={13} /> New Project</button>
+              <button class="btn btn-secondary btn-sm" onClick={openProjectGuarded}><FolderOpen size={13} /> Open…</button>
             </div>
           </div>
         ) : proj.media.length === 0 ? (
@@ -99,7 +126,7 @@ export function ProjectPanel() {
       {proj && (
         <div class="panel-footer">
           <button class="btn btn-ghost btn-full" onClick={importMedia}>
-            + Import Media
+            <Plus size={12} /> Import Media
           </button>
         </div>
       )}
@@ -115,7 +142,7 @@ function MediaRow({ item, selected, missing, onClick, onContextMenu }: {
   onContextMenu: (e: MouseEvent) => void;
 }) {
   const meta = missing
-    ? "⚠ File not found"
+    ? "File not found"
     : item.captions.length > 0
       ? `${item.captions.length} captions`
       : "No captions";
@@ -132,7 +159,7 @@ function MediaRow({ item, selected, missing, onClick, onContextMenu }: {
       <span class="media-row-info">
         <span class="media-row-name">{item.name}</span>
         <span class={`media-row-meta ${missing ? "media-row-meta--warning" : ""}`}>
-          {meta}
+          {missing && <WarningCircle size={11} />}{meta}
           {fpsLabel && !missing && (
             <span class="media-row-fps">{fpsLabel}</span>
           )}
@@ -142,7 +169,9 @@ function MediaRow({ item, selected, missing, onClick, onContextMenu }: {
   );
 }
 
-function getMediaIcon(path: string): string {
+function getMediaIcon(path: string) {
   const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
-  return ["mp4", "mov", "mkv", "avi", "webm"].includes(ext) ? "▶" : "♪";
+  return ["mp4", "mov", "mkv", "avi", "webm"].includes(ext)
+    ? <FilmSlate size={14} />
+    : <MusicNote size={14} />;
 }

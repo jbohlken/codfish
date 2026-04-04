@@ -25,8 +25,8 @@
   --color-success: #4ade80;
   --color-warning: #fbbf24;
 
-  --color-playing-bg: rgba(251, 191, 36, 0.08);
-  --color-playing-border: #d97706;
+  --color-playing-bg: rgba(96, 165, 250, 0.08);
+  --color-playing-border: #60a5fa;
 
   /* Timeline — slightly darker than app bg */
   --tl-bg: #141414;
@@ -73,8 +73,8 @@
   --color-success: #16a34a;
   --color-warning: #d97706;
 
-  --color-playing-bg: #fffbeb;
-  --color-playing-border: #f59e0b;
+  --color-playing-bg: #eff6ff;
+  --color-playing-border: #3b82f6;
 
   /* Timeline stays dark regardless of theme */
 

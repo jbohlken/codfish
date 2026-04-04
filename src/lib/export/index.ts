@@ -29,7 +29,7 @@ export async function listFormats(): Promise<ExportFormat[]> {
       "list_user_formats",
     );
     return meta.map((f) => ({
-      id: f.path,
+      id: f.name,
       name: f.name,
       extension: f.extension,
       scriptPath: f.path,

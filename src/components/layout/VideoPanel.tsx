@@ -1,4 +1,5 @@
 import { useRef, useEffect } from "preact/hooks";
+import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
@@ -90,7 +91,7 @@ export function VideoPanel() {
             />
             {isAudioOnly(media.path) && (
               <div class="audio-placeholder">
-                <span class="audio-placeholder-icon">♪</span>
+                <span class="audio-placeholder-icon"><MusicNote size={32} /></span>
                 <span class="audio-placeholder-name">{media.name}</span>
               </div>
             )}

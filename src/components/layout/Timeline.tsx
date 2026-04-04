@@ -1,4 +1,5 @@
 import { useRef, useEffect } from "preact/hooks";
+import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus } from "@phosphor-icons/react";
 import { useSignalEffect, signal } from "@preact/signals";
 import WaveSurfer from "wavesurfer.js";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -14,6 +15,8 @@ import {
 } from "../../store/app";
 import type { CaptionBlock } from "../../types/project";
 import { snapToFrame } from "../../lib/pipeline";
+import { validate } from "../../lib/pipeline/validate";
+import type { ValidationWarning } from "../../lib/pipeline/types";
 
 type TimecodeMode = "time" | "smpte" | "frames";
 const timecodeMode = signal<TimecodeMode>("time");
@@ -78,7 +81,7 @@ export function Timeline() {
       ws.destroy();
       wsRef.current = null;
     };
-  }, [media?.id]);
+  }, [media?.path]);
 
   // Sync zoomLevel → WaveSurfer pxPerSec, then re-sync its internal scroll
   useSignalEffect(() => {
@@ -105,7 +108,7 @@ export function Timeline() {
     if (!el) return;
     el.addEventListener("scroll", syncWsScroll, { passive: true });
     return () => el.removeEventListener("scroll", syncWsScroll);
-  }, [media?.id]);
+  }, [media?.path]);
 
   // Sync playbackTime → WaveSurfer visual cursor
   useSignalEffect(() => {
@@ -150,7 +153,7 @@ export function Timeline() {
 
       const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
       const oldZoom = zoomLevel.peek();
-      const newZoom = Math.max(1, Math.min(50, oldZoom * factor));
+      const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
       if (newZoom === oldZoom) return;
 
       // Zoom around cursor position
@@ -166,7 +169,7 @@ export function Timeline() {
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [media?.id]);
+  }, [media?.path]);
 
   // Mousedown on waveform → seek immediately, then drag to scrub
   const handleWaveMouseDown = (e: MouseEvent) => {
@@ -218,12 +221,23 @@ export function Timeline() {
 
   const zoom = zoomLevel.value;
 
+  const profile = activeProfile.value;
+  const warningsByIndex = new Map<number, ValidationWarning[]>();
+  if (media) {
+    const report = validate(media.captions, profile, media.fps ?? undefined);
+    for (const w of report.warnings) {
+      const arr = warningsByIndex.get(w.blockIndex) ?? [];
+      arr.push(w);
+      warningsByIndex.set(w.blockIndex, arr);
+    }
+  }
+
   // Zoom in/out keeping the playhead visually stationary.
   // If the playhead is off-screen, anchors to the center of the visible area instead.
   const zoomAroundPlayhead = (factor: number) => {
     const scroll = scrollRef.current;
     const oldZoom = zoomLevel.peek();
-    const newZoom = Math.max(1, Math.min(50, oldZoom * factor));
+    const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
     if (newZoom === oldZoom) return;
 
     if (!scroll || !duration) {
@@ -256,14 +270,14 @@ export function Timeline() {
         <button
           class="timeline-btn"
           onClick={() => { playbackTime.value = 0; }}
-          title="Go to start"
-        >⏮</button>
+          data-tooltip="Go to start"
+        ><SkipBack size={14} weight="fill" /></button>
         <button
           class="timeline-btn timeline-btn--play"
           onClick={() => { isPlaying.value = !playing; }}
-          title={playing ? "Pause" : "Play"}
+          data-tooltip={playing ? "Pause" : "Play"}
         >
-          {playing ? "⏸" : "▶"}
+          {playing ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
         </button>
         <span class="timeline-mode-label">
           {timecodeMode.value === "time" && "Time"}
@@ -277,7 +291,7 @@ export function Timeline() {
             const next = modes[(modes.indexOf(timecodeMode.value) + 1) % modes.length];
             timecodeMode.value = next;
           }}
-          title="Click to cycle timecode mode"
+          data-tooltip="Click to cycle timecode mode"
         >
           {formatTime(currentTime, timecodeMode.value, effectiveFps)}
           {duration > 0 ? ` / ${formatTime(duration, timecodeMode.value, effectiveFps)}` : ""}
@@ -285,7 +299,7 @@ export function Timeline() {
         {media && (
           <span
             class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}`}
-            title={fpsIsDetected ? "Detected from file" : `No framerate detected — using profile default (${profileDefaultFps} fps)`}
+            data-tooltip={fpsIsDetected ? "Detected from file" : `No framerate detected — using profile default (${profileDefaultFps} fps)`}
           >
             {effectiveFps} fps{fpsIsDetected ? "" : "*"}
           </span>
@@ -296,24 +310,24 @@ export function Timeline() {
           <button
             class="timeline-btn timeline-btn--sm"
             onClick={() => zoomAroundPlayhead(1 / 1.5)}
-            title="Zoom out (Ctrl+Scroll)"
+            data-tooltip="Zoom out (Ctrl+Scroll)"
             disabled={zoom <= 1}
-          >−</button>
+          ><Minus size={12} /></button>
           <button
             class="timeline-btn timeline-btn--zoom-label"
             onClick={() => {
               zoomLevel.value = 1;
               if (scrollRef.current) scrollRef.current.scrollLeft = 0;
             }}
-            title="Reset zoom to fit"
+            data-tooltip="Reset zoom to fit"
           >
-            {zoom > 1 ? `${zoom.toFixed(1)}×` : "Fit"}
+            {zoom > 1 ? `${zoom >= 10 ? Math.round(zoom) : zoom.toFixed(1)}×` : "Fit"}
           </button>
           <button
             class="timeline-btn timeline-btn--sm"
             onClick={() => zoomAroundPlayhead(1.5)}
-            title="Zoom in (Ctrl+Scroll)"
-          >+</button>
+            data-tooltip="Zoom in (Ctrl+Scroll)"
+          ><Plus size={12} /></button>
         </div>
       </div>
 
@@ -330,6 +344,17 @@ export function Timeline() {
               class="timeline-scroll-inner"
               style={{ width: zoom <= 1 ? "100%" : `${zoom * 100}%` }}
             >
+              {/* Ruler */}
+              {duration > 0 && (
+                <RulerRow
+                  duration={duration}
+                  zoom={zoom}
+                  visibleWidth={scrollRef.current?.clientWidth ?? 800}
+                  mode={timecodeMode.value}
+                  fps={effectiveFps}
+                />
+              )}
+
               {/* Waveform row — click to seek */}
               <div
                 class="timeline-waveform-row"
@@ -368,6 +393,7 @@ export function Timeline() {
                     blocksRowRef={blocksRowRef}
                     selected={selectedCaptionIndex.value === block.index}
                     playing={playingIndex === block.index}
+                    warnings={warningsByIndex.get(block.index) ?? []}
                     onResizeLive={handleResizeLive}
                     onResizeCommit={handleResizeCommit}
                     onClick={() => {
@@ -394,6 +420,7 @@ function ResizableCaptionBlock({
   blocksRowRef,
   selected,
   playing,
+  warnings,
   onResizeLive,
   onResizeCommit,
   onClick,
@@ -406,12 +433,20 @@ function ResizableCaptionBlock({
   blocksRowRef: { current: HTMLDivElement | null };
   selected: boolean;
   playing: boolean;
+  warnings: ValidationWarning[];
   onResizeLive: (index: number, start: number, end: number) => void;
   onResizeCommit: () => void;
   onClick: () => void;
 }) {
   const left = (block.start / duration) * 100;
   const width = ((block.end - block.start) / duration) * 100;
+
+  const hasStrict = warnings.some(w => w.strict);
+  const hasFuzzy = warnings.some(w => !w.strict);
+  const warnClass = [
+    hasStrict ? "timeline-block--warning-strict" : "",
+    hasFuzzy  ? "timeline-block--warning-fuzzy"  : "",
+  ].filter(Boolean).join(" ");
 
   const startEdgeDrag = (e: MouseEvent, edge: "left" | "right") => {
     e.stopPropagation();
@@ -452,20 +487,52 @@ function ResizableCaptionBlock({
 
   return (
     <div
-      class={`timeline-block${selected ? " timeline-block--selected" : ""}${playing ? " timeline-block--playing" : ""}`}
+      class={`timeline-block${selected ? " timeline-block--selected" : ""}${playing ? " timeline-block--playing" : ""}${warnClass ? ` ${warnClass}` : ""}`}
       style={{ left: `${left}%`, width: `${width}%` }}
       onClick={onClick}
-      title={block.lines.join(" ")}
     >
       <div
         class="timeline-block-handle timeline-block-handle--left"
         onMouseDown={(e) => startEdgeDrag(e, "left")}
       />
-      <span class="timeline-block-label">{block.lines[0]}</span>
+      <div class="timeline-block-label">
+        {block.lines.map((line, i) => <span key={i}>{line}</span>)}
+      </div>
       <div
         class="timeline-block-handle timeline-block-handle--right"
         onMouseDown={(e) => startEdgeDrag(e, "right")}
       />
+    </div>
+  );
+}
+
+function RulerRow({ duration, zoom, visibleWidth, mode, fps }: {
+  duration: number;
+  zoom: number;
+  visibleWidth: number;
+  mode: TimecodeMode;
+  fps: number;
+}) {
+  const pxPerSec = (visibleWidth * zoom) / duration;
+  const candidates = [1 / fps, 0.5, 1, 2, 5, 10, 30, 60, 300, 600];
+  const interval = candidates.find(i => i * pxPerSec >= 60) ?? 600;
+
+  const ticks: number[] = [];
+  for (let t = 0; t <= duration + interval * 0.01; t += interval) {
+    ticks.push(Math.min(t, duration));
+  }
+
+  return (
+    <div class="timeline-ruler-row">
+      {ticks.map(t => (
+        <div
+          key={t}
+          class="timeline-ruler-tick"
+          style={{ left: `${(t / duration) * 100}%` }}
+        >
+          <span class="timeline-ruler-label">{formatTime(t, mode, fps)}</span>
+        </div>
+      ))}
     </div>
   );
 }

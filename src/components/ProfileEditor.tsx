@@ -1,8 +1,10 @@
 import { signal } from "@preact/signals";
+import { XIcon as X, CaretRightIcon as CaretRight, CaretDownIcon as CaretDown } from "@phosphor-icons/react";
 import { profiles, activeProfile, project, pushHistory } from "../store/app";
 import type { CaptionProfile, ProfileRule } from "../types/profile";
 
 export const profileEditorOpen = signal(false);
+const advancedOpen = signal(false);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +32,6 @@ export function ProfileEditor() {
   const close = () => { profileEditorOpen.value = false; };
 
   const edit = (updater: (p: CaptionProfile) => void) => {
-    // Built-in profiles are read-only — fork a copy first
     let target: CaptionProfile;
     if (isBuiltIn) {
       target = makeUserCopy(profile);
@@ -108,7 +109,7 @@ export function ProfileEditor() {
               <span class="profile-editor-badge">Built-in · read-only (edits fork a copy)</span>
             )}
           </div>
-          <button class="btn btn-ghost btn-icon" onClick={close}>✕</button>
+          <button class="btn btn-ghost btn-icon" onClick={close}><X size={14} /></button>
         </div>
 
         <div class="profile-editor-body">
@@ -116,6 +117,7 @@ export function ProfileEditor() {
           <Section title="Formatting">
             <RuleRow
               label="Max chars / line"
+              desc="Maximum characters on a single line."
               value={f.maxCharsPerLine.value}
               strict={f.maxCharsPerLine.strict}
               min={20} max={100} step={1}
@@ -124,6 +126,7 @@ export function ProfileEditor() {
             />
             <PlainRow
               label="Max lines"
+              desc="Maximum number of lines per caption."
               value={f.maxLines}
               min={1} max={4} step={1}
               onChange={(v) => setPlain("formatting", "maxLines", v)}
@@ -131,6 +134,7 @@ export function ProfileEditor() {
             />
             <RuleRow
               label="Max CPS"
+              desc="Maximum reading speed in characters per second."
               value={f.maxCps.value}
               strict={f.maxCps.strict}
               min={5} max={50} step={0.5}
@@ -143,6 +147,7 @@ export function ProfileEditor() {
           <Section title="Timing">
             <RuleRow
               label="Min duration"
+              desc="Minimum time a caption stays on screen."
               value={t.minDuration.value}
               strict={t.minDuration.strict}
               min={0} max={5} step={0.1}
@@ -152,6 +157,7 @@ export function ProfileEditor() {
             />
             <RuleRow
               label="Max duration"
+              desc="Maximum time a caption stays on screen."
               value={t.maxDuration.value}
               strict={t.maxDuration.strict}
               min={1} max={20} step={0.5}
@@ -159,81 +165,108 @@ export function ProfileEditor() {
               onValue={(v) => setRule("timing", "maxDuration", "value", v)}
               onStrict={(s) => setRule("timing", "maxDuration", "strict", s)}
             />
-            <PlainRow
+            <RuleRow
               label="Min gap"
-              value={t.minGapSeconds}
+              desc="Minimum gap between consecutive captions."
+              value={t.minGapSeconds.value}
+              strict={t.minGapSeconds.strict}
               min={0} max={2} step={0.05}
               unit="s"
-              onChange={(v) => setPlain("timing", "minGapSeconds", v)}
-              note="always strict"
-            />
-            <PlainRow
-              label="Gap close threshold"
-              value={t.gapCloseThreshold}
-              min={0} max={2} step={0.05}
-              unit="s"
-              onChange={(v) => setPlain("timing", "gapCloseThreshold", v)}
-            />
-            <ToggleRow
-              label="Extend to fill"
-              checked={t.extendToFill}
-              onChange={(v) => setPlain("timing", "extendToFill", v)}
-            />
-            {t.extendToFill && (
-              <PlainRow
-                label="Extend max"
-                value={t.extendToFillMax}
-                min={0} max={2} step={0.05}
-                unit="s"
-                onChange={(v) => setPlain("timing", "extendToFillMax", v)}
-              />
-            )}
-            <PlainRow
-              label="FPS"
-              value={t.defaultFps}
-              min={1} max={120} step={0.001}
-              onChange={(v) => setPlain("timing", "defaultFps", v)}
+              onValue={(v) => setRule("timing", "minGapSeconds", "value", v)}
+              onStrict={(s) => setRule("timing", "minGapSeconds", "strict", s)}
             />
           </Section>
 
-          {/* ── Merge ──────────────────────────────────────────────────── */}
-          <Section title="Segmentation & Merge">
-            <ToggleRow
-              label="Merge short segments"
-              checked={m.enabled}
-              onChange={(v) => setPlain("merge", "enabled", v)}
-            />
-            {m.enabled && (
+          {/* ── Advanced ───────────────────────────────────────────────── */}
+          <div class="pe-advanced">
+            <button
+              class="pe-advanced-toggle"
+              onClick={() => { advancedOpen.value = !advancedOpen.value; }}
+            >
+              <span class="pe-advanced-arrow">{advancedOpen.value ? <CaretDown size={12} /> : <CaretRight size={12} />}</span>
+              Advanced
+            </button>
+            {advancedOpen.value && (
               <>
-                <PlainRow
-                  label="Min segment words"
-                  value={m.minSegmentWords}
-                  min={1} max={20} step={1}
-                  onChange={(v) => setPlain("merge", "minSegmentWords", v)}
-                />
-                <PlainRow
-                  label="Max merge gap"
-                  value={m.mergeGapThreshold}
-                  min={0} max={3} step={0.05}
-                  unit="s"
-                  onChange={(v) => setPlain("merge", "mergeGapThreshold", v)}
-                />
-                <PlainRow
-                  label="Max merged chars"
-                  value={m.maxMergedChars}
-                  min={20} max={200} step={1}
-                  onChange={(v) => setPlain("merge", "maxMergedChars", v)}
-                />
-                <PlainRow
-                  label="Max merged duration"
-                  value={m.maxMergedDuration}
-                  min={1} max={20} step={0.5}
-                  unit="s"
-                  onChange={(v) => setPlain("merge", "maxMergedDuration", v)}
-                />
+                <Section title="Timing">
+                  <PlainRow
+                    label="Gap close threshold"
+                    desc="Gaps between spoken words smaller than this are treated as continuous speech — the previous caption extends to fill them seamlessly."
+                    value={t.gapCloseThreshold}
+                    min={0} max={2} step={0.05}
+                    unit="s"
+                    onChange={(v) => setPlain("timing", "gapCloseThreshold", v)}
+                  />
+                  <ToggleRow
+                    label="Extend to fill"
+                    desc="Extend caption end times into silent gaps before the next caption starts."
+                    checked={t.extendToFill}
+                    onChange={(v) => setPlain("timing", "extendToFill", v)}
+                  />
+                  {t.extendToFill && (
+                    <PlainRow
+                      label="Extend max"
+                      desc="How far to extend a caption end time when filling a gap."
+                      value={t.extendToFillMax}
+                      min={0} max={2} step={0.05}
+                      unit="s"
+                      onChange={(v) => setPlain("timing", "extendToFillMax", v)}
+                    />
+                  )}
+                  <PlainRow
+                    label="FPS"
+                    desc="Default frame rate for snapping and timecode display when the media file doesn't report one."
+                    value={t.defaultFps}
+                    min={1} max={120} step={0.001}
+                    onChange={(v) => setPlain("timing", "defaultFps", v)}
+                  />
+                </Section>
+
+                <Section title="Segmentation & Merge">
+                  <ToggleRow
+                    label="Merge short segments"
+                    desc="Merge short transcription segments into longer captions."
+                    checked={m.enabled}
+                    onChange={(v) => setPlain("merge", "enabled", v)}
+                  />
+                  {m.enabled && (
+                    <>
+                      <PlainRow
+                        label="Min segment words"
+                        desc="Segments with fewer words than this are candidates for merging."
+                        value={m.minSegmentWords}
+                        min={1} max={20} step={1}
+                        onChange={(v) => setPlain("merge", "minSegmentWords", v)}
+                      />
+                      <PlainRow
+                        label="Max merge gap"
+                        desc="Maximum gap between two segments that can be merged."
+                        value={m.mergeGapThreshold}
+                        min={0} max={3} step={0.05}
+                        unit="s"
+                        onChange={(v) => setPlain("merge", "mergeGapThreshold", v)}
+                      />
+                      <PlainRow
+                        label="Max merged chars"
+                        desc="Maximum characters in a merged caption."
+                        value={m.maxMergedChars}
+                        min={20} max={200} step={1}
+                        onChange={(v) => setPlain("merge", "maxMergedChars", v)}
+                      />
+                      <PlainRow
+                        label="Max merged duration"
+                        desc="Maximum duration of a merged caption."
+                        value={m.maxMergedDuration}
+                        min={1} max={20} step={0.5}
+                        unit="s"
+                        onChange={(v) => setPlain("merge", "maxMergedDuration", v)}
+                      />
+                    </>
+                  )}
+                </Section>
               </>
             )}
-          </Section>
+          </div>
         </div>
 
         {!isBuiltIn && (
@@ -263,8 +296,9 @@ function Section({ title, children }: { title: string; children: any }) {
   );
 }
 
-function RuleRow({ label, value, strict, min, max, step, unit, onValue, onStrict }: {
+function RuleRow({ label, desc, value, strict, min, max, step, unit, onValue, onStrict }: {
   label: string;
+  desc?: string;
   value: number;
   strict: boolean;
   min: number;
@@ -276,7 +310,10 @@ function RuleRow({ label, value, strict, min, max, step, unit, onValue, onStrict
 }) {
   return (
     <div class="pe-row">
-      <label class="pe-label">{label}</label>
+      <div class="pe-label-wrap">
+        <span class="pe-label">{label}</span>
+        {desc && <span class="pe-desc">{desc}</span>}
+      </div>
       <div class="pe-controls">
         <input
           type="number"
@@ -289,7 +326,7 @@ function RuleRow({ label, value, strict, min, max, step, unit, onValue, onStrict
         <button
           class={`pe-rule-toggle ${strict ? "pe-rule-toggle--strict" : "pe-rule-toggle--fuzzy"}`}
           onClick={() => onStrict(!strict)}
-          title={strict ? "Strict: pipeline enforces this limit" : "Fuzzy: warn only, not enforced"}
+          data-tooltip={strict ? "Strict: pipeline enforces this limit" : "Fuzzy: warn only, not enforced"}
         >
           {strict ? "Strict" : "Fuzzy"}
         </button>
@@ -298,8 +335,9 @@ function RuleRow({ label, value, strict, min, max, step, unit, onValue, onStrict
   );
 }
 
-function PlainRow({ label, value, min, max, step, unit, note, onChange }: {
+function PlainRow({ label, desc, value, min, max, step, unit, note, onChange }: {
   label: string;
+  desc?: string;
   value: number;
   min: number;
   max: number;
@@ -310,7 +348,10 @@ function PlainRow({ label, value, min, max, step, unit, note, onChange }: {
 }) {
   return (
     <div class="pe-row">
-      <label class="pe-label">{label}</label>
+      <div class="pe-label-wrap">
+        <span class="pe-label">{label}</span>
+        {desc && <span class="pe-desc">{desc}</span>}
+      </div>
       <div class="pe-controls">
         <input
           type="number"
@@ -326,14 +367,18 @@ function PlainRow({ label, value, min, max, step, unit, note, onChange }: {
   );
 }
 
-function ToggleRow({ label, checked, onChange }: {
+function ToggleRow({ label, desc, checked, onChange }: {
   label: string;
+  desc?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
     <div class="pe-row">
-      <label class="pe-label">{label}</label>
+      <div class="pe-label-wrap">
+        <span class="pe-label">{label}</span>
+        {desc && <span class="pe-desc">{desc}</span>}
+      </div>
       <div class="pe-controls">
         <button
           class={`pe-toggle ${checked ? "pe-toggle--on" : ""}`}

@@ -28,12 +28,15 @@ export type ValidationRule =
   | "max_duration"
   | "reading_speed"
   | "gap_flicker"
-  | "line_balance";
+  | "line_balance"
+  | "overlap";
 
 export interface ValidationWarning {
   blockIndex: number;
   rule: ValidationRule;
   message: string;
+  label: string;   // short problem name, e.g. "Too short"
+  detail: string;  // concise values, e.g. "0.45s — min 1s"
   actualValue: number;
   targetValue: number;
   strict?: boolean; // true = firm violation, false/undefined = fuzzy guideline

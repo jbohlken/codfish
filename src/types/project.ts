@@ -26,8 +26,6 @@ export interface MediaItem {
   name: string;
   path: string;
   fps: number | null;  // probed from file; null = audio-only or unknown (use profile default)
-  language: string;
-  transcriptionModel: TranscriptionModel;
   captions: CaptionBlock[];
   generatedAt?: string;
   exports: ExportRecord[];
@@ -39,6 +37,9 @@ export interface CodProject {
   version: number;
   name: string;
   profileId: string;
+  transcriptionModel: TranscriptionModel;
+  language: string;
+  exportFormatId?: string;
   createdAt: string;
   updatedAt: string;
   media: MediaItem[];

@@ -56,6 +56,9 @@ export async function newProject(): Promise<boolean> {
     version: PROJECT_VERSION,
     name,
     profileId: "default",
+    transcriptionModel: "base",
+    language: "",
+    exportFormatId: "SRT",
     createdAt: now,
     updatedAt: now,
     media: [],
@@ -78,12 +81,21 @@ export async function openProject(): Promise<boolean> {
   const json = await invoke<string>("load_project", { path: filePath });
   const proj = JSON.parse(json) as CodProject;
 
-  // Migrate old project files that lack fps field
-  proj.media = proj.media.map((m) => ({
-    ...m,
-    fps: (m as any).fps ?? null,
-    captions: m.captions.map(({ words: _w, ...c }) => c),
-  }));
+  // Migrate old project files
+  if (!(proj as any).transcriptionModel) {
+    proj.transcriptionModel = (proj.media[0] as any)?.transcriptionModel ?? "base";
+  }
+  if (!(proj as any).language) {
+    proj.language = (proj.media[0] as any)?.language ?? "";
+  }
+  proj.media = proj.media.map((m) => {
+    const { language: _l, transcriptionModel: _t, fps, captions, ...rest } = m as any;
+    return {
+      ...rest,
+      fps: fps ?? null,
+      captions: captions.map(({ words: _w, ...c }: any) => c),
+    };
+  });
 
   loadIntoStore(proj, filePath);
   return true;
@@ -168,10 +180,12 @@ export async function relinkMediaItem(mediaId: string): Promise<void> {
   const newPath = flattenDialogResult(result);
   if (!newPath) return;
 
+  const fps = await probeFps(newPath);
+
   pushHistory({
     ...proj,
     media: proj.media.map((m) =>
-      m.id !== mediaId ? m : { ...m, path: newPath, name: pathToBasename(newPath) }
+      m.id !== mediaId ? m : { ...m, path: newPath, name: pathToBasename(newPath), fps }
     ),
   }, "Re-link media");
 }
@@ -198,8 +212,6 @@ export function makeMediaItem(filePath: string): MediaItem {
     name: pathToBasename(filePath),
     path: filePath,
     fps: null,
-    language: "en",
-    transcriptionModel: "base",
     captions: [],
     exports: [],
   };

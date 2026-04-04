@@ -13,6 +13,7 @@ import { ContextMenu } from "./components/ContextMenu";
 import { MediaSettings } from "./components/MediaSettings";
 import { UnsavedChanges } from "./components/UnsavedChanges";
 import { HelpModal } from "./components/HelpModal";
+import { Tooltip } from "./components/Tooltip";
 
 export function App() {
   useEffect(() => {
@@ -67,6 +68,7 @@ export function App() {
       <MediaSettings />
       <UnsavedChanges />
       <HelpModal />
+      <Tooltip />
     </div>
   );
 }

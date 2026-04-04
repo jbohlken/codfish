@@ -1,13 +1,53 @@
+import { useEffect } from "preact/hooks";
+import { signal } from "@preact/signals";
+import { SelectButton } from "../SelectButton";
 import { project, isDirty, activeProfile, profiles, pushHistory, canUndo, canRedo, undo, redo, undoDescription, redoDescription } from "../../store/app";
-import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, savedFlash } from "../../lib/project";
+import type { TranscriptionModel } from "../../types/project";
+import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders } from "@phosphor-icons/react";
 import { profileEditorOpen } from "../ProfileEditor";
 import { helpOpen } from "../HelpModal";
 import { theme, toggleTheme } from "../../store/theme";
+import { listModels } from "../../lib/transcription";
+
+const TRANSCRIPTION_MODELS: { id: TranscriptionModel; label: string; size: string }[] = [
+  { id: "tiny",     label: "Tiny",     size: "39 MB" },
+  { id: "base",     label: "Base",     size: "74 MB" },
+  { id: "small",    label: "Small",    size: "244 MB" },
+  { id: "medium",   label: "Medium",   size: "769 MB" },
+  { id: "large-v3", label: "Large v3", size: "1.5 GB" },
+];
+
+const LANGUAGES = [
+  { code: "",   label: "Auto-detect" },
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "ja", label: "Japanese" },
+  { code: "zh", label: "Chinese" },
+];
+
+const modelCached = signal<Record<string, boolean>>({});
+let _modelCacheLoaded = false;
+async function loadModelCache() {
+  if (_modelCacheLoaded) return;
+  _modelCacheLoaded = true;
+  try {
+    const models = await listModels();
+    const map: Record<string, boolean> = {};
+    for (const m of models) map[m.id] = m.cached;
+    modelCached.value = map;
+  } catch { /* leave as empty — all show as uncached */ }
+}
 
 export function TitleBar() {
   const proj = project.value;
   const dirty = isDirty.value;
   const profile = activeProfile.value;
+  const cached = modelCached.value;
+  const cacheLoaded = Object.keys(cached).length > 0;
+
+  useEffect(() => { loadModelCache(); }, []);
 
   return (
     <div class="titlebar">
@@ -18,7 +58,7 @@ export function TitleBar() {
             <span class="titlebar-divider">/</span>
             <span class="titlebar-project-name">
               {proj.name}
-              {dirty && <span class="titlebar-dirty" title="Unsaved changes">•</span>}
+              {dirty && <span class="titlebar-dirty" data-tooltip="Unsaved changes"><Circle size={8} weight="fill" /></span>}
             </span>
           </>
         )}
@@ -27,103 +67,79 @@ export function TitleBar() {
       <div class="titlebar-center" />
 
       <div class="titlebar-right">
-        {/* New / Open — always visible */}
-        <button
-          class="btn btn-ghost btn-sm"
-          onClick={newProjectGuarded}
-          title="New Project"
-        >
-          New
-        </button>
-        <button
-          class="btn btn-ghost btn-sm"
-          onClick={openProjectGuarded}
-          title="Open Project"
-        >
-          Open…
-        </button>
-
-        {/* Theme toggle — always visible */}
         <button
           class="btn btn-ghost btn-icon"
-          title={theme.value === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          data-tooltip={theme.value === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           onClick={toggleTheme}
         >
-          {theme.value === "dark" ? "☀" : "☾"}
+          {theme.value === "dark" ? <Sun size={14} /> : <Moon size={14} />}
         </button>
-
-        {/* Help — always visible */}
         <button
           class="btn btn-ghost btn-icon"
-          title="Help"
+          data-tooltip="Help"
           onClick={() => { helpOpen.value = true; }}
         >
-          ?
+          <Question size={14} />
         </button>
 
         {proj && (
           <>
             <div class="titlebar-divider" />
 
-            {/* Undo / Redo */}
             <button
               class="btn btn-ghost btn-icon"
               onClick={undo}
               disabled={!canUndo.value}
-              title={undoDescription.value ? `Undo: ${undoDescription.value} (Ctrl+Z)` : "Nothing to undo"}
+              data-tooltip={undoDescription.value ? `Undo: ${undoDescription.value} (Ctrl+Z)` : "Nothing to undo"}
             >
-              ↩
+              <ArrowCounterClockwise size={14} />
             </button>
             <button
               class="btn btn-ghost btn-icon"
               onClick={redo}
               disabled={!canRedo.value}
-              title={redoDescription.value ? `Redo: ${redoDescription.value} (Ctrl+Y)` : "Nothing to redo"}
+              data-tooltip={redoDescription.value ? `Redo: ${redoDescription.value} (Ctrl+Y)` : "Nothing to redo"}
             >
-              ↪
+              <ArrowClockwise size={14} />
             </button>
 
             <div class="titlebar-divider" />
 
-            {/* Profile selector */}
-            <select
-              class="titlebar-profile-select"
+            <SelectButton
+              icon={Waveform}
+              tooltip="Transcription model"
+              options={TRANSCRIPTION_MODELS.map((m) => ({
+                value: m.id,
+                label: m.label,
+                meta: m.size,
+                badge: cacheLoaded ? !(cached[m.id] ?? true) : undefined,
+              }))}
+              value={proj.transcriptionModel}
+              onChange={(v) => pushHistory({ ...proj, transcriptionModel: v }, "Change model")}
+            />
+            <SelectButton
+              icon={Translate}
+              tooltip="Language"
+              options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+              value={proj.language}
+              onChange={(v) => pushHistory({ ...proj, language: v }, "Change language")}
+            />
+
+            <div class="titlebar-divider" />
+
+            <SelectButton
+              icon={Sliders}
+              tooltip="Caption profile"
+              options={profiles.value.map((p) => ({ value: p.id, label: p.name }))}
               value={profile.id}
-              onChange={(e) => {
-                if (project.value) {
-                  pushHistory({ ...project.value, profileId: e.currentTarget.value }, "Change profile");
-                }
-              }}
-            >
-              {profiles.value.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+              onChange={(v) => pushHistory({ ...proj, profileId: v }, "Change profile")}
+            />
             <button
               class="btn btn-ghost btn-icon"
-              title="Edit profile"
+              data-tooltip="Edit profile"
               onClick={() => { profileEditorOpen.value = true; }}
             >
-              ✎
-            </button>
-
-            <div class="titlebar-divider" />
-
-            {/* Save */}
-            <button
-              class="btn btn-secondary btn-sm"
-              onClick={saveCurrentProjectAs}
-              title="Save As…"
-            >
-              Save As…
-            </button>
-            <button
-              class={`btn btn-sm${savedFlash.value ? " btn-success" : " btn-primary"}`}
-              disabled={!dirty && !savedFlash.value}
-              onClick={saveCurrentProject}
-              title="Save (Ctrl+S)"
-            >
-              {savedFlash.value ? "Saved!" : "Save"}
+              <PencilSimple size={14} />
             </button>
           </>
         )}

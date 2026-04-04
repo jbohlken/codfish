@@ -9,7 +9,7 @@ const baseConfig: TimingConfig = {
   extendToFill: false,
   extendToFillMax: 0.5,
   gapCloseThreshold: 0.5,
-  minGapSeconds: 0.4,
+  minGapSeconds: { value: 0.4, strict: true },
   defaultFps: 30.0,
 };
 

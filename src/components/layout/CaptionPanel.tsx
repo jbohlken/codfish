@@ -11,23 +11,22 @@ import {
   isPlaying,
 } from "../../store/app";
 import { snapToFrame, runPipeline } from "../../lib/pipeline";
-import { transcribeMedia, listModels, type ModelInfo, type TranscriptionProgress } from "../../lib/transcription";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ArrowSquareOutIcon as ArrowSquareOut, ExportIcon as ExportIcon, FileTextIcon as FileText } from "@phosphor-icons/react";
+import { SelectButton } from "../SelectButton";
+import { validate } from "../../lib/pipeline/validate";
+import type { ValidationWarning } from "../../lib/pipeline/types";
+import { WarningBadge } from "../WarningBadge";
+import { transcribeMedia, type TranscriptionProgress } from "../../lib/transcription";
 import { listFormats, exportCaptions, openFormatsDir, type ExportFormat } from "../../lib/export";
 import { showError } from "../ErrorModal";
 import type { CaptionBlock } from "../../types/project";
 
 // ── Panel-local state ─────────────────────────────────────────────────────────
-const models = signal<ModelInfo[]>([]);
-const selectedModelId = signal("base");
-const language = signal("");
 const isGenerating = signal(false);
 const generateProgress = signal<TranscriptionProgress | null>(null);
 const editingIndex = signal<number | null>(null);
 const editText = signal("");
 const exportFormats = signal<ExportFormat[]>([]);
-const selectedFormatId = signal("");
-const generateSettingsOpen = signal(false);
-const exportSettingsOpen = signal(false);
 
 export { editingIndex, editText };
 
@@ -36,29 +35,9 @@ let _editCancelled = false;
 
 // ── One-time loaders ──────────────────────────────────────────────────────────
 
-let modelsLoaded = false;
-async function loadModels(force = false) {
-  if (modelsLoaded && !force) return;
-  modelsLoaded = true;
-  try {
-    models.value = await listModels();
-  } catch {
-    models.value = [
-      { id: "tiny",     name: "Tiny (39 MB)",     sizeMb: 39,   cached: false },
-      { id: "base",     name: "Base (74 MB)",      sizeMb: 74,   cached: false },
-      { id: "small",    name: "Small (244 MB)",    sizeMb: 244,  cached: false },
-      { id: "medium",   name: "Medium (769 MB)",   sizeMb: 769,  cached: false },
-      { id: "large-v3", name: "Large v3 (1.5 GB)", sizeMb: 1550, cached: false },
-    ];
-  }
-}
 
 async function loadFormats() {
-  const formats = await listFormats();
-  exportFormats.value = formats;
-  if (formats.length && !formats.find((f) => f.id === selectedFormatId.value)) {
-    selectedFormatId.value = formats[0].id;
-  }
+  exportFormats.value = await listFormats();
 }
 
 // ── Caption operations ────────────────────────────────────────────────────────
@@ -189,7 +168,6 @@ function addCaption() {
 
 export function CaptionPanel() {
   useEffect(() => {
-    loadModels();
     loadFormats();
   }, []);
 
@@ -257,18 +235,6 @@ export function CaptionPanel() {
     }
   });
 
-  // Close popovers on outside click
-  useEffect(() => {
-    if (!generateSettingsOpen.value && !exportSettingsOpen.value) return;
-    const handler = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest(".split-btn-wrap")) {
-        generateSettingsOpen.value = false;
-        exportSettingsOpen.value = false;
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [generateSettingsOpen.value, exportSettingsOpen.value]);
 
   const media = selectedMedia.value;
   const generating = isGenerating.value;
@@ -279,18 +245,41 @@ export function CaptionPanel() {
     (c) => currentTime >= c.start && currentTime < c.end
   )?.index ?? null;
 
+  const profile = activeProfile.value;
+  const fps = media?.fps ?? profile.timing.defaultFps;
+  const warningsByIndex = new Map<number, ValidationWarning[]>();
+  if (media?.captions.length) {
+    const report = validate(media.captions, profile, fps);
+    for (const w of report.warnings) {
+      const list = warningsByIndex.get(w.blockIndex) ?? [];
+      list.push(w);
+      warningsByIndex.set(w.blockIndex, list);
+    }
+  }
+
   return (
     <div class="panel caption-panel">
       <div class="panel-header">
         <span class="panel-header-title">Captions</span>
         {media && !generating && (
-          <button
-            class="btn btn-ghost btn-icon"
-            title="Add caption at playhead (A)"
-            onClick={addCaption}
-          >
-            +
-          </button>
+          <div style="display:flex;align-items:center;gap:2px">
+            {hasCaptions && (
+              <button
+                class="btn btn-ghost btn-icon"
+                data-tooltip="Regenerate captions"
+                onClick={handleGenerate}
+              >
+                <ArrowsClockwise size={14} />
+              </button>
+            )}
+            <button
+              class="btn btn-ghost btn-icon"
+              data-tooltip="Add caption at playhead (A)"
+              onClick={addCaption}
+            >
+              <Plus size={14} />
+            </button>
+          </div>
         )}
       </div>
 
@@ -314,7 +303,7 @@ export function CaptionPanel() {
         ) : media.captions.length === 0 ? (
           <div class="empty-state">
             <span class="empty-state-title">No captions yet</span>
-            <span class="empty-state-body">Generate captions to get started.</span>
+            <button class="btn btn-primary btn-sm" onClick={handleGenerate}><ArrowsClockwise size={13} /> Generate</button>
           </div>
         ) : (
           <div class="caption-list" onClick={(e) => { if (e.target === e.currentTarget) selectedCaptionIndex.value = null; }}>
@@ -325,6 +314,7 @@ export function CaptionPanel() {
                 selected={selectedCaptionIndex.value === block.index}
                 playing={playingIndex === block.index}
                 editing={editingIndex.value === block.index}
+                warnings={warningsByIndex.get(block.index) ?? []}
                 splitEnabled={currentTime > block.start && currentTime < block.end}
                 onClick={() => {
                   editingIndex.value = null;
@@ -346,102 +336,27 @@ export function CaptionPanel() {
         )}
       </div>
 
-      {media && !generating && (
+      {media && !generating && hasCaptions && (
         <div class="caption-panel-footer">
-          {/* Generate button + gear */}
-          <div class="split-btn-wrap">
-            {generateSettingsOpen.value && (
-              <div class="split-popover">
-                <div class="caption-generate-row">
-                  <label class="caption-control-label">Model</label>
-                  <select
-                    class="caption-control-select"
-                    value={selectedModelId.value}
-                    onChange={(e) => { selectedModelId.value = e.currentTarget.value; }}
-                  >
-                    {models.value.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}{m.cached ? "" : " ↓"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div class="caption-generate-row">
-                  <label class="caption-control-label">Language</label>
-                  <select
-                    class="caption-control-select"
-                    value={language.value}
-                    onChange={(e) => { language.value = e.currentTarget.value; }}
-                  >
-                    <option value="en">English</option>
-                    <option value="es">Spanish</option>
-                    <option value="fr">French</option>
-                    <option value="de">German</option>
-                    <option value="ja">Japanese</option>
-                    <option value="zh">Chinese</option>
-                    <option value="">Auto-detect</option>
-                  </select>
-                </div>
-              </div>
-            )}
-            <div class="caption-action-row">
-              <button class="btn btn-primary" onClick={handleGenerate}>Generate</button>
-              <button
-                class={`btn btn-ghost btn-icon${generateSettingsOpen.value ? " btn-icon--active" : ""}`}
-                title="Generation settings"
-                onClick={() => {
-                  generateSettingsOpen.value = !generateSettingsOpen.value;
-                  exportSettingsOpen.value = false;
-                }}
-              >
-                ⚙
-              </button>
-            </div>
-          </div>
-
-          {/* Export button + gear — only when captions exist */}
-          {hasCaptions && (
-            <div class="split-btn-wrap">
-              {exportSettingsOpen.value && (
-                <div class="split-popover">
-                  <div class="caption-generate-row">
-                    <label class="caption-control-label">Format</label>
-                    <div class="caption-format-row">
-                      <select
-                        class="caption-control-select"
-                        value={selectedFormatId.value}
-                        onChange={(e) => { selectedFormatId.value = e.currentTarget.value; }}
-                      >
-                        {exportFormats.value.map((f) => (
-                          <option key={f.id} value={f.id}>{f.name}</option>
-                        ))}
-                      </select>
-                      <button
-                        class="btn btn-ghost btn-icon caption-formats-dir-btn"
-                        title="Open custom formats folder"
-                        onClick={openFormatsDir}
-                      >
-                        ↗
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div class="caption-action-row">
-                <button class="btn btn-secondary" onClick={() => handleExport(media.name)}>Export…</button>
-                <button
-                  class={`btn btn-ghost btn-icon${exportSettingsOpen.value ? " btn-icon--active" : ""}`}
-                  title="Export settings"
-                  onClick={() => {
-                    exportSettingsOpen.value = !exportSettingsOpen.value;
-                    generateSettingsOpen.value = false;
-                  }}
-                >
-                  ⚙
-                </button>
-              </div>
-            </div>
-          )}
+          <SelectButton
+            icon={FileText}
+            tooltip="Export format"
+            direction="up"
+            options={exportFormats.value.map((f) => ({ value: f.id, label: f.name }))}
+            value={project.value?.exportFormatId ?? exportFormats.value[0]?.id ?? ""}
+            onChange={(v) => { if (project.value) pushHistory({ ...project.value, exportFormatId: v }, "Change export format"); }}
+          />
+          <button
+            class="btn btn-ghost btn-icon"
+            data-tooltip="Open custom formats folder"
+            onClick={openFormatsDir}
+          >
+            <ArrowSquareOut size={14} />
+          </button>
+          <div style="flex:1" />
+          <button class="btn btn-primary btn-sm" onClick={() => handleExport(media.name)}>
+            <ExportIcon size={13} /> Export
+          </button>
         </div>
       )}
     </div>
@@ -455,6 +370,7 @@ function CaptionRow({
   selected,
   playing,
   editing,
+  warnings,
   splitEnabled,
   onClick,
   onDblClick,
@@ -466,6 +382,7 @@ function CaptionRow({
   selected: boolean;
   playing: boolean;
   editing: boolean;
+  warnings: ValidationWarning[];
   splitEnabled: boolean;
   onClick: () => void;
   onDblClick: () => void;
@@ -502,44 +419,50 @@ function CaptionRow({
     );
   }
 
+
   return (
     <div
-      class={`caption-row${selected ? " caption-row--selected" : playing ? " caption-row--playing" : ""}`}
+      class={`caption-row${selected ? " caption-row--selected" : ""}${playing ? " caption-row--playing" : ""}`}
       data-caption-index={block.index}
       onClick={onClick}
       onDblClick={onDblClick}
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter") onClick(); }}
     >
-      <div class="caption-row-meta">#{block.index} · {formatTime(block.start)} → {formatTime(block.end)}</div>
+      <div class="caption-row-meta">
+        #{block.index} · {formatTime(block.start)} → {formatTime(block.end)}
+        {warnings.length > 0 && (
+          <WarningBadge warnings={warnings} />
+        )}
+      </div>
       <div class="caption-row-text">{block.lines.join("\n")}</div>
       {selected && (
         <div class="caption-row-actions" onClick={(e) => e.stopPropagation()}>
           <button
             class="btn-caption-action"
-            title="Edit (E)"
+            data-tooltip="Edit (E)"
             onClick={() => {
               isPlaying.value = false;
               editingIndex.value = block.index;
               editText.value = block.lines.join("\n");
             }}
           >
-            ✎
+            <PencilSimple size={14} />
           </button>
           <button
             class="btn-caption-action"
             disabled={!splitEnabled}
-            title={splitEnabled ? "Split at playhead (S)" : "Position playhead inside this caption to split"}
+            data-tooltip={splitEnabled ? "Split at playhead (S)" : "Position playhead inside this caption to split"}
             onClick={onSplit}
           >
-            ✂
+            <Scissors size={14} />
           </button>
           <button
             class="btn-caption-action btn-caption-action--delete"
-            title="Delete (Delete)"
+            data-tooltip="Delete (Delete)"
             onClick={onDelete}
           >
-            ✕
+            <X size={14} />
           </button>
         </div>
       )}
@@ -589,11 +512,10 @@ async function handleGenerate() {
   try {
     const words = await transcribeMedia(
       media.path,
-      selectedModelId.value,
-      language.value || null,
+      proj.transcriptionModel,
+      proj.language || null,
       (p) => { generateProgress.value = p; },
     );
-    loadModels(true);
     const { captions } = runPipeline(words, activeProfile.value, media.fps ?? undefined);
     pushHistory({
       ...proj,
@@ -613,9 +535,11 @@ async function handleGenerate() {
 
 async function handleExport(baseName: string) {
   const media = selectedMedia.value;
-  if (!media || media.captions.length === 0) return;
+  const proj = project.value;
+  if (!media || media.captions.length === 0 || !proj) return;
 
-  const format = exportFormats.value.find((f) => f.id === selectedFormatId.value);
+  const formatId = proj.exportFormatId ?? exportFormats.value[0]?.id;
+  const format = exportFormats.value.find((f) => f.id === formatId);
   if (!format) return;
 
   try {

@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { XIcon as X } from "@phosphor-icons/react";
 import { useEffect, useState } from "preact/hooks";
 import { getVersion } from "@tauri-apps/api/app";
 
@@ -36,7 +37,7 @@ export function HelpModal() {
       <div class="help-modal" onClick={(e) => e.stopPropagation()}>
         <div class="help-modal-header">
           <span class="help-modal-title">Help</span>
-          <button class="btn btn-ghost btn-icon" onClick={close}>✕</button>
+          <button class="btn btn-ghost btn-icon" onClick={close}><X size={14} /></button>
         </div>
 
         <div class="help-modal-body">

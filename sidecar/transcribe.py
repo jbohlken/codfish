@@ -12,10 +12,25 @@ Streams JSON lines to stdout:
 """
 
 import sys
+import os
 import json
 import argparse
 import traceback
 from pathlib import Path
+
+
+def ensure_ffmpeg_on_path():
+    """Add the imageio-ffmpeg bundled binary's directory to PATH."""
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        ffmpeg_dir = str(Path(ffmpeg_exe).parent)
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+    except Exception:
+        pass  # Fall back to system ffmpeg if available
+
+
+ensure_ffmpeg_on_path()
 
 
 def emit(obj: dict):

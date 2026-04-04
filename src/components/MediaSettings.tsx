@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { XIcon as X } from "@phosphor-icons/react";
 import { project } from "../store/app";
 
 export const mediaSettingsId = signal<string | null>(null);
@@ -18,7 +19,7 @@ export function MediaSettings() {
       <div class="media-settings" onClick={(e) => e.stopPropagation()}>
         <div class="media-settings-header">
           <span class="media-settings-title">{item.name}</span>
-          <button class="btn btn-ghost btn-icon" onClick={close}>✕</button>
+          <button class="btn btn-ghost btn-icon" onClick={close}><X size={14} /></button>
         </div>
 
         <div class="media-settings-body">
