@@ -6,12 +6,16 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
 
-// ── Default export format scripts (embedded at compile time) ─────────────────
+// ── Default resources (embedded at compile time) ────────────────────────────
 
-const SRT_JS:  &str = include_str!("../resources/srt.js");
-const VTT_JS:  &str = include_str!("../resources/vtt.js");
-const JSON_JS: &str = include_str!("../resources/json.js");
-const TXT_JS:  &str = include_str!("../resources/txt.js");
+const SRT_JS:  &str = include_str!("../resources/export_formats/srt.js");
+const VTT_JS:  &str = include_str!("../resources/export_formats/vtt.js");
+const JSON_JS: &str = include_str!("../resources/export_formats/json.js");
+const TXT_JS:  &str = include_str!("../resources/export_formats/txt.js");
+
+const PROFILE_DEFAULT: &str = include_str!("../resources/profiles/default.ini");
+const PROFILE_NETFLIX: &str = include_str!("../resources/profiles/netflix.ini");
+const PROFILE_BBC:     &str = include_str!("../resources/profiles/bbc.ini");
 
 fn export_formats_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -107,6 +111,286 @@ fn open_in_explorer(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("open error: {e}"))?;
     Ok(())
+}
+
+// ── Profile commands ────────────────────────────────────────────────────────
+
+fn profiles_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|p| p.join("profiles"))
+        .map_err(|e| format!("could not resolve app data dir: {e}"))
+}
+
+fn seed_profile_files(app: &AppHandle) -> Result<(), String> {
+    let dir = profiles_dir(app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    for (name, content) in [
+        ("default.ini", PROFILE_DEFAULT),
+        ("netflix.ini", PROFILE_NETFLIX),
+        ("bbc.ini", PROFILE_BBC),
+    ] {
+        let dest = dir.join(name);
+        if !dest.exists() {
+            std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct ProfileRule {
+    value: f64,
+    strict: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct TimedRule {
+    value: f64,
+    strict: bool,
+    unit: String,   // "s" or "fr"
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TimingConfig {
+    min_duration: TimedRule,
+    max_duration: TimedRule,
+    max_cps: ProfileRule,
+    extend_to_fill: bool,
+    extend_to_fill_max: f64,
+    gap_close_threshold: f64,
+    min_gap_enabled: bool,
+    min_gap_seconds: TimedRule,
+    default_fps: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FormattingConfig {
+    max_chars_per_line: ProfileRule,
+    max_lines: ProfileRule,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MergeConfig {
+    enabled: bool,
+    phrase_break_gap: f64,
+    min_segment_words: f64,
+    merge_gap_threshold: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CaptionProfile {
+    id: String,
+    name: String,
+    description: String,
+    built_in: bool,
+    timing: TimingConfig,
+    formatting: FormattingConfig,
+    merge: MergeConfig,
+}
+
+/// Parse a simple INI profile file.
+fn parse_profile(id: &str, content: &str) -> Result<CaptionProfile, String> {
+    use std::collections::HashMap;
+
+    let mut name = id.to_string();
+    let mut description = String::new();
+    let mut built_in = false;
+    let mut section = String::new();
+    let mut values: HashMap<String, String> = HashMap::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() { continue; }
+
+        // Header comments with metadata
+        if let Some(val) = line.strip_prefix("# @name ") {
+            name = val.trim().to_string();
+            continue;
+        }
+        if let Some(val) = line.strip_prefix("# @description ") {
+            description = val.trim().to_string();
+            continue;
+        }
+        if let Some(val) = line.strip_prefix("# @builtIn ") {
+            built_in = val.trim() == "true";
+            continue;
+        }
+        if line.starts_with('#') { continue; }
+
+        // Section header
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len()-1].to_string();
+            continue;
+        }
+
+        // Key = value
+        if let Some(eq) = line.find('=') {
+            let key = format!("{}.{}", section, line[..eq].trim());
+            let val = line[eq+1..].trim().to_string();
+            values.insert(key, val);
+        }
+    }
+
+    let get_f = |k: &str| -> f64 {
+        values.get(k).and_then(|v| v.parse().ok()).unwrap_or(0.0)
+    };
+    let get_b = |k: &str| -> bool {
+        values.get(k).map(|v| v == "true").unwrap_or(false)
+    };
+    let get_s = |k: &str| -> String {
+        values.get(k).cloned().unwrap_or_default()
+    };
+
+    Ok(CaptionProfile {
+        id: id.to_string(),
+        name,
+        description,
+        built_in,
+        timing: TimingConfig {
+            min_duration: TimedRule {
+                value: get_f("timing.minDuration"),
+                strict: get_b("timing.minDuration.strict"),
+                unit: { let u = get_s("timing.minDuration.unit"); if u.is_empty() { "s".into() } else { u } },
+            },
+            max_duration: TimedRule {
+                value: get_f("timing.maxDuration"),
+                strict: get_b("timing.maxDuration.strict"),
+                unit: { let u = get_s("timing.maxDuration.unit"); if u.is_empty() { "s".into() } else { u } },
+            },
+            max_cps: ProfileRule {
+                value: get_f("timing.maxCps"),
+                strict: get_b("timing.maxCps.strict"),
+            },
+            extend_to_fill: get_b("timing.extendToFill"),
+            extend_to_fill_max: get_f("timing.extendToFillMax"),
+            gap_close_threshold: get_f("timing.gapCloseThreshold"),
+            min_gap_enabled: get_b("timing.minGapEnabled"),
+            min_gap_seconds: TimedRule {
+                value: get_f("timing.minGapSeconds"),
+                strict: get_b("timing.minGapSeconds.strict"),
+                unit: { let u = get_s("timing.minGapSeconds.unit"); if u.is_empty() { "s".into() } else { u } },
+            },
+            default_fps: { let v = get_f("timing.defaultFps"); if v == 0.0 { 30.0 } else { v } },
+        },
+        formatting: FormattingConfig {
+            max_chars_per_line: ProfileRule {
+                value: get_f("formatting.maxCharsPerLine"),
+                strict: get_b("formatting.maxCharsPerLine.strict"),
+            },
+            max_lines: ProfileRule {
+                value: get_f("formatting.maxLines"),
+                strict: get_b("formatting.maxLines.strict"),
+            },
+        },
+        merge: MergeConfig {
+            enabled: get_b("merge.enabled"),
+            phrase_break_gap: get_f("merge.phraseBreakGap"),
+            min_segment_words: get_f("merge.minSegmentWords"),
+            merge_gap_threshold: get_f("merge.mergeGapThreshold"),
+        },
+    })
+}
+
+/// Serialize a profile back to INI format.
+fn serialize_profile(p: &CaptionProfile) -> String {
+    let b = |v: bool| if v { "true" } else { "false" };
+    format!(
+        "# @name {name}\n# @description {desc}\n\n\
+        [formatting]\n\
+        maxCharsPerLine = {mcpl}\nmaxCharsPerLine.strict = {mcpls}\n\
+        maxLines = {ml}\nmaxLines.strict = {mls}\n\n\
+        [timing]\n\
+        minDuration = {mind}\nminDuration.strict = {minds}\nminDuration.unit = {mindu}\n\
+        maxDuration = {maxd}\nmaxDuration.strict = {maxds}\nmaxDuration.unit = {maxdu}\n\
+        maxCps = {cps}\nmaxCps.strict = {cpss}\n\
+        extendToFill = {etf}\nextendToFillMax = {etfm}\n\
+        gapCloseThreshold = {gct}\n\
+        minGapEnabled = {mge}\n\
+        minGapSeconds = {mgs}\nminGapSeconds.strict = {mgss}\nminGapSeconds.unit = {mgsu}\n\
+        defaultFps = {fps}\n\n\
+        [merge]\n\
+        enabled = {me}\nphraseBreakGap = {pbg}\nminSegmentWords = {msw}\nmergeGapThreshold = {mgt}\n",
+        name = p.name,
+        desc = p.description,
+        mcpl = p.formatting.max_chars_per_line.value,
+        mcpls = b(p.formatting.max_chars_per_line.strict),
+        ml = p.formatting.max_lines.value,
+        mls = b(p.formatting.max_lines.strict),
+        mind = p.timing.min_duration.value,
+        minds = b(p.timing.min_duration.strict),
+        mindu = p.timing.min_duration.unit,
+        maxd = p.timing.max_duration.value,
+        maxds = b(p.timing.max_duration.strict),
+        maxdu = p.timing.max_duration.unit,
+        cps = p.timing.max_cps.value,
+        cpss = b(p.timing.max_cps.strict),
+        etf = b(p.timing.extend_to_fill),
+        etfm = p.timing.extend_to_fill_max,
+        gct = p.timing.gap_close_threshold,
+        mge = b(p.timing.min_gap_enabled),
+        mgs = p.timing.min_gap_seconds.value,
+        mgss = b(p.timing.min_gap_seconds.strict),
+        mgsu = p.timing.min_gap_seconds.unit,
+        fps = p.timing.default_fps,
+        me = b(p.merge.enabled),
+        pbg = p.merge.phrase_break_gap,
+        msw = p.merge.min_segment_words,
+        mgt = p.merge.merge_gap_threshold,
+    )
+}
+
+#[tauri::command]
+fn list_profiles(app: AppHandle) -> Result<Vec<CaptionProfile>, String> {
+    let dir = profiles_dir(&app)?;
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut profiles: Vec<CaptionProfile> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("read_dir error: {e}"))?
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("ini"))
+        .filter_map(|entry| {
+            let path = entry.path();
+            let id = path.file_stem()?.to_str()?.to_string();
+            let content = std::fs::read_to_string(&path).ok()?;
+            parse_profile(&id, &content).ok()
+        })
+        .collect();
+
+    profiles.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(profiles)
+}
+
+#[tauri::command]
+fn save_profile(app: AppHandle, profile: CaptionProfile) -> Result<(), String> {
+    let dir = profiles_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let dest = dir.join(format!("{}.ini", profile.id));
+    let content = serialize_profile(&profile);
+    std::fs::write(&dest, content).map_err(|e| format!("write error: {e}"))
+}
+
+#[tauri::command]
+fn delete_profile(app: AppHandle, id: String) -> Result<(), String> {
+    let dir = profiles_dir(&app)?;
+    let dest = dir.join(format!("{id}.ini"));
+    if dest.exists() {
+        std::fs::remove_file(&dest).map_err(|e| format!("delete error: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_profiles_dir(app: AppHandle) -> Result<String, String> {
+    let dir = profiles_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir error: {e}"))?;
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 // ── Project file commands ────────────────────────────────────────────────────
@@ -338,6 +622,9 @@ pub fn run() {
             if let Err(e) = seed_format_files(app.handle()) {
                 eprintln!("warning: could not seed export format files: {e}");
             }
+            if let Err(e) = seed_profile_files(app.handle()) {
+                eprintln!("warning: could not seed profile files: {e}");
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_icon(tauri::include_image!("icons/icon.png"));
             }
@@ -356,6 +643,10 @@ pub fn run() {
             probe_fps,
             list_models,
             transcribe_media,
+            list_profiles,
+            save_profile,
+            delete_profile,
+            get_profiles_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

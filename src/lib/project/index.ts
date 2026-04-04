@@ -233,7 +233,7 @@ async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
 }
 
 function loadIntoStore(proj: CodProject, filePath: string): void {
-  resetHistory();
+  resetHistory(proj);
   project.value = proj;
   projectPath.value = filePath;
   isDirty.value = false;

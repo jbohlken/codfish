@@ -3,6 +3,7 @@ import { useState, useEffect } from "preact/hooks";
 import { XIcon as X, CaretRightIcon as CaretRight, CaretDownIcon as CaretDown } from "@phosphor-icons/react";
 import { profiles, activeProfile, project, pushHistory } from "../store/app";
 import type { CaptionProfile, ProfileRule, TimedRule } from "../types/profile";
+import { saveProfile as saveProfileToDisk, deleteProfile as deleteProfileFromDisk } from "../lib/profiles";
 
 export const profileEditorOpen = signal(false);
 const advancedOpen = signal(false);
@@ -36,6 +37,7 @@ export function ProfileEditor() {
     let target: CaptionProfile;
     if (isBuiltIn) {
       target = makeUserCopy(profile);
+      updater(target);
       profiles.value = [...profiles.value, target];
       if (project.value) {
         pushHistory({ ...project.value, profileId: target.id });
@@ -44,10 +46,8 @@ export function ProfileEditor() {
       target = cloneProfile(profile);
       updater(target);
       profiles.value = profiles.value.map((p) => p.id === target.id ? target : p);
-      return;
     }
-    updater(target);
-    profiles.value = profiles.value.map((p) => p.id === target.id ? target : p);
+    saveProfileToDisk(target);
   };
 
   const setRule = <T,>(
@@ -85,15 +85,18 @@ export function ProfileEditor() {
 
   const handleRename = (name: string) => {
     if (isBuiltIn) return;
+    const updated = { ...profile, name };
     profiles.value = profiles.value.map((p) =>
-      p.id === profile.id ? { ...p, name } : p
+      p.id === profile.id ? updated : p
     );
+    saveProfileToDisk(updated);
   };
 
   const handleDelete = () => {
     if (isBuiltIn || profiles.value.length <= 1) return;
     const remaining = profiles.value.filter((p) => p.id !== profile.id);
     profiles.value = remaining;
+    deleteProfileFromDisk(profile.id);
     if (project.value) {
       pushHistory({ ...project.value, profileId: remaining[0].id });
     }

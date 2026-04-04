@@ -38,6 +38,7 @@ export interface MergeConfig {
 export interface CaptionProfile {
   id: string;
   name: string;
+  description: string;
   builtIn: boolean;
   timing: TimingConfig;
   formatting: FormattingConfig;

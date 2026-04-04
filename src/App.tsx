@@ -5,8 +5,11 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
-import { isPlaying, undo, redo } from "./store/app";
+import { isPlaying, undo, redo, isDirty, profiles } from "./store/app";
 import { saveCurrentProject } from "./lib/project";
+import { loadProfiles } from "./lib/profiles";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { confirmUnsavedChanges } from "./components/UnsavedChanges";
 import { ErrorModal } from "./components/ErrorModal";
 import { ProfileEditor } from "./components/ProfileEditor";
 import { ContextMenu } from "./components/ContextMenu";
@@ -16,6 +19,26 @@ import { HelpModal } from "./components/HelpModal";
 import { Tooltip } from "./components/Tooltip";
 
 export function App() {
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unlisten = win.onCloseRequested(async (e) => {
+      e.preventDefault();
+      if (isDirty.value) {
+        const choice = await confirmUnsavedChanges();
+        if (choice === "cancel") return;
+        if (choice === "save") {
+          await saveCurrentProject();
+        }
+      }
+      await win.destroy();
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
+  useEffect(() => {
+    loadProfiles().then((p) => { profiles.value = p; });
+  }, []);
+
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
     document.addEventListener("contextmenu", onContextMenu);

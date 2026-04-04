@@ -1,7 +1,6 @@
 import { signal, computed } from "@preact/signals";
 import type { CodProject, MediaItem, CaptionBlock } from "../types/project";
 import type { CaptionProfile } from "../types/profile";
-import { DEFAULT_PROFILES } from "../lib/profiles/defaults";
 
 // ── Project ────────────────────────────────────────────────────────────────
 export const project = signal<CodProject | null>(null);
@@ -18,7 +17,7 @@ export const isPlaying = signal(false);
 export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 
 // ── Profiles ───────────────────────────────────────────────────────────────
-export const profiles = signal<CaptionProfile[]>(DEFAULT_PROFILES);
+export const profiles = signal<CaptionProfile[]>([]);
 
 // ── Undo / Redo ────────────────────────────────────────────────────────────
 
@@ -30,10 +29,15 @@ interface HistoryEntry {
 const _history = signal<HistoryEntry[]>([]);
 const _historyIndex = signal(-1);
 
-/** Reset undo/redo history. Call when a new project is loaded. */
-export function resetHistory() {
-  _history.value = [];
-  _historyIndex.value = -1;
+/** Reset undo/redo history with the initial project state as the baseline. */
+export function resetHistory(initial?: CodProject) {
+  if (initial) {
+    _history.value = [{ project: initial, description: "Open project" }];
+    _historyIndex.value = 0;
+  } else {
+    _history.value = [];
+    _historyIndex.value = -1;
+  }
 }
 
 /** Commit a new project state to the undo history and update project. */
@@ -64,7 +68,7 @@ export const canRedo = computed(() => _historyIndex.value < _history.value.lengt
 
 export const undoDescription = computed<string | null>(() => {
   if (_historyIndex.value <= 0) return null;
-  return _history.value[_historyIndex.value - 1]?.description ?? null;
+  return _history.value[_historyIndex.value]?.description ?? null;
 });
 
 export const redoDescription = computed<string | null>(() => {
@@ -83,7 +87,18 @@ export const selectedCaption = computed((): CaptionBlock | null => {
   return selectedMedia.value.captions[selectedCaptionIndex.value] ?? null;
 });
 
+const FALLBACK_PROFILE: CaptionProfile = {
+  id: "default", name: "Default", description: "", builtIn: true,
+  formatting: { maxCharsPerLine: { value: 42, strict: false }, maxLines: { value: 2, strict: false } },
+  timing: {
+    minDuration: { value: 1.0, strict: false, unit: "s" }, maxDuration: { value: 6.0, strict: false, unit: "s" },
+    maxCps: { value: 20.0, strict: false }, extendToFill: true, extendToFillMax: 0.5,
+    gapCloseThreshold: 0.5, minGapEnabled: true, minGapSeconds: { value: 0.4, strict: true, unit: "s" }, defaultFps: 30.0,
+  },
+  merge: { enabled: true, phraseBreakGap: 0.7, minSegmentWords: 5, mergeGapThreshold: 0.6 },
+};
+
 export const activeProfile = computed((): CaptionProfile => {
   const id = project.value?.profileId ?? "default";
-  return profiles.value.find((p) => p.id === id) ?? DEFAULT_PROFILES[0];
+  return profiles.value.find((p) => p.id === id) ?? profiles.value[0] ?? FALLBACK_PROFILE;
 });
