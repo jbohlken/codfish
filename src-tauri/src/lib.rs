@@ -295,6 +295,7 @@ async fn transcribe_media(
                     eprintln!("[sidecar stderr] {line}");
                     let is_py_warning = line.contains("Warning")
                         || line.contains("warn(")
+                        || line.contains("Lightning automatically upgraded")
                         || line.starts_with("  File \"")
                         || line.starts_with("  ");
                     if !is_py_warning {
