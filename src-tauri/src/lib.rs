@@ -4,13 +4,14 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, Window};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
-use transcription::{ModelInfo, ProgressPayload, TranscribedWord};
+use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
 
 // ── Default export format scripts (embedded at compile time) ─────────────────
 
 const SRT_JS:  &str = include_str!("../resources/srt.js");
 const VTT_JS:  &str = include_str!("../resources/vtt.js");
 const JSON_JS: &str = include_str!("../resources/json.js");
+const TXT_JS:  &str = include_str!("../resources/txt.js");
 
 fn export_formats_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -23,7 +24,7 @@ fn export_formats_dir(app: &AppHandle) -> Result<PathBuf, String> {
 fn seed_format_files(app: &AppHandle) -> Result<(), String> {
     let dir = export_formats_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
-    for (name, content) in [("srt.js", SRT_JS), ("vtt.js", VTT_JS), ("json.js", JSON_JS)] {
+    for (name, content) in [("srt.js", SRT_JS), ("vtt.js", VTT_JS), ("json.js", JSON_JS), ("txt.js", TXT_JS)] {
         let dest = dir.join(name);
         if !dest.exists() {
             std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
@@ -213,7 +214,7 @@ async fn transcribe_media(
     media_path: String,
     model_id: String,
     language: Option<String>,
-) -> Result<Vec<TranscribedWord>, String> {
+) -> Result<TranscriptionResult, String> {
     let mut args = vec!["--file".to_string(), media_path, "--model".to_string(), model_id];
     if let Some(lang) = language {
         args.push("--language".to_string());
@@ -229,7 +230,7 @@ async fn transcribe_media(
         .map_err(|e| format!("spawn error: {e}"))?;
 
     let mut stdout_buf = String::new();
-    let mut result_words: Option<Vec<TranscribedWord>> = None;
+    let mut result_words: Option<(Vec<TranscribedWord>, String)> = None;
     let mut error_msg: Option<String> = None;
 
     while let Some(event) = rx.recv().await {
@@ -263,7 +264,11 @@ async fn transcribe_media(
                             Some("result") => {
                                 if let Some(words_val) = value.get("words") {
                                     if let Ok(words) = serde_json::from_value::<Vec<TranscribedWord>>(words_val.clone()) {
-                                        result_words = Some(words);
+                                        let language = value.get("language")
+                                            .and_then(|l| l.as_str())
+                                            .unwrap_or("en")
+                                            .to_string();
+                                        result_words = Some((words, language));
                                     }
                                 }
                             }
@@ -312,7 +317,8 @@ async fn transcribe_media(
         return Err(msg);
     }
 
-    result_words.ok_or_else(|| "sidecar did not return a result".to_string())
+    let (words, language) = result_words.ok_or_else(|| "sidecar did not return a result".to_string())?;
+    Ok(TranscriptionResult { words, language })
 }
 
 // ── App entry point ──────────────────────────────────────────────────────────

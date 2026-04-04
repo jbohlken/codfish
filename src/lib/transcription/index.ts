@@ -23,17 +23,22 @@ export async function listModels(): Promise<ModelInfo[]> {
   return invoke<ModelInfo[]>("list_models");
 }
 
+export interface TranscriptionResult {
+  words: Word[];
+  detectedLanguage: string;
+}
+
 /**
  * Transcribe a media file.
  * Runs the full pipeline: extract audio → mel → encode → decode.
- * Returns a Word[] ready to pass into runPipeline().
+ * Returns words and the detected language code.
  */
 export async function transcribeMedia(
   mediaPath: string,
   modelId: string,
   language: string | null,
   onProgress?: (p: TranscriptionProgress) => void,
-): Promise<Word[]> {
+): Promise<TranscriptionResult> {
   let unlisten: UnlistenFn | null = null;
 
   if (onProgress) {
@@ -44,21 +49,27 @@ export async function transcribeMedia(
   }
 
   try {
-    const raw = await invoke<Array<{
-      text: string;
-      start: number;
-      end: number;
-      confidence: number;
-      speaker: string | null;
-    }>>("transcribe_media", { mediaPath, modelId, language });
+    const raw = await invoke<{
+      words: Array<{
+        text: string;
+        start: number;
+        end: number;
+        confidence: number;
+        speaker: string | null;
+      }>;
+      language: string;
+    }>("transcribe_media", { mediaPath, modelId, language });
 
-    return raw.map((w) => ({
-      text: w.text,
-      start: w.start,
-      end: w.end,
-      confidence: w.confidence,
-      speaker: w.speaker ?? undefined,
-    }));
+    return {
+      words: raw.words.map((w) => ({
+        text: w.text,
+        start: w.start,
+        end: w.end,
+        confidence: w.confidence,
+        speaker: w.speaker ?? undefined,
+      })),
+      detectedLanguage: raw.language,
+    };
   } finally {
     unlisten?.();
   }

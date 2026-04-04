@@ -12,6 +12,14 @@ pub struct TranscribedWord {
     pub speaker: Option<String>,
 }
 
+/// The result returned by the WhisperX sidecar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionResult {
+    pub words: Vec<TranscribedWord>,
+    pub language: String,
+}
+
 /// Payload emitted on the `transcription://progress` event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

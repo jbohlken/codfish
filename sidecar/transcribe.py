@@ -114,8 +114,13 @@ def download_model_with_progress(model_id: str, percent_start: int, percent_end:
 def _check_has_audio(file_path: str):
     """Raise a clear RuntimeError if the file has no audio stream."""
     import subprocess
-    import imageio_ffmpeg
-    ffprobe_exe = str(Path(imageio_ffmpeg.get_ffmpeg_exe()).parent / "ffprobe")
+
+    try:
+        import imageio_ffmpeg
+        ffprobe_exe = str(Path(imageio_ffmpeg.get_ffmpeg_exe()).parent / "ffprobe")
+    except Exception:
+        ffprobe_exe = "ffprobe"  # fall back to system ffprobe
+
     try:
         out = subprocess.check_output(
             [ffprobe_exe, "-v", "error", "-select_streams", "a",
@@ -224,7 +229,7 @@ def main():
         words = [w for w in words if w["text"]]
 
         progress(100, "Done")
-        emit({"type": "result", "words": words})
+        emit({"type": "result", "words": words, "language": detected_language})
 
     except Exception as e:
         msg = str(e)

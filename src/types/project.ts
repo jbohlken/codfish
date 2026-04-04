@@ -27,7 +27,11 @@ export interface MediaItem {
   path: string;
   fps: number | null;  // probed from file; null = audio-only or unknown (use profile default)
   captions: CaptionBlock[];
+  rawWords?: Word[];              // persisted for future re-pipeline without re-transcribing
   generatedAt?: string;
+  generatedWithModel?: TranscriptionModel;
+  generatedWithLanguage?: string; // the user's selection; absent means auto-detect was used
+  detectedLanguage?: string;      // set when auto-detect was used
   exports: ExportRecord[];
 }
 

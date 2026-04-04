@@ -11,19 +11,20 @@ import {
   isPlaying,
 } from "../../store/app";
 import { snapToFrame, runPipeline } from "../../lib/pipeline";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ArrowSquareOutIcon as ArrowSquareOut, ExportIcon as ExportIcon, FileTextIcon as FileText } from "@phosphor-icons/react";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
-import { transcribeMedia, type TranscriptionProgress } from "../../lib/transcription";
+import { transcribeMedia, type TranscriptionProgress, type TranscriptionResult } from "../../lib/transcription";
 import { listFormats, exportCaptions, openFormatsDir, type ExportFormat } from "../../lib/export";
 import { showError } from "../ErrorModal";
-import type { CaptionBlock } from "../../types/project";
+import type { CaptionBlock, TranscriptionModel } from "../../types/project";
 
 // ── Panel-local state ─────────────────────────────────────────────────────────
 const isGenerating = signal(false);
 const generateProgress = signal<TranscriptionProgress | null>(null);
+const confirmingRegenerate = signal(false);
 const editingIndex = signal<number | null>(null);
 const editText = signal("");
 const exportFormats = signal<ExportFormat[]>([]);
@@ -257,17 +258,34 @@ export function CaptionPanel() {
     }
   }
 
+  const confirming = confirmingRegenerate.value;
+
+  useEffect(() => {
+    if (!confirming) return;
+    const dismiss = () => { confirmingRegenerate.value = false; };
+    document.addEventListener("click", dismiss);
+    return () => document.removeEventListener("click", dismiss);
+  }, [confirming]);
+
   return (
     <div class="panel caption-panel">
       <div class="panel-header">
         <span class="panel-header-title">Captions</span>
         {media && !generating && (
-          <div style="display:flex;align-items:center;gap:2px">
+          <div style="position:relative;display:flex;align-items:center;gap:2px">
+            {media.generatedAt && hasCaptions && (
+              <button
+                class="btn btn-ghost btn-icon"
+                data-tooltip={`${formatGenerationMeta(media.generatedWithModel, media.generatedWithLanguage, media.detectedLanguage)}\n${formatFullTimestamp(media.generatedAt)}`}
+              >
+                <Info size={14} />
+              </button>
+            )}
             {hasCaptions && (
               <button
                 class="btn btn-ghost btn-icon"
                 data-tooltip="Regenerate captions"
-                onClick={handleGenerate}
+                onClick={(e) => { e.stopPropagation(); confirmingRegenerate.value = true; }}
               >
                 <ArrowsClockwise size={14} />
               </button>
@@ -279,6 +297,15 @@ export function CaptionPanel() {
             >
               <Plus size={14} />
             </button>
+            {confirming && (
+              <div class="regen-popover" onClick={(e) => e.stopPropagation()}>
+                <span class="regen-popover-label">Regenerate captions?</span>
+                <div class="regen-popover-actions">
+                  <button class="btn btn-secondary btn-sm" onClick={() => { confirmingRegenerate.value = false; }}>Cancel</button>
+                  <button class="btn btn-primary btn-sm" onClick={() => { confirmingRegenerate.value = false; handleGenerate(); }}>Regenerate</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -338,6 +365,13 @@ export function CaptionPanel() {
 
       {media && !generating && hasCaptions && (
         <div class="caption-panel-footer">
+          <button
+            class="btn btn-ghost btn-icon"
+            data-tooltip="Open export formats folder"
+            onClick={openFormatsDir}
+          >
+            <FolderOpen size={14} />
+          </button>
           <SelectButton
             icon={FileText}
             tooltip="Export format"
@@ -346,13 +380,6 @@ export function CaptionPanel() {
             value={project.value?.exportFormatId ?? exportFormats.value[0]?.id ?? ""}
             onChange={(v) => { if (project.value) pushHistory({ ...project.value, exportFormatId: v }, "Change export format"); }}
           />
-          <button
-            class="btn btn-ghost btn-icon"
-            data-tooltip="Open custom formats folder"
-            onClick={openFormatsDir}
-          >
-            <ArrowSquareOut size={14} />
-          </button>
           <div style="flex:1" />
           <button class="btn btn-primary btn-sm" onClick={() => handleExport(media.name)}>
             <ExportIcon size={13} /> Export
@@ -472,6 +499,40 @@ function CaptionRow({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: "English", es: "Spanish", fr: "French",
+  de: "German", ja: "Japanese", zh: "Chinese",
+};
+
+const MODEL_LABELS: Record<string, string> = {
+  tiny: "Tiny", base: "Base", small: "Small",
+  medium: "Medium", "large-v3": "Large v3",
+};
+
+function formatGenerationMeta(
+  model: TranscriptionModel | undefined,
+  generatedWithLanguage: string | undefined,
+  detectedLanguage: string | undefined,
+): string {
+  const parts: string[] = [];
+  if (model) parts.push(MODEL_LABELS[model] ?? model);
+  if (generatedWithLanguage) {
+    parts.push(LANGUAGE_LABELS[generatedWithLanguage] ?? generatedWithLanguage);
+  } else if (detectedLanguage) {
+    parts.push(`${LANGUAGE_LABELS[detectedLanguage] ?? detectedLanguage} (auto-detected)`);
+  } else {
+    parts.push("Auto-detect");
+  }
+  return parts.join(" · ");
+}
+
+function formatFullTimestamp(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
 function formatTime(s: number): string {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
@@ -506,22 +567,32 @@ async function handleGenerate() {
   const proj = project.value;
   if (!media || !proj) return;
 
+  confirmingRegenerate.value = false;
   isGenerating.value = true;
   generateProgress.value = null;
 
   try {
-    const words = await transcribeMedia(
+    const { words, detectedLanguage }: TranscriptionResult = await transcribeMedia(
       media.path,
       proj.transcriptionModel,
       proj.language || null,
       (p) => { generateProgress.value = p; },
     );
     const { captions } = runPipeline(words, activeProfile.value, media.fps ?? undefined);
+    const autoDetect = !proj.language;
     pushHistory({
       ...proj,
       media: proj.media.map((m) =>
         m.id === media.id
-          ? { ...m, captions, generatedAt: new Date().toISOString() }
+          ? {
+              ...m,
+              captions,
+              rawWords: words,
+              generatedAt: new Date().toISOString(),
+              generatedWithModel: proj.transcriptionModel,
+              generatedWithLanguage: autoDetect ? undefined : proj.language,
+              detectedLanguage: autoDetect ? detectedLanguage : undefined,
+            }
           : m,
       ),
     }, "Generate captions");
