@@ -274,9 +274,13 @@ body {
   border-color: transparent;
 }
 
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   background: var(--color-surface-hover);
   color: var(--color-text-primary);
+}
+
+.btn:disabled {
+  opacity: 0.35;
 }
 
 .btn-icon {

@@ -10,7 +10,8 @@ import {
   mediaDuration,
   isPlaying,
 } from "../../store/app";
-import { snapToFrame, runPipeline } from "../../lib/pipeline";
+import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
+import { makePhrase } from "../../lib/pipeline/types";
 import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { validate } from "../../lib/pipeline/validate";
@@ -78,29 +79,38 @@ function splitCaption(index: number) {
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
   const splitPoint = snapToFrame(t, fps);
 
-  // Assign words to each half if available in memory
-  const wordsA = block.words?.filter((w) => w.end <= splitPoint) ?? [];
-  const wordsB = block.words?.filter((w) => w.start >= splitPoint) ?? [];
+  const profile = activeProfile.value;
+  const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
+  const maxLines = profile.formatting.maxLines.value;
 
-  const linesA = wordsA.length > 0
-    ? [wordsA.map((w) => w.text).join(" ").trim()]
-    : block.lines;
-  const linesB = wordsB.length > 0
-    ? [wordsB.map((w) => w.text).join(" ").trim()]
-    : [""];
+  // Words source: rawWords filtered to this block's time range.
+  // Not available for manually added captions.
+  const sourceWords = media.rawWords?.filter((w) => w.start < block.end && w.end > block.start) ?? [];
 
-  const blockA: CaptionBlock = {
-    ...block,
-    end: splitPoint,
-    lines: linesA,
-    words: wordsA.length ? wordsA : undefined,
-  };
-  const blockB: CaptionBlock = {
-    ...block,
-    start: splitPoint,
-    lines: linesB,
-    words: wordsB.length ? wordsB : undefined,
-  };
+  let linesA: string[];
+  let linesB: string[];
+
+  if (sourceWords.length > 0) {
+    const wordsA = sourceWords.filter((w) => w.start < splitPoint && (w.end <= splitPoint || (w.start + w.end) / 2 < splitPoint));
+    const wordsB = sourceWords.filter((w) => !wordsA.includes(w));
+
+    linesA = wordsA.length > 0
+      ? formatPhraseToCaptionLines(makePhrase(wordsA), maxCharsPerLine, maxLines)
+      : [""];
+    linesB = wordsB.length > 0
+      ? formatPhraseToCaptionLines(makePhrase(wordsB), maxCharsPerLine, maxLines)
+      : [""];
+  } else {
+    // No word timing — split text proportionally at a word boundary
+    const ratio = (splitPoint - block.start) / (block.end - block.start);
+    const textWords = block.lines.join(" ").split(" ").filter(Boolean);
+    const splitIdx = Math.max(1, Math.min(textWords.length - 1, Math.round(textWords.length * ratio)));
+    linesA = [textWords.slice(0, splitIdx).join(" ")];
+    linesB = [textWords.slice(splitIdx).join(" ")];
+  }
+
+  const blockA: CaptionBlock = { ...block, end: splitPoint, lines: linesA };
+  const blockB: CaptionBlock = { ...block, start: splitPoint, lines: linesB };
 
   const newCaptions = [
     ...media.captions.filter((c) => c.index < index),
@@ -160,6 +170,7 @@ function addCaption() {
   }, "Add caption");
 
   const newIndex = insertPos + 1;
+  _editCancelled = false;
   selectedCaptionIndex.value = newIndex;
   editingIndex.value = newIndex;
   editText.value = "";
@@ -242,9 +253,11 @@ export function CaptionPanel() {
   const progress = generateProgress.value;
   const hasCaptions = (media?.captions.length ?? 0) > 0;
   const currentTime = playbackTime.value;
-  const playingIndex = media?.captions.find(
+  const playingCaption = media?.captions.find(
     (c) => currentTime >= c.start && currentTime < c.end
-  )?.index ?? null;
+  ) ?? null;
+  const playingIndex = playingCaption?.index ?? null;
+  const canAddCaption = !playingCaption;
 
   const profile = activeProfile.value;
   const fps = media?.fps ?? profile.timing.defaultFps;
@@ -292,7 +305,8 @@ export function CaptionPanel() {
             )}
             <button
               class="btn btn-ghost btn-icon"
-              data-tooltip="Add caption at playhead (A)"
+              disabled={!canAddCaption}
+              data-tooltip={canAddCaption ? "Add caption at playhead (A)" : "Playhead is inside an existing caption"}
               onClick={addCaption}
             >
               <Plus size={14} />
@@ -343,6 +357,11 @@ export function CaptionPanel() {
                 editing={editingIndex.value === block.index}
                 warnings={warningsByIndex.get(block.index) ?? []}
                 splitEnabled={currentTime > block.start && currentTime < block.end}
+                onMouseDown={() => {
+                  if (editingIndex.value !== null && editingIndex.value !== block.index) {
+                    handleEdit(editingIndex.value, editText.value);
+                  }
+                }}
                 onClick={() => {
                   editingIndex.value = null;
                   selectedCaptionIndex.value = block.index;
@@ -399,6 +418,7 @@ function CaptionRow({
   editing,
   warnings,
   splitEnabled,
+  onMouseDown,
   onClick,
   onDblClick,
   onEdit,
@@ -411,17 +431,24 @@ function CaptionRow({
   editing: boolean;
   warnings: ValidationWarning[];
   splitEnabled: boolean;
+  onMouseDown: () => void;
   onClick: () => void;
   onDblClick: () => void;
   onEdit: (text: string) => void;
   onSplit: () => void;
   onDelete: () => void;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (editing) textareaRef.current?.focus();
+  }, [editing]);
+
   if (editing) {
     return (
       <div class="caption-row caption-row--selected" data-caption-index={block.index}>
         <div class="caption-row-meta">#{block.index} · {formatTime(block.start)} → {formatTime(block.end)}</div>
         <textarea
+          ref={textareaRef}
           class="caption-row-editor"
           value={editText.value}
           onInput={(e) => { editText.value = e.currentTarget.value; }}
@@ -429,6 +456,9 @@ function CaptionRow({
             if (e.key === "Escape") {
               _editCancelled = true;
               editingIndex.value = null;
+              if (!block.lines.join("").trim()) {
+                onDelete();
+              }
             }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -451,6 +481,7 @@ function CaptionRow({
     <div
       class={`caption-row${selected ? " caption-row--selected" : ""}${playing ? " caption-row--playing" : ""}`}
       data-caption-index={block.index}
+      onMouseDown={onMouseDown}
       onClick={onClick}
       onDblClick={onDblClick}
       tabIndex={0}
@@ -541,13 +572,17 @@ function formatTime(s: number): string {
 }
 
 function handleEdit(index: number, text: string) {
+  _editCancelled = true; // prevent re-entry if textarea blur fires after unmount
   editingIndex.value = null;
   const proj = project.value;
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return;
+  if (!lines.length) {
+    deleteCaption(index);
+    return;
+  }
 
   pushHistory({
     ...proj,
@@ -569,7 +604,7 @@ async function handleGenerate() {
 
   confirmingRegenerate.value = false;
   isGenerating.value = true;
-  generateProgress.value = null;
+  generateProgress.value = { stage: "transcribing", percent: 0, message: "Starting up…" };
 
   try {
     const { words, detectedLanguage }: TranscriptionResult = await transcribeMedia(

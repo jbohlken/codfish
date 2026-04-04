@@ -288,14 +288,21 @@ async fn transcribe_media(
             CommandEvent::Stderr(bytes) => {
                 // Forward non-empty stderr lines as progress events so the UI
                 // can show download/tqdm output that whisperx writes to stderr.
+                // Skip Python warning boilerplate (UserWarning, warn() calls, etc.)
                 let text = String::from_utf8_lossy(&bytes);
                 let line = text.trim();
                 if !line.is_empty() {
                     eprintln!("[sidecar stderr] {line}");
-                    let _ = window.emit(
-                        "transcription://progress",
-                        ProgressPayload { stage: "downloading".to_string(), percent: 0, message: line.to_string() },
-                    );
+                    let is_py_warning = line.contains("Warning")
+                        || line.contains("warn(")
+                        || line.starts_with("  File \"")
+                        || line.starts_with("  ");
+                    if !is_py_warning {
+                        let _ = window.emit(
+                            "transcription://progress",
+                            ProgressPayload { stage: "downloading".to_string(), percent: 0, message: line.to_string() },
+                        );
+                    }
                 }
             }
             CommandEvent::Error(e) => {

@@ -147,6 +147,9 @@ def main():
     args = parser.parse_args()
 
     try:
+        import warnings
+        warnings.filterwarnings("ignore")
+        progress(1, "Loading libraries…")
         import torch
         import whisperx
 
