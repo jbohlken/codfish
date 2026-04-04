@@ -76,6 +76,8 @@ export function App() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  if (profiles.value.length === 0) return null;
+
   return (
     <div class="app-shell">
       <TitleBar />

@@ -87,18 +87,7 @@ export const selectedCaption = computed((): CaptionBlock | null => {
   return selectedMedia.value.captions[selectedCaptionIndex.value] ?? null;
 });
 
-const FALLBACK_PROFILE: CaptionProfile = {
-  id: "default", name: "Default", description: "", builtIn: true,
-  formatting: { maxCharsPerLine: { value: 42, strict: false }, maxLines: { value: 2, strict: false } },
-  timing: {
-    minDuration: { value: 1.0, strict: false, unit: "s" }, maxDuration: { value: 6.0, strict: false, unit: "s" },
-    maxCps: { value: 20.0, strict: false }, extendToFill: true, extendToFillMax: 0.5,
-    gapCloseThreshold: 0.5, minGapEnabled: true, minGapSeconds: { value: 0.4, strict: true, unit: "s" }, defaultFps: 30.0,
-  },
-  merge: { enabled: true, phraseBreakGap: 0.7, minSegmentWords: 5, mergeGapThreshold: 0.6 },
-};
-
 export const activeProfile = computed((): CaptionProfile => {
   const id = project.value?.profileId ?? "default";
-  return profiles.value.find((p) => p.id === id) ?? profiles.value[0] ?? FALLBACK_PROFILE;
+  return profiles.value.find((p) => p.id === id) ?? profiles.value[0];
 });
