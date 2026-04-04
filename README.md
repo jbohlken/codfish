@@ -31,7 +31,7 @@ sidecar\.venv-cuda\Scripts\activate        # Windows
 pip install -r sidecar/requirements-cuda.txt
 ```
 
-The CUDA build requires [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) to be installed on the build machine. `requirements-cuda.txt` installs PyTorch with CUDA 12.1 support — adjust the index URL for other CUDA versions.
+The CUDA build requires [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) to be installed on the build machine. `requirements-cuda.txt` installs PyTorch with CUDA 12.6 support — adjust the index URL for other CUDA versions.
 
 ### 2. Build the sidecar binary
 
