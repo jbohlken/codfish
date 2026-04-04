@@ -233,7 +233,11 @@ export function Timeline() {
   const zoom = zoomLevel.value;
 
   const profile = activeProfile.value;
-  const minGap = profile.timing.minGapEnabled ? profile.timing.minGapSeconds.value : null;
+  const fps = media?.fps ?? profile.timing.defaultFps;
+  const minGapRule = profile.timing.minGapSeconds;
+  const minGap = profile.timing.minGapEnabled
+    ? (minGapRule.unit === "fr" ? minGapRule.value / fps : minGapRule.value)
+    : null;
   const warningsByIndex = new Map<number, ValidationWarning[]>();
   if (media) {
     const report = validate(media.captions, profile, media.fps ?? undefined);

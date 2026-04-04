@@ -21,13 +21,33 @@ from pathlib import Path
 
 def ensure_ffmpeg_on_path():
     """Add the imageio-ffmpeg bundled binary's directory to PATH."""
+    # Try imageio-ffmpeg's bundled binary first
     try:
         import imageio_ffmpeg
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        ffmpeg_dir = str(Path(ffmpeg_exe).parent)
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+        if Path(ffmpeg_exe).is_file():
+            ffmpeg_dir = str(Path(ffmpeg_exe).parent)
+            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+            return
     except Exception:
-        pass  # Fall back to system ffmpeg if available
+        pass
+
+    # PyInstaller bundle: ffmpeg may be alongside the executable
+    if getattr(sys, 'frozen', False):
+        bundle_dir = Path(sys._MEIPASS)
+        for candidate in [bundle_dir / "ffmpeg.exe", bundle_dir / "ffmpeg"]:
+            if candidate.is_file():
+                os.environ["PATH"] = str(candidate.parent) + os.pathsep + os.environ.get("PATH", "")
+                return
+
+    # Verify ffmpeg is reachable on PATH
+    import shutil
+    if not shutil.which("ffmpeg"):
+        print(json.dumps({
+            "type": "error",
+            "message": "ffmpeg not found. Please install ffmpeg and ensure it is on your system PATH."
+        }), flush=True)
+        sys.exit(1)
 
 
 ensure_ffmpeg_on_path()

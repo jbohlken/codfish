@@ -614,10 +614,12 @@ async function handleGenerate() {
       (p) => { generateProgress.value = p; },
     );
     const { captions } = runPipeline(words, activeProfile.value, media.fps ?? undefined);
+    const current = project.value;
+    if (!current) return;
     const autoDetect = !proj.language;
     pushHistory({
-      ...proj,
-      media: proj.media.map((m) =>
+      ...current,
+      media: current.media.map((m) =>
         m.id === media.id
           ? {
               ...m,
