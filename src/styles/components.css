@@ -753,6 +753,10 @@
   background: var(--tl-scrubber);
 }
 
+.timeline-btn--active {
+  color: var(--color-accent);
+}
+
 .timeline-btn--play {
   color: var(--color-accent);
 }
@@ -976,6 +980,11 @@
   );
   pointer-events: none;
   z-index: 11;
+}
+
+.timeline-resize-indicator--snapped {
+  background: var(--color-accent);
+  width: 2px;
 }
 
 .timeline-block {
@@ -1261,6 +1270,23 @@
   padding: var(--space-2) 0;
 }
 
+.profile-editor-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.profile-editor-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.profile-editor-body::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 3px;
+}
+
+.profile-editor-body::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
 .profile-editor-footer {
   display: flex;
   align-items: center;
@@ -1431,10 +1457,22 @@
   width: 72px;
   outline: none;
   text-align: right;
+  -moz-appearance: textfield;
+}
+
+.pe-number::-webkit-inner-spin-button,
+.pe-number::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .pe-number:focus {
   border-color: var(--color-accent);
+}
+
+.pe-number--error {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .pe-unit {
@@ -1450,33 +1488,38 @@
 }
 
 .pe-rule-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--text-xs);
   font-weight: var(--font-weight-medium);
   padding: 2px var(--space-2);
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-}
-
-.pe-rule-toggle--fuzzy {
+  border: 1px solid var(--color-border-strong);
   background: var(--color-surface);
-  border-color: var(--color-border-strong);
   color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 0.1s;
 }
 
-.pe-rule-toggle--fuzzy:hover {
+.pe-rule-toggle:hover {
   border-color: var(--color-text-tertiary);
 }
 
-.pe-rule-toggle--strict {
-  background: var(--color-accent-light);
-  border-color: var(--color-accent-subtle);
-  color: var(--color-accent);
+.pe-rule-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.pe-rule-toggle--strict:hover {
-  background: var(--color-accent-subtle);
+.pe-rule-dot--warning {
+  background: var(--color-warning);
+}
+
+.pe-rule-dot--error {
+  background: var(--color-danger);
 }
 
 .pe-toggle {

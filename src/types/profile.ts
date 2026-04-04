@@ -10,6 +10,7 @@ export interface TimingConfig {
   extendToFill: boolean;
   extendToFillMax: number;            // seconds
   gapCloseThreshold: number;          // seconds — gaps below this are closed (seamless)
+  minGapEnabled: boolean;
   minGapSeconds: ProfileRule<number>; // seconds — minimum non-zero gap (prevents flicker)
   defaultFps: number;
 }

@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { useState, useEffect } from "preact/hooks";
 import { XIcon as X, CaretRightIcon as CaretRight, CaretDownIcon as CaretDown } from "@phosphor-icons/react";
 import { profiles, activeProfile, project, pushHistory } from "../store/app";
 import type { CaptionProfile, ProfileRule } from "../types/profile";
@@ -117,10 +118,10 @@ export function ProfileEditor() {
           <Section title="Formatting">
             <RuleRow
               label="Max chars / line"
-              desc="Maximum characters on a single line."
+              desc="Maximum characters per line — used as a target when breaking lines."
               value={f.maxCharsPerLine.value}
               strict={f.maxCharsPerLine.strict}
-              min={20} max={100} step={1}
+              min={20} max={120} step={1}
               onValue={(v) => setRule("formatting", "maxCharsPerLine", "value", v)}
               onStrict={(s) => setRule("formatting", "maxCharsPerLine", "strict", s)}
             />
@@ -137,7 +138,7 @@ export function ProfileEditor() {
               desc="Maximum reading speed in characters per second."
               value={f.maxCps.value}
               strict={f.maxCps.strict}
-              min={5} max={50} step={0.5}
+              min={5} max={30} step={0.1}
               onValue={(v) => setRule("formatting", "maxCps", "value", v)}
               onStrict={(s) => setRule("formatting", "maxCps", "strict", s)}
             />
@@ -165,16 +166,24 @@ export function ProfileEditor() {
               onValue={(v) => setRule("timing", "maxDuration", "value", v)}
               onStrict={(s) => setRule("timing", "maxDuration", "strict", s)}
             />
-            <RuleRow
+            <ToggleRow
               label="Min gap"
-              desc="Minimum gap between consecutive captions."
-              value={t.minGapSeconds.value}
-              strict={t.minGapSeconds.strict}
-              min={0} max={2} step={0.05}
-              unit="s"
-              onValue={(v) => setRule("timing", "minGapSeconds", "value", v)}
-              onStrict={(s) => setRule("timing", "minGapSeconds", "strict", s)}
+              desc="Enforce a minimum gap between consecutive captions to prevent flicker."
+              checked={t.minGapEnabled}
+              onChange={(v) => setPlain("timing", "minGapEnabled", v)}
             />
+            {t.minGapEnabled && (
+              <RuleRow
+                label="Min gap duration"
+                desc="Minimum gap between consecutive captions."
+                value={t.minGapSeconds.value}
+                strict={t.minGapSeconds.strict}
+                min={0.05} max={2} step={0.05}
+                unit="s"
+                onValue={(v) => setRule("timing", "minGapSeconds", "value", v)}
+                onStrict={(s) => setRule("timing", "minGapSeconds", "strict", s)}
+              />
+            )}
           </Section>
 
           {/* ── Advanced ───────────────────────────────────────────────── */}
@@ -296,6 +305,58 @@ function Section({ title, children }: { title: string; children: any }) {
   );
 }
 
+function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+function rangeTooltip(min: number, max: number, unit?: string): string {
+  const u = unit ? ` ${unit}` : "";
+  return `${min}–${max}${u}`;
+}
+
+function NumberInput({ value, min, max, step, unit, onChange }: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit?: string;
+  onChange: (v: number) => void;
+}) {
+  const [raw, setRaw] = useState(String(value));
+
+  // Sync when external value changes (e.g. profile switch)
+  useEffect(() => { setRaw(String(value)); }, [value]);
+
+  const parsed = parseFloat(raw);
+  const outOfRange = !isNaN(parsed) && (parsed < min || parsed > max);
+
+  return (
+    <input
+      type="number"
+      class={`pe-number${outOfRange ? " pe-number--error" : ""}`}
+      value={raw}
+      min={min} max={max} step={step}
+      data-tooltip={rangeTooltip(min, max, unit)}
+      onInput={(e) => {
+        const s = e.currentTarget.value;
+        setRaw(s);
+        const v = parseFloat(s);
+        if (!isNaN(v)) onChange(v);
+      }}
+      onBlur={() => {
+        const v = parseFloat(raw);
+        if (isNaN(v)) { setRaw(String(min)); onChange(min); return; }
+        const clamped = clamp(v, min, max);
+        const stepped = Math.round(clamped / step) * step;
+        const final = Math.round(clamp(stepped, min, max) * 1e10) / 1e10;
+        setRaw(String(final));
+        onChange(final);
+      }}
+      onInvalid={(e) => e.preventDefault()}
+    />
+  );
+}
+
 function RuleRow({ label, desc, value, strict, min, max, step, unit, onValue, onStrict }: {
   label: string;
   desc?: string;
@@ -315,20 +376,15 @@ function RuleRow({ label, desc, value, strict, min, max, step, unit, onValue, on
         {desc && <span class="pe-desc">{desc}</span>}
       </div>
       <div class="pe-controls">
-        <input
-          type="number"
-          class="pe-number"
-          value={value}
-          min={min} max={max} step={step}
-          onInput={(e) => onValue(parseFloat(e.currentTarget.value))}
-        />
+        <NumberInput value={value} min={min} max={max} step={step} unit={unit} onChange={onValue} />
         {unit && <span class="pe-unit">{unit}</span>}
         <button
-          class={`pe-rule-toggle ${strict ? "pe-rule-toggle--strict" : "pe-rule-toggle--fuzzy"}`}
+          class="pe-rule-toggle"
           onClick={() => onStrict(!strict)}
-          data-tooltip={strict ? "Strict: pipeline enforces this limit" : "Fuzzy: warn only, not enforced"}
+          data-tooltip={strict ? "Violations flagged as errors" : "Violations flagged as warnings"}
         >
-          {strict ? "Strict" : "Fuzzy"}
+          <span class={`pe-rule-dot ${strict ? "pe-rule-dot--error" : "pe-rule-dot--warning"}`} />
+          {strict ? "Error" : "Warning"}
         </button>
       </div>
     </div>
@@ -353,13 +409,7 @@ function PlainRow({ label, desc, value, min, max, step, unit, note, onChange }: 
         {desc && <span class="pe-desc">{desc}</span>}
       </div>
       <div class="pe-controls">
-        <input
-          type="number"
-          class="pe-number"
-          value={value}
-          min={min} max={max} step={step}
-          onInput={(e) => onChange(parseFloat(e.currentTarget.value))}
-        />
+        <NumberInput value={value} min={min} max={max} step={step} unit={unit} onChange={onChange} />
         {unit && <span class="pe-unit">{unit}</span>}
         {note && <span class="pe-note">{note}</span>}
       </div>

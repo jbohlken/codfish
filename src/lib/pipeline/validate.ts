@@ -121,7 +121,7 @@ export function validate(
           targetValue: 0,
           strict: true,
         });
-      } else if (gapSeconds > 0 && gapSeconds < timing.minGapSeconds.value) {
+      } else if (timing.minGapEnabled && gapSeconds > 0 && gapSeconds < timing.minGapSeconds.value) {
         const gapFrames = framesBetween(block.end, next.start, fps);
         warnings.push({
           blockIndex,

@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "preact/hooks";
-import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus } from "@phosphor-icons/react";
+import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet } from "@phosphor-icons/react";
 import { useSignalEffect, signal } from "@preact/signals";
 import WaveSurfer from "wavesurfer.js";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -20,8 +20,19 @@ import type { ValidationWarning } from "../../lib/pipeline/types";
 
 type TimecodeMode = "time" | "smpte" | "frames";
 const timecodeMode = signal<TimecodeMode>("time");
+const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
+const resizeSnapped = signal(false);
 const zoomLevel = signal(1);
+
+const SNAP_THRESHOLD_PX = 8;
+
+function trySnap(value: number, snapPoints: number[], thresholdSec: number): number | null {
+  for (const point of snapPoints) {
+    if (Math.abs(value - point) <= thresholdSec) return point;
+  }
+  return null;
+}
 
 export function Timeline() {
   const media = selectedMedia.value;
@@ -222,6 +233,7 @@ export function Timeline() {
   const zoom = zoomLevel.value;
 
   const profile = activeProfile.value;
+  const minGap = profile.timing.minGapEnabled ? profile.timing.minGapSeconds.value : null;
   const warningsByIndex = new Map<number, ValidationWarning[]>();
   if (media) {
     const report = validate(media.captions, profile, media.fps ?? undefined);
@@ -305,6 +317,14 @@ export function Timeline() {
           </span>
         )}
 
+        <button
+          class={`timeline-btn${snapEnabled.value ? " timeline-btn--active" : ""}`}
+          onClick={() => { snapEnabled.value = !snapEnabled.value; }}
+          data-tooltip={snapEnabled.value ? "Snapping on" : "Snapping off"}
+        >
+          <Magnet size={14} />
+        </button>
+
         {/* Zoom controls */}
         <div class="timeline-zoom-controls">
           <button
@@ -370,7 +390,7 @@ export function Timeline() {
                 )}
                 {duration > 0 && resizeIndicator.value !== null && (
                   <div
-                    class="timeline-resize-indicator"
+                    class={`timeline-resize-indicator${resizeSnapped.value ? " timeline-resize-indicator--snapped" : ""}`}
                     style={{ left: `${(resizeIndicator.value / duration) * 100}%` }}
                   />
                 )}
@@ -390,6 +410,8 @@ export function Timeline() {
                     fps={effectiveFps}
                     prevEnd={media.captions[i - 1]?.end ?? 0}
                     nextStart={media.captions[i + 1]?.start ?? duration}
+                    snapEnabled={snapEnabled.value}
+                    minGap={minGap}
                     blocksRowRef={blocksRowRef}
                     selected={selectedCaptionIndex.value === block.index}
                     playing={playingIndex === block.index}
@@ -417,6 +439,8 @@ function ResizableCaptionBlock({
   fps,
   prevEnd,
   nextStart,
+  snapEnabled,
+  minGap,
   blocksRowRef,
   selected,
   playing,
@@ -430,6 +454,8 @@ function ResizableCaptionBlock({
   fps: number;
   prevEnd: number;
   nextStart: number;
+  snapEnabled: boolean;
+  minGap: number | null;
   blocksRowRef: { current: HTMLDivElement | null };
   selected: boolean;
   playing: boolean;
@@ -453,10 +479,10 @@ function ResizableCaptionBlock({
     const rowEl = blocksRowRef.current;
     if (!rowEl) return;
 
-    // getBoundingClientRect accounts for scroll offset, so secPerPx is correct at any zoom
     const rect = rowEl.getBoundingClientRect();
     const secPerPx = duration / rect.width;
     const minDuration = 1 / fps;
+    const snapThresholdSec = SNAP_THRESHOLD_PX * secPerPx;
     const originX = e.clientX;
     const originStart = block.start;
     const originEnd = block.end;
@@ -464,18 +490,53 @@ function ResizableCaptionBlock({
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - originX;
       if (edge === "left") {
-        const newStart = snapToFrame(Math.max(prevEnd, Math.min(originStart + dx * secPerPx, originEnd - minDuration)), fps);
+        let rawTime = originStart + dx * secPerPx;
+        let snapped: number | null = null;
+        if (snapEnabled) {
+          // Dead zone exclusion: push values in (prevEnd, prevEnd+minGap) to nearest valid boundary
+          if (minGap !== null && minGap > 0) {
+            const gap = rawTime - prevEnd;
+            if (gap > 0 && gap < minGap) {
+              rawTime = gap < minGap / 2 ? prevEnd : snapToFrame(prevEnd + minGap, fps);
+            }
+          }
+          const snapPoints = [prevEnd];
+          if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(prevEnd + minGap, fps));
+          snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+        }
+        const newStart = snapped !== null
+          ? Math.max(prevEnd, Math.min(snapped, originEnd - minDuration))
+          : snapToFrame(Math.max(prevEnd, Math.min(rawTime, originEnd - minDuration)), fps);
         resizeIndicator.value = newStart;
+        resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, newStart, originEnd);
       } else {
-        const newEnd = snapToFrame(Math.max(originStart + minDuration, Math.min(originEnd + dx * secPerPx, nextStart)), fps);
+        let rawTime = originEnd + dx * secPerPx;
+        let snapped: number | null = null;
+        if (snapEnabled) {
+          // Dead zone exclusion: push values in (nextStart-minGap, nextStart) to nearest valid boundary
+          if (minGap !== null && minGap > 0) {
+            const gap = nextStart - rawTime;
+            if (gap > 0 && gap < minGap) {
+              rawTime = gap < minGap / 2 ? nextStart : snapToFrame(nextStart - minGap, fps);
+            }
+          }
+          const snapPoints = [nextStart];
+          if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(nextStart - minGap, fps));
+          snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+        }
+        const newEnd = snapped !== null
+          ? Math.max(originStart + minDuration, Math.min(snapped, nextStart))
+          : snapToFrame(Math.max(originStart + minDuration, Math.min(rawTime, nextStart)), fps);
         resizeIndicator.value = newEnd;
+        resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);
       }
     };
 
     const onUp = () => {
       resizeIndicator.value = null;
+      resizeSnapped.value = false;
       onResizeCommit();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
