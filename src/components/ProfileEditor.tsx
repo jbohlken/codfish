@@ -2,7 +2,7 @@ import { signal } from "@preact/signals";
 import { useState, useEffect } from "preact/hooks";
 import { XIcon as X, CaretRightIcon as CaretRight, CaretDownIcon as CaretDown } from "@phosphor-icons/react";
 import { profiles, activeProfile, project, pushHistory } from "../store/app";
-import type { CaptionProfile, ProfileRule } from "../types/profile";
+import type { CaptionProfile, ProfileRule, TimedRule } from "../types/profile";
 
 export const profileEditorOpen = signal(false);
 const advancedOpen = signal(false);
@@ -62,6 +62,17 @@ export function ProfileEditor() {
     });
   };
 
+  const setTimedUnit = (key: "minDuration" | "maxDuration" | "minGapSeconds", newUnit: "s" | "fr") => {
+    edit((p) => {
+      const rule = p.timing[key] as TimedRule;
+      const fps = p.timing.defaultFps;
+      const converted = newUnit === "fr"
+        ? Math.round(rule.value * fps)
+        : Math.round((rule.value / fps) * 1000) / 1000;
+      p.timing[key] = { ...rule, value: converted, unit: newUnit } as TimedRule;
+    });
+  };
+
   const setPlain = (
     section: "timing" | "formatting" | "merge",
     key: string,
@@ -92,6 +103,22 @@ export function ProfileEditor() {
   const f = profile.formatting;
   const m = profile.merge;
 
+  // Convert a TimedRule to seconds using the profile's defaultFps
+  const timedToSec = (rule: TimedRule) =>
+    rule.unit === "fr" ? rule.value / t.defaultFps : rule.value;
+
+  // Cross-field bounds for duration fields (in each field's own unit)
+  const minDurMax = t.minDuration.unit === "fr"
+    ? Math.floor(timedToSec(t.maxDuration) * t.defaultFps)
+    : timedToSec(t.maxDuration);
+  const maxDurMin = t.maxDuration.unit === "fr"
+    ? Math.ceil(timedToSec(t.minDuration) * t.defaultFps)
+    : timedToSec(t.minDuration);
+
+  // Min gap bounds in its own unit
+  const minGapMin = t.minGapSeconds.unit === "fr" ? 1 : 0.05;
+  const minGapMax = t.minGapSeconds.unit === "fr" ? Math.floor(2 * t.defaultFps) : 2;
+
   return (
     <div class="modal-backdrop" onClick={close}>
       <div class="profile-editor" onClick={(e) => e.stopPropagation()}>
@@ -118,29 +145,21 @@ export function ProfileEditor() {
           <Section title="Formatting">
             <RuleRow
               label="Max chars / line"
-              desc="Maximum characters per line — used as a target when breaking lines."
+              desc="Maximum characters per line."
               value={f.maxCharsPerLine.value}
               strict={f.maxCharsPerLine.strict}
               min={20} max={120} step={1}
               onValue={(v) => setRule("formatting", "maxCharsPerLine", "value", v)}
               onStrict={(s) => setRule("formatting", "maxCharsPerLine", "strict", s)}
             />
-            <PlainRow
+            <RuleRow
               label="Max lines"
               desc="Maximum number of lines per caption."
-              value={f.maxLines}
+              value={f.maxLines.value}
+              strict={f.maxLines.strict}
               min={1} max={4} step={1}
-              onChange={(v) => setPlain("formatting", "maxLines", v)}
-              note="always strict"
-            />
-            <RuleRow
-              label="Max CPS"
-              desc="Maximum reading speed in characters per second."
-              value={f.maxCps.value}
-              strict={f.maxCps.strict}
-              min={5} max={30} step={0.1}
-              onValue={(v) => setRule("formatting", "maxCps", "value", v)}
-              onStrict={(s) => setRule("formatting", "maxCps", "strict", s)}
+              onValue={(v) => setRule("formatting", "maxLines", "value", v)}
+              onStrict={(s) => setRule("formatting", "maxLines", "strict", s)}
             />
           </Section>
 
@@ -151,20 +170,31 @@ export function ProfileEditor() {
               desc="Minimum time a caption stays on screen."
               value={t.minDuration.value}
               strict={t.minDuration.strict}
-              min={0} max={5} step={0.1}
-              unit="s"
+              min={0} max={minDurMax} step={0.1}
+              timedUnit={t.minDuration.unit}
               onValue={(v) => setRule("timing", "minDuration", "value", v)}
               onStrict={(s) => setRule("timing", "minDuration", "strict", s)}
+              onUnit={(u) => setTimedUnit("minDuration", u)}
             />
             <RuleRow
               label="Max duration"
               desc="Maximum time a caption stays on screen."
               value={t.maxDuration.value}
               strict={t.maxDuration.strict}
-              min={1} max={20} step={0.5}
-              unit="s"
+              min={maxDurMin} max={t.maxDuration.unit === "fr" ? Math.floor(20 * t.defaultFps) : 20} step={0.1}
+              timedUnit={t.maxDuration.unit}
               onValue={(v) => setRule("timing", "maxDuration", "value", v)}
               onStrict={(s) => setRule("timing", "maxDuration", "strict", s)}
+              onUnit={(u) => setTimedUnit("maxDuration", u)}
+            />
+            <RuleRow
+              label="Max CPS"
+              desc="Maximum reading speed in characters per second."
+              value={t.maxCps.value}
+              strict={t.maxCps.strict}
+              min={5} max={30} step={0.1}
+              onValue={(v) => setRule("timing", "maxCps", "value", v)}
+              onStrict={(s) => setRule("timing", "maxCps", "strict", s)}
             />
             <ToggleRow
               label="Min gap"
@@ -178,10 +208,11 @@ export function ProfileEditor() {
                 desc="Minimum gap between consecutive captions."
                 value={t.minGapSeconds.value}
                 strict={t.minGapSeconds.strict}
-                min={0.05} max={2} step={0.05}
-                unit="s"
+                min={minGapMin} max={minGapMax} step={0.05}
+                timedUnit={t.minGapSeconds.unit}
                 onValue={(v) => setRule("timing", "minGapSeconds", "value", v)}
                 onStrict={(s) => setRule("timing", "minGapSeconds", "strict", s)}
+                onUnit={(u) => setTimedUnit("minGapSeconds", u)}
               />
             )}
           </Section>
@@ -232,6 +263,14 @@ export function ProfileEditor() {
                 </Section>
 
                 <Section title="Segmentation & Merge">
+                  <PlainRow
+                    label="Phrase break gap"
+                    desc="Silence longer than this between words forces a new caption segment."
+                    value={m.phraseBreakGap}
+                    min={m.enabled ? m.mergeGapThreshold : 0.1} max={3} step={0.05}
+                    unit="s"
+                    onChange={(v) => setPlain("merge", "phraseBreakGap", v)}
+                  />
                   <ToggleRow
                     label="Merge short segments"
                     desc="Merge short transcription segments into longer captions."
@@ -255,21 +294,7 @@ export function ProfileEditor() {
                         unit="s"
                         onChange={(v) => setPlain("merge", "mergeGapThreshold", v)}
                       />
-                      <PlainRow
-                        label="Max merged chars"
-                        desc="Maximum characters in a merged caption."
-                        value={m.maxMergedChars}
-                        min={20} max={200} step={1}
-                        onChange={(v) => setPlain("merge", "maxMergedChars", v)}
-                      />
-                      <PlainRow
-                        label="Max merged duration"
-                        desc="Maximum duration of a merged caption."
-                        value={m.maxMergedDuration}
-                        min={1} max={20} step={0.5}
-                        unit="s"
-                        onChange={(v) => setPlain("merge", "maxMergedDuration", v)}
-                      />
+
                     </>
                   )}
                 </Section>
@@ -322,10 +347,13 @@ function NumberInput({ value, min, max, step, unit, onChange }: {
   unit?: string;
   onChange: (v: number) => void;
 }) {
-  const [raw, setRaw] = useState(String(value));
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+  const fmt = (v: number) => v.toFixed(decimals);
+
+  const [raw, setRaw] = useState(fmt(value));
 
   // Sync when external value changes (e.g. profile switch)
-  useEffect(() => { setRaw(String(value)); }, [value]);
+  useEffect(() => { setRaw(fmt(value)); }, [value]);
 
   const parsed = parseFloat(raw);
   const outOfRange = !isNaN(parsed) && (parsed < min || parsed > max);
@@ -345,11 +373,11 @@ function NumberInput({ value, min, max, step, unit, onChange }: {
       }}
       onBlur={() => {
         const v = parseFloat(raw);
-        if (isNaN(v)) { setRaw(String(min)); onChange(min); return; }
+        if (isNaN(v)) { setRaw(fmt(min)); onChange(min); return; }
         const clamped = clamp(v, min, max);
         const stepped = Math.round(clamped / step) * step;
         const final = Math.round(clamp(stepped, min, max) * 1e10) / 1e10;
-        setRaw(String(final));
+        setRaw(fmt(final));
         onChange(final);
       }}
       onInvalid={(e) => e.preventDefault()}
@@ -357,7 +385,7 @@ function NumberInput({ value, min, max, step, unit, onChange }: {
   );
 }
 
-function RuleRow({ label, desc, value, strict, min, max, step, unit, onValue, onStrict }: {
+function RuleRow({ label, desc, value, strict, min, max, step, unit, timedUnit, onValue, onStrict, onUnit }: {
   label: string;
   desc?: string;
   value: number;
@@ -366,9 +394,15 @@ function RuleRow({ label, desc, value, strict, min, max, step, unit, onValue, on
   max: number;
   step: number;
   unit?: string;
+  timedUnit?: "s" | "fr";
   onValue: (v: number) => void;
   onStrict: (v: boolean) => void;
+  onUnit?: (u: "s" | "fr") => void;
 }) {
+  const isFrames = timedUnit === "fr";
+  const displayStep = isFrames ? 1 : step;
+  const displayUnit = timedUnit ?? unit;
+
   return (
     <div class="pe-row">
       <div class="pe-label-wrap">
@@ -376,8 +410,18 @@ function RuleRow({ label, desc, value, strict, min, max, step, unit, onValue, on
         {desc && <span class="pe-desc">{desc}</span>}
       </div>
       <div class="pe-controls">
-        <NumberInput value={value} min={min} max={max} step={step} unit={unit} onChange={onValue} />
-        {unit && <span class="pe-unit">{unit}</span>}
+        <NumberInput value={value} min={min} max={max} step={displayStep} unit={displayUnit} onChange={onValue} />
+        {timedUnit && onUnit ? (
+          <button
+            class="pe-unit-toggle"
+            onClick={() => onUnit(isFrames ? "s" : "fr")}
+            data-tooltip={isFrames ? "Switch to seconds" : "Switch to frames"}
+          >
+            {timedUnit}
+          </button>
+        ) : (
+          displayUnit && <span class="pe-unit">{displayUnit}</span>
+        )}
         <button
           class="pe-rule-toggle"
           onClick={() => onStrict(!strict)}

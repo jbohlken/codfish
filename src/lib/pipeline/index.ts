@@ -8,6 +8,10 @@ import { enforceTiming } from "./timing";
 import { validate } from "./validate";
 import type { ValidationReport } from "./types";
 
+function timedToSeconds(rule: { value: number; unit: "s" | "fr" }, fps: number): number {
+  return rule.unit === "fr" ? rule.value / fps : rule.value;
+}
+
 export interface PipelineResult {
   captions: CaptionBlock[];
   report: ValidationReport;
@@ -32,16 +36,24 @@ export function runPipeline(
   // 1. Cleanup
   const cleanedWords = cleanWords(words);
 
+  const fps = sourceFps ?? profile.timing.defaultFps;
+  const maxDurationSec = timedToSeconds(profile.timing.maxDuration, fps);
+
   // 2. Segment
   const phrases = segmentIntoPhrases(cleanedWords, {
     maxChars: profile.formatting.maxCharsPerLine.value,
-    maxDuration: profile.timing.maxDuration.value,
+    maxLines: profile.formatting.maxLines.value,
+    maxDuration: maxDurationSec,
+    gapThreshold: profile.merge.phraseBreakGap,
   });
 
-  // 3. Merge
-  const mergedPhrases = mergeShortPhrases(phrases, profile.merge);
+  // 3. Merge — char and duration budgets derived from display capacity
+  const maxMergedChars = profile.formatting.maxCharsPerLine.value * profile.formatting.maxLines.value;
+  const mergedPhrases = profile.merge.enabled
+    ? mergeShortPhrases(phrases, profile.merge, maxMergedChars, maxDurationSec)
+    : phrases;
 
-  // 4. Linebreak → CaptionBlocks
+  // 4. Linebreak → CaptionBlocks (up to maxLines lines per caption)
   const blocks: CaptionBlock[] = mergedPhrases.map((phrase, i) => ({
     index: i + 1,
     start: phrase.start,
@@ -49,7 +61,7 @@ export function runPipeline(
     lines: formatPhraseToCaptionLines(
       phrase,
       profile.formatting.maxCharsPerLine.value,
-      profile.formatting.maxLines,
+      profile.formatting.maxLines.value,
     ),
     speaker: phrase.words[0]?.speaker,
     words: phrase.words,

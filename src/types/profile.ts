@@ -4,29 +4,35 @@ export interface ProfileRule<T> {
   strict: boolean; // true = pipeline enforces, false = warn only
 }
 
+/** A timing parameter that can be expressed in seconds or frames. */
+export interface TimedRule {
+  value: number;
+  strict: boolean;
+  unit: "s" | "fr";
+}
+
 export interface TimingConfig {
-  minDuration: ProfileRule<number>;   // seconds
-  maxDuration: ProfileRule<number>;   // seconds
+  minDuration: TimedRule;
+  maxDuration: TimedRule;
+  maxCps: ProfileRule<number>;        // characters per second (reading speed)
   extendToFill: boolean;
   extendToFillMax: number;            // seconds
   gapCloseThreshold: number;          // seconds — gaps below this are closed (seamless)
   minGapEnabled: boolean;
-  minGapSeconds: ProfileRule<number>; // seconds — minimum non-zero gap (prevents flicker)
+  minGapSeconds: TimedRule;
   defaultFps: number;
 }
 
 export interface FormattingConfig {
   maxCharsPerLine: ProfileRule<number>;
-  maxLines: number;                   // always strict — never has fuzzy mode
-  maxCps: ProfileRule<number>;        // characters per second (reading speed)
+  maxLines: ProfileRule<number>;
 }
 
 export interface MergeConfig {
   enabled: boolean;
+  phraseBreakGap: number;             // seconds — silence gap that forces a new segment
   minSegmentWords: number;
   mergeGapThreshold: number;          // seconds
-  maxMergedChars: number;
-  maxMergedDuration: number;          // seconds
 }
 
 export interface CaptionProfile {

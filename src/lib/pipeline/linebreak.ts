@@ -1,4 +1,4 @@
-import type { Phrase } from "./types";
+import { makePhrase, type Phrase } from "./types";
 
 const BREAK_AFTER_SENTENCE = 100;
 const BREAK_AFTER_CLAUSE = 80;
@@ -50,37 +50,38 @@ function scoreBreakPoint(words: string[], breakIndex: number): number {
   return BREAK_NEUTRAL;
 }
 
-/** Break a phrase into 1 or 2 display lines using linguistic scoring. */
-export function breakIntoLines(phrase: Phrase, maxCharsPerLine = 42): string[] {
+/** Break a phrase into up to maxLines display lines using linguistic scoring. */
+export function breakIntoLines(phrase: Phrase, maxCharsPerLine = 42, maxLines = 2): string[] {
   const words = phrase.words.map((w) => w.text);
 
   if (words.length === 0) return [];
 
   const text = words.join(" ");
-  if (words.length === 1 || text.length <= maxCharsPerLine) return [text];
+
+  // Fits on one line or limited to one line
+  if (maxLines === 1 || words.length === 1 || text.length <= maxCharsPerLine) return [text];
 
   let bestBreak: number | null = null;
   let bestScore = -Infinity;
 
   for (let i = 1; i < words.length; i++) {
     const line1 = words.slice(0, i).join(" ");
-    const line2 = words.slice(i).join(" ");
-    const wordsLine2 = words.length - i;
+    const remaining = words.slice(i).join(" ");
+    const remainingWordCount = words.length - i;
 
-    // Skip if line 2 would be an orphan
-    if (wordsLine2 < MIN_WORDS_LINE2) continue;
+    if (remainingWordCount < MIN_WORDS_LINE2) continue;
 
-    const overTarget =
-      Math.max(0, line1.length - maxCharsPerLine) +
-      Math.max(0, line2.length - maxCharsPerLine);
-
+    const overTarget = Math.max(0, line1.length - maxCharsPerLine);
     let score = scoreBreakPoint(words, i);
-
-    const balance = Math.abs(line1.length - line2.length);
-    const total = line1.length + line2.length;
-    const ratio = total > 0 ? Math.min(line1.length, line2.length) / total : 0.5;
-    score -= ratio < 0.3 ? balance * 1.5 : balance * 0.5;
     score -= overTarget * 2;
+
+    // For the final split (2-line case), apply balance scoring
+    if (maxLines === 2) {
+      const balance = Math.abs(line1.length - remaining.length);
+      const total = line1.length + remaining.length;
+      const ratio = total > 0 ? Math.min(line1.length, remaining.length) / total : 0.5;
+      score -= ratio < 0.3 ? balance * 1.5 : balance * 0.5;
+    }
 
     if (score > bestScore) {
       bestBreak = i;
@@ -88,14 +89,13 @@ export function breakIntoLines(phrase: Phrase, maxCharsPerLine = 42): string[] {
     }
   }
 
-  if (bestBreak !== null) {
-    return [
-      words.slice(0, bestBreak).join(" "),
-      words.slice(bestBreak).join(" "),
-    ];
-  }
+  if (bestBreak === null) return [text];
 
-  return [text];
+  const line1 = words.slice(0, bestBreak).join(" ");
+  const remainingPhrase = makePhrase(phrase.words.slice(bestBreak));
+  const remainingLines = breakIntoLines(remainingPhrase, maxCharsPerLine, maxLines - 1);
+
+  return [line1, ...remainingLines];
 }
 
 /** Main entry point: break a phrase into caption lines, respecting max_lines. */
@@ -104,6 +104,5 @@ export function formatPhraseToCaptionLines(
   maxCharsPerLine = 42,
   maxLines = 2,
 ): string[] {
-  const lines = breakIntoLines(phrase, maxCharsPerLine);
-  return lines.slice(0, maxLines);
+  return breakIntoLines(phrase, maxCharsPerLine, maxLines);
 }

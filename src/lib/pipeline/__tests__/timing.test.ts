@@ -4,12 +4,14 @@ import { makeWords, makeBlock } from "./helpers";
 import type { TimingConfig } from "../../../types/profile";
 
 const baseConfig: TimingConfig = {
-  minDuration: { value: 0.0, strict: false },
-  maxDuration: { value: 6.0, strict: false },
+  minDuration: { value: 0.0, strict: false, unit: "s" },
+  maxDuration: { value: 6.0, strict: false, unit: "s" },
+  maxCps: { value: 20.0, strict: false },
   extendToFill: false,
   extendToFillMax: 0.5,
   gapCloseThreshold: 0.5,
-  minGapSeconds: { value: 0.4, strict: true },
+  minGapEnabled: true,
+  minGapSeconds: { value: 0.4, strict: true, unit: "s" },
   defaultFps: 30.0,
 };
 
@@ -53,7 +55,7 @@ describe("enforceTiming", () => {
   it("extends short caption to min duration", () => {
     const words = makeWords("Hello");
     const block = makeBlock(1, 0.0, 0.3, ["Hello"], words);
-    const result = enforceTiming([block], { ...baseConfig, minDuration: { value: 1.0, strict: false } });
+    const result = enforceTiming([block], { ...baseConfig, minDuration: { value: 1.0, strict: false, unit: "s" } });
     expect(result[0].end - result[0].start).toBeGreaterThanOrEqual(1.0);
   });
 

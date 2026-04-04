@@ -1,12 +1,20 @@
 import type { CaptionBlock } from "../../types/project";
-import type { CaptionProfile } from "../../types/profile";
+import type { CaptionProfile, TimedRule } from "../../types/profile";
 import { framesBetween } from "./timing";
 import type { ValidationReport, ValidationWarning } from "./types";
+
+function toSeconds(rule: TimedRule, fps: number): number {
+  return rule.unit === "fr" ? rule.value / fps : rule.value;
+}
+
+function fmtTimedValue(rule: TimedRule): string {
+  return rule.unit === "fr" ? `${rule.value}fr` : `${rule.value}s`;
+}
 
 /** Validate caption blocks against the profile spec.
  *
  * Always-firm rules:
- * - max_lines, overlap
+ * - overlap
  *
  * ProfileRule parameters: strict = firm enforcement, !strict = fuzzy warning only
  * - maxCharsPerLine, maxCps, minDuration, maxDuration, minGapSeconds
@@ -22,6 +30,9 @@ export function validate(
   const fps = sourceFps ?? profile.timing.defaultFps;
   const warnings: ValidationWarning[] = [];
   const { formatting, timing } = profile;
+  const minDurationSec = toSeconds(timing.minDuration, fps);
+  const maxDurationSec = toSeconds(timing.maxDuration, fps);
+  const minGapSec = toSeconds(timing.minGapSeconds, fps);
 
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
@@ -29,15 +40,16 @@ export function validate(
     const blockIndex = i + 1;
 
     // ALWAYS FIRM: max lines
-    if (block.lines.length > formatting.maxLines) {
+    if (block.lines.length > formatting.maxLines.value) {
       warnings.push({
         blockIndex,
         rule: "max_lines",
         label: "Too many lines",
-        detail: `${block.lines.length} lines — max ${formatting.maxLines}`,
-        message: `Caption #${blockIndex} has ${block.lines.length} lines (limit: ${formatting.maxLines})`,
+        detail: `${block.lines.length} lines — max ${formatting.maxLines.value}`,
+        message: `Caption #${blockIndex} has ${block.lines.length} lines (${formatting.maxLines.strict ? "limit" : "target"}: ${formatting.maxLines.value})`,
         actualValue: block.lines.length,
-        targetValue: formatting.maxLines,
+        targetValue: formatting.maxLines.value,
+        strict: formatting.maxLines.strict,
       });
     }
 
@@ -60,29 +72,29 @@ export function validate(
     }
 
     // minDuration
-    if (timing.minDuration.value > 0 && duration < timing.minDuration.value) {
+    if (minDurationSec > 0 && duration < minDurationSec) {
       warnings.push({
         blockIndex,
         rule: "min_duration",
         label: "Too short",
-        detail: `${duration.toFixed(2)}s — min ${timing.minDuration.value}s`,
-        message: `Caption #${blockIndex} too short: ${duration.toFixed(2)}s (${timing.minDuration.strict ? "limit" : "target"}: ${timing.minDuration.value}s)`,
+        detail: `${duration.toFixed(2)}s — min ${fmtTimedValue(timing.minDuration)}`,
+        message: `Caption #${blockIndex} too short: ${duration.toFixed(2)}s (${timing.minDuration.strict ? "limit" : "target"}: ${fmtTimedValue(timing.minDuration)})`,
         actualValue: duration,
-        targetValue: timing.minDuration.value,
+        targetValue: minDurationSec,
         strict: timing.minDuration.strict,
       });
     }
 
     // maxDuration
-    if (duration > timing.maxDuration.value) {
+    if (duration > maxDurationSec) {
       warnings.push({
         blockIndex,
         rule: "max_duration",
         label: "Too long",
-        detail: `${duration.toFixed(2)}s — max ${timing.maxDuration.value}s`,
-        message: `Caption #${blockIndex} too long: ${duration.toFixed(2)}s (${timing.maxDuration.strict ? "limit" : "target"}: ${timing.maxDuration.value}s)`,
+        detail: `${duration.toFixed(2)}s — max ${fmtTimedValue(timing.maxDuration)}`,
+        message: `Caption #${blockIndex} too long: ${duration.toFixed(2)}s (${timing.maxDuration.strict ? "limit" : "target"}: ${fmtTimedValue(timing.maxDuration)})`,
         actualValue: duration,
-        targetValue: timing.maxDuration.value,
+        targetValue: maxDurationSec,
         strict: timing.maxDuration.strict,
       });
     }
@@ -91,16 +103,16 @@ export function validate(
     const totalChars = block.lines.reduce((sum, l) => sum + l.length, 0);
     if (duration > 0) {
       const cps = totalChars / duration;
-      if (cps > formatting.maxCps.value) {
+      if (cps > timing.maxCps.value) {
         warnings.push({
           blockIndex,
           rule: "reading_speed",
           label: "Reading speed",
-          detail: `${cps.toFixed(1)} CPS — max ${formatting.maxCps.value}`,
-          message: `Caption #${blockIndex}: ${cps.toFixed(1)} CPS (${totalChars} chars in ${duration.toFixed(2)}s, ${formatting.maxCps.strict ? "limit" : "target"}: ≤${formatting.maxCps.value})`,
+          detail: `${cps.toFixed(1)} CPS — max ${timing.maxCps.value}`,
+          message: `Caption #${blockIndex}: ${cps.toFixed(1)} CPS (${totalChars} chars in ${duration.toFixed(2)}s, ${timing.maxCps.strict ? "limit" : "target"}: ≤${timing.maxCps.value})`,
           actualValue: cps,
-          targetValue: formatting.maxCps.value,
-          strict: formatting.maxCps.strict,
+          targetValue: timing.maxCps.value,
+          strict: timing.maxCps.strict,
         });
       }
     }
@@ -121,16 +133,16 @@ export function validate(
           targetValue: 0,
           strict: true,
         });
-      } else if (timing.minGapEnabled && gapSeconds > 0 && gapSeconds < timing.minGapSeconds.value) {
+      } else if (timing.minGapEnabled && gapSeconds > 0 && gapSeconds < minGapSec) {
         const gapFrames = framesBetween(block.end, next.start, fps);
         warnings.push({
           blockIndex,
           rule: "gap_flicker",
           label: "Gap too small",
-          detail: `${gapFrames}f / ${gapSeconds.toFixed(3)}s — min ${timing.minGapSeconds.value}s`,
-          message: `Caption #${blockIndex}→#${blockIndex + 1}: ${gapFrames} frame gap (${gapSeconds.toFixed(3)}s, ${timing.minGapSeconds.strict ? "must" : "should"} be 0 or ≥${timing.minGapSeconds.value}s)`,
+          detail: `${gapFrames}f / ${gapSeconds.toFixed(3)}s — min ${fmtTimedValue(timing.minGapSeconds)}`,
+          message: `Caption #${blockIndex}→#${blockIndex + 1}: ${gapFrames} frame gap (${gapSeconds.toFixed(3)}s, ${timing.minGapSeconds.strict ? "must" : "should"} be 0 or ≥${fmtTimedValue(timing.minGapSeconds)})`,
           actualValue: gapSeconds,
-          targetValue: timing.minGapSeconds.value,
+          targetValue: minGapSec,
           strict: timing.minGapSeconds.strict,
         });
       }

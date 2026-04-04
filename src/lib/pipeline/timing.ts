@@ -1,5 +1,9 @@
 import type { CaptionBlock } from "../../types/project";
-import type { TimingConfig } from "../../types/profile";
+import type { TimedRule, TimingConfig } from "../../types/profile";
+
+function toSeconds(rule: TimedRule, fps: number): number {
+  return rule.unit === "fr" ? rule.value / fps : rule.value;
+}
 
 export function snapToFrame(timeSeconds: number, fps: number): number {
   const frame = Math.round(timeSeconds * fps);
@@ -38,9 +42,9 @@ export function enforceTiming(
   if (blocks.length === 0) return blocks;
 
   const fps = sourceFps ?? config.defaultFps;
-  const minDuration = config.minDuration.value;
-  const maxDuration = config.maxDuration.value;
-  const maxDurationStrict = config.maxDuration.strict;
+  const minDuration = toSeconds(config.minDuration, fps);
+  const maxDuration = toSeconds(config.maxDuration, fps);
+  const minGapSeconds = toSeconds(config.minGapSeconds, fps);
 
   // Forward pass: snap, extend-to-fill, min duration
   for (let i = 0; i < blocks.length; i++) {
@@ -57,8 +61,8 @@ export function enforceTiming(
         // Continuous speech — extend all the way (will be seamless)
         available = next.start - block.end;
       } else {
-        // Pause — leave room for minimum gap
-        available = next.start - block.end - config.minGapSeconds.value;
+        // Pause — leave room for minimum gap if enforced
+        available = next.start - block.end - (config.minGapEnabled ? minGapSeconds : 0);
       }
 
       if (available > 0) {
@@ -72,9 +76,31 @@ export function enforceTiming(
       block.end = snapToFrame(block.start + minDuration, fps);
     }
 
-    // maxDuration: clamp end if strict
-    if (maxDurationStrict && block.end - block.start > maxDuration) {
+    // maxDuration: always enforced
+    if (block.end - block.start > maxDuration) {
       block.end = snapToFrame(block.start + maxDuration, fps);
+    }
+  }
+
+  // CPS enforcement pass: extend end times to meet reading speed target if strict
+  if (config.maxCps.strict) {
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const totalChars = block.lines.reduce((sum, l) => sum + l.length, 0);
+      const requiredDuration = totalChars / config.maxCps.value;
+      const currentDuration = block.end - block.start;
+
+      if (currentDuration < requiredDuration) {
+        const next = i + 1 < blocks.length ? blocks[i + 1] : null;
+        const gapBuffer = config.minGapEnabled ? minGapSeconds : 0;
+        const ceiling = next
+          ? Math.min(block.start + maxDuration, next.start - gapBuffer)
+          : block.start + maxDuration;
+        const newEnd = snapToFrame(Math.min(block.start + requiredDuration, ceiling), fps);
+        if (newEnd > block.end) {
+          block.end = newEnd;
+        }
+      }
     }
   }
 
@@ -88,7 +114,7 @@ export function enforceTiming(
     if (gapSeconds < 0) {
       // Overlap — pull current end back
       current.end = next.start;
-    } else if (gapSeconds > 0 && gapSeconds < config.minGapSeconds.value) {
+    } else if (config.minGapEnabled && gapSeconds > 0 && gapSeconds < minGapSeconds) {
       // Flicker zone — close to seamless
       current.end = next.start;
     }

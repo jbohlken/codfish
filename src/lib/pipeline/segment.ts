@@ -26,16 +26,18 @@ export function segmentIntoPhrases(
   words: Word[],
   options: {
     maxChars?: number;
+    maxLines?: number;
     maxWordsPerPhrase?: number;
     maxDuration?: number;
-    gapThreshold?: number;
+    gapThreshold?: number;            // seconds — silence gap that forces a new segment
   } = {},
 ): Phrase[] {
   const {
     maxChars = 42,
+    maxLines = 2,
     maxWordsPerPhrase = 15,
     maxDuration = 6.0,
-    gapThreshold = 0.7,
+    gapThreshold = 0.7, // seconds — silence gap that forces a new segment
   } = options;
 
   if (words.length === 0) return [];
@@ -56,8 +58,8 @@ export function segmentIntoPhrases(
       const next = words[i + 1];
       const nextText = currentText + " " + next.text;
 
-      // (b) Would exceed 2 lines of characters
-      if (nextText.length > maxChars * 2) shouldBreak = true;
+      // (b) Would exceed the full line budget
+      if (nextText.length > maxChars * maxLines) shouldBreak = true;
 
       // (c) Duration limit
       if (next.end - current[0].start > maxDuration) shouldBreak = true;
