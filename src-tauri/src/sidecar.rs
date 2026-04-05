@@ -352,7 +352,15 @@ pub async fn download_sidecar(
     std::fs::rename(&tmp_path, &bin_path)
         .map_err(|e| format!("rename: {e}"))?;
 
-    // 8. Write metadata
+    // 8. Set executable permission on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("chmod: {e}"))?;
+    }
+
+    // 9. Write metadata
     write_meta(
         &app,
         &SidecarMeta {
