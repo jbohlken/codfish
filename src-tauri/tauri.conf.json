@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
