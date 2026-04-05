@@ -633,6 +633,16 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_icon(tauri::include_image!("icons/icon.png"));
             }
+            // If launched via file association, emit the path to the frontend
+            let args: Vec<String> = std::env::args().collect();
+            if let Some(path) = args.get(1) {
+                if path.ends_with(".cod") {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let path = path.clone();
+                        let _ = window.emit("open-file", path);
+                    }
+                }
+            }
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())

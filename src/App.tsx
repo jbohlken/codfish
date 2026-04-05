@@ -6,10 +6,11 @@ import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus } from "./store/app";
-import { saveCurrentProject } from "./lib/project";
+import { saveCurrentProject, loadProjectFromPath } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { confirmUnsavedChanges } from "./components/UnsavedChanges";
 import { ErrorModal } from "./components/ErrorModal";
 import { ProfileEditor } from "./components/ProfileEditor";
@@ -58,6 +59,13 @@ export function App() {
 
   useEffect(() => {
     loadProfiles().then((p) => { profiles.value = p; });
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<string>("open-file", (e) => {
+      loadProjectFromPath(e.payload).catch(console.error);
+    });
+    return () => { unlisten.then((f) => f()); };
   }, []);
 
   useEffect(() => {

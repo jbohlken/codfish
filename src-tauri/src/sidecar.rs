@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SIDECAR_MANIFEST_URL: &str =
-    "https://github.com/jbohlken/codfish/releases/latest/download/sidecar-manifest.json";
+const SIDECAR_RELEASES_API: &str =
+    "https://api.github.com/repos/jbohlken/codfish/releases";
 
 const SIDECAR_BIN_NAME: &str = if cfg!(windows) {
     "transcribe.exe"
@@ -69,10 +69,58 @@ struct VariantInfo {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct PartInfo {
     url: String,
     sha256: String,
     size_bytes: u64,
+}
+
+// ── Manifest fetching ────────────────────────────────────────────────────────
+
+async fn fetch_sidecar_manifest(client: &reqwest::Client) -> Result<SidecarManifest, String> {
+    // Find the latest sidecar-v* release via the GitHub API
+    let releases: Vec<serde_json::Value> = client
+        .get(SIDECAR_RELEASES_API)
+        .header("User-Agent", "codfish")
+        .send()
+        .await
+        .map_err(|e| format!("fetch releases: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("parse releases: {e}"))?;
+
+    for release in &releases {
+        let tag = release.get("tag_name").and_then(|t| t.as_str()).unwrap_or("");
+        if !tag.starts_with("sidecar-v") {
+            continue;
+        }
+        // Find the sidecar-manifest.json asset in this release
+        let assets = release.get("assets").and_then(|a| a.as_array());
+        if let Some(assets) = assets {
+            for asset in assets {
+                let name = asset.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if name == "sidecar-manifest.json" {
+                    let url = asset
+                        .get("browser_download_url")
+                        .and_then(|u| u.as_str())
+                        .ok_or("missing manifest download URL")?;
+                    let manifest: SidecarManifest = client
+                        .get(url)
+                        .header("User-Agent", "codfish")
+                        .send()
+                        .await
+                        .map_err(|e| format!("fetch manifest: {e}"))?
+                        .json()
+                        .await
+                        .map_err(|e| format!("parse manifest: {e}"))?;
+                    return Ok(manifest);
+                }
+            }
+        }
+    }
+
+    Err("no sidecar release found".into())
 }
 
 // ── Path helpers ─────────────────────────────────────────────────────────────
@@ -190,14 +238,7 @@ pub async fn check_sidecar_update(app: AppHandle) -> Result<SidecarStatus, Strin
     }
 
     let client = reqwest::Client::new();
-    let manifest = client
-        .get(SIDECAR_MANIFEST_URL)
-        .send()
-        .await
-        .map_err(|e| format!("fetch manifest: {e}"))?
-        .json::<SidecarManifest>()
-        .await
-        .map_err(|e| format!("parse manifest: {e}"))?;
+    let manifest = fetch_sidecar_manifest(&client).await?;
 
     if manifest.version != meta.version {
         Ok(SidecarStatus::UpdateAvailable {
@@ -221,14 +262,7 @@ pub async fn download_sidecar(
 ) -> Result<(), String> {
     // 1. Fetch manifest
     let client = reqwest::Client::new();
-    let manifest = client
-        .get(SIDECAR_MANIFEST_URL)
-        .send()
-        .await
-        .map_err(|e| format!("fetch manifest: {e}"))?
-        .json::<SidecarManifest>()
-        .await
-        .map_err(|e| format!("parse manifest: {e}"))?;
+    let manifest = fetch_sidecar_manifest(&client).await?;
 
     // 2. Look up the variant
     let triple = target_triple();

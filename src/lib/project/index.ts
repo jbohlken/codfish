@@ -69,15 +69,7 @@ export async function newProject(): Promise<boolean> {
   return true;
 }
 
-export async function openProject(): Promise<boolean> {
-  const result = await open({
-    title: "Open Project",
-    filters: [{ name: "Codfish Project", extensions: ["cod"] }],
-    multiple: false,
-  });
-  const filePath = flattenDialogResult(result);
-  if (!filePath) return false;
-
+export async function loadProjectFromPath(filePath: string): Promise<boolean> {
   const json = await invoke<string>("load_project", { path: filePath });
   const proj = JSON.parse(json) as CodProject;
 
@@ -99,6 +91,17 @@ export async function openProject(): Promise<boolean> {
 
   loadIntoStore(proj, filePath);
   return true;
+}
+
+export async function openProject(): Promise<boolean> {
+  const result = await open({
+    title: "Open Project",
+    filters: [{ name: "Codfish Project", extensions: ["cod"] }],
+    multiple: false,
+  });
+  const filePath = flattenDialogResult(result);
+  if (!filePath) return false;
+  return loadProjectFromPath(filePath);
 }
 
 export async function saveCurrentProject(): Promise<boolean> {
