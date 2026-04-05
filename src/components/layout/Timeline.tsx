@@ -3,6 +3,7 @@ import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIc
 import { useSignalEffect, signal } from "@preact/signals";
 import WaveSurfer from "wavesurfer.js";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { getCachedPeaks, cachePeaks } from "../../lib/peaks-cache";
 import {
   selectedMedia,
   selectedCaptionIndex,
@@ -24,6 +25,8 @@ const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 const zoomLevel = signal(1);
+type WaveformState = "idle" | "loading" | "ready";
+const waveformState = signal<WaveformState>("idle");
 
 const SNAP_THRESHOLD_PX = 8;
 
@@ -62,7 +65,12 @@ export function Timeline() {
     wsRef.current?.destroy();
     wsRef.current = null;
 
-    if (!container || !media) return;
+    if (!container || !media) {
+      waveformState.value = "idle";
+      return;
+    }
+
+    waveformState.value = "loading";
 
     const ws = WaveSurfer.create({
       container,
@@ -76,19 +84,42 @@ export function Timeline() {
       barRadius: 2,
     });
 
-    ws.load(convertFileSrc(media.path)).catch(() => {});
+    let cancelled = false;
+
+    // Try loading from cache first, fall back to full decode
+    getCachedPeaks(media.path).then((cached) => {
+      if (cancelled) return;
+      if (cached) {
+        // Load with pre-computed peaks — skips the expensive Web Audio decode
+        ws.load(convertFileSrc(media.path), cached.peaks, cached.duration).catch(() => {});
+      } else {
+        ws.load(convertFileSrc(media.path)).catch(() => {});
+      }
+    });
 
     // Sync zoom once audio is decoded and duration is known
     ws.on("ready", () => {
+      waveformState.value = "ready";
       const dur = ws.getDuration();
       if (!dur) return;
       const visibleWidth = scrollRef.current?.clientWidth ?? 800;
       ws.zoom((visibleWidth * zoomLevel.peek()) / dur);
+
+      // Cache peaks for next time (only if we decoded fresh)
+      const decoded = ws.getDecodedData();
+      if (decoded) {
+        const peaks: Float32Array[] = [];
+        for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+          peaks.push(decoded.getChannelData(ch));
+        }
+        cachePeaks(media.path, peaks, dur);
+      }
     });
 
     wsRef.current = ws;
 
     return () => {
+      cancelled = true;
       ws.destroy();
       wsRef.current = null;
     };
@@ -386,6 +417,12 @@ export function Timeline() {
                 style={{ cursor: "pointer" }}
               >
                 <div ref={waveCanvasRef} style={{ width: "100%", height: "100%" }} />
+                {waveformState.value === "loading" && (
+                  <div class="timeline-waveform-loading">
+                    <div class="timeline-waveform-loading-spinner" />
+                    <span>Generating waveform…</span>
+                  </div>
+                )}
                 {duration > 0 && (
                   <div
                     class="timeline-playhead"

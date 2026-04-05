@@ -1,4 +1,4 @@
-import { useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -20,11 +20,22 @@ interface SidecarUpdateState {
   progress: number | null;
 }
 
-const appUpdate = signal<AppUpdateState | null>(null);
-const sidecarUpdate = signal<SidecarUpdateState | null>(null);
-const dismissed = signal(false);
+export const appUpdate = signal<AppUpdateState | null>(null);
+export const sidecarUpdate = signal<SidecarUpdateState | null>(null);
+const popoverOpen = signal(false);
 
-export function UpdateNotice() {
+/** Returns true if any update is available or in progress */
+export function hasUpdate(): boolean {
+  return appUpdate.value !== null || sidecarUpdate.value !== null;
+}
+
+/** Returns true if any update is actively installing/downloading */
+export function isUpdating(): boolean {
+  return (appUpdate.value?.installing ?? false) || (sidecarUpdate.value?.downloading ?? false);
+}
+
+/** Hook that sets up update checking — call once at app root */
+export function useUpdateChecker() {
   // Check for app updates after 5s
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -69,93 +80,122 @@ export function UpdateNotice() {
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
+}
 
-  const handleAppInstall = async () => {
-    const state = appUpdate.value;
-    if (!state) return;
-    appUpdate.value = { ...state, installing: true, progress: 0 };
-    try {
-      const available = await check();
-      if (!available) return;
+const handleAppInstall = async () => {
+  const state = appUpdate.value;
+  if (!state) return;
+  appUpdate.value = { ...state, installing: true, progress: 0 };
 
-      let totalBytes = 0;
-      let downloadedBytes = 0;
+  try {
+    const available = await check();
+    if (!available) return;
 
-      await available.downloadAndInstall((event) => {
-        if (event.event === "Started" && event.data.contentLength) {
-          totalBytes = event.data.contentLength;
-        } else if (event.event === "Progress") {
-          downloadedBytes += event.data.chunkLength;
-          const percent = totalBytes > 0
-            ? Math.round((downloadedBytes / totalBytes) * 100)
-            : 0;
-          appUpdate.value = { ...state, installing: true, progress: percent };
-        } else if (event.event === "Finished") {
-          appUpdate.value = { ...state, installing: true, progress: 100 };
-        }
-      });
+    let totalBytes = 0;
+    let downloadedBytes = 0;
 
-      await relaunch();
-    } catch {
-      appUpdate.value = { ...state, installing: false, progress: null };
-    }
-  };
+    await available.downloadAndInstall((event) => {
+      if (event.event === "Started" && event.data.contentLength) {
+        totalBytes = event.data.contentLength;
+      } else if (event.event === "Progress") {
+        downloadedBytes += event.data.chunkLength;
+        const percent = totalBytes > 0
+          ? Math.round((downloadedBytes / totalBytes) * 100)
+          : 0;
+        appUpdate.value = { ...state, installing: true, progress: percent };
+      } else if (event.event === "Finished") {
+        appUpdate.value = { ...state, installing: true, progress: 100 };
+      }
+    });
 
-  const handleSidecarUpdate = async () => {
-    const state = sidecarUpdate.value;
-    if (!state) return;
-    sidecarUpdate.value = { ...state, downloading: true, progress: 0 };
-    try {
-      await invoke("download_sidecar", { variant: state.variant });
-      sidecarUpdate.value = null;
-      sidecarStatus.value = "ready";
-    } catch {
-      sidecarUpdate.value = { ...state, downloading: false, progress: null };
-    }
-  };
+    await relaunch();
+  } catch {
+    appUpdate.value = { ...state, installing: false, progress: null };
+  }
+};
 
-  if (dismissed.value) return null;
+const handleSidecarUpdate = async () => {
+  const state = sidecarUpdate.value;
+  if (!state) return;
+  sidecarUpdate.value = { ...state, downloading: true, progress: 0 };
+  try {
+    await invoke("download_sidecar", { variant: state.variant });
+    sidecarUpdate.value = null;
+    sidecarStatus.value = "ready";
+  } catch {
+    sidecarUpdate.value = { ...state, downloading: false, progress: null };
+  }
+};
 
+export function toggleUpdatePopover() {
+  popoverOpen.value = !popoverOpen.value;
+}
+
+export function UpdatePopover() {
+  const ref = useRef<HTMLDivElement>(null);
   const app = appUpdate.value;
   const sc = sidecarUpdate.value;
-  if (!app && !sc) return null;
+
+  // Close on outside click
+  useEffect(() => {
+    if (!popoverOpen.value) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        popoverOpen.value = false;
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [popoverOpen.value]);
+
+  if (!popoverOpen.value || (!app && !sc)) return null;
 
   return (
-    <div class="update-notice">
+    <div class="update-popover" ref={ref}>
+      <div class="update-popover-header">Updates Available</div>
       {app && (
-        <div class="update-notice-item">
+        <div class="update-popover-item">
           {app.installing ? (
-            <span class="update-notice-text">
-              Installing v{app.version}...
-              {app.progress !== null && ` ${app.progress}%`}
-            </span>
+            <div class="update-popover-progress">
+              <span>Installing v{app.version}...</span>
+              {app.progress !== null && (
+                <div class="update-popover-bar">
+                  <div class="update-popover-bar-fill" style={{ width: `${app.progress}%` }} />
+                </div>
+              )}
+            </div>
           ) : (
             <>
-              <span class="update-notice-text">App v{app.version} available</span>
-              <button class="btn btn-ghost update-notice-btn" onClick={handleAppInstall}>Update</button>
+              <div class="update-popover-info">
+                <span class="update-popover-label">Codfish</span>
+                <span class="update-popover-version">v{app.version}</span>
+              </div>
+              <button class="btn btn-primary btn-sm" onClick={handleAppInstall}>Update</button>
             </>
           )}
         </div>
       )}
       {sc && (
-        <div class="update-notice-item">
+        <div class="update-popover-item">
           {sc.downloading ? (
-            <span class="update-notice-text">
-              Updating transcription engine...
-              {sc.progress !== null && ` ${sc.progress}%`}
-            </span>
+            <div class="update-popover-progress">
+              <span>Updating engine...</span>
+              {sc.progress !== null && (
+                <div class="update-popover-bar">
+                  <div class="update-popover-bar-fill" style={{ width: `${sc.progress}%` }} />
+                </div>
+              )}
+            </div>
           ) : (
             <>
-              <span class="update-notice-text">Transcription engine v{sc.latest} available</span>
-              <button class="btn btn-ghost update-notice-btn" onClick={handleSidecarUpdate}>Update</button>
+              <div class="update-popover-info">
+                <span class="update-popover-label">Transcription engine</span>
+                <span class="update-popover-version">v{sc.latest}</span>
+              </div>
+              <button class="btn btn-primary btn-sm" onClick={handleSidecarUpdate}>Update</button>
             </>
           )}
         </div>
-      )}
-      {!app?.installing && !sc?.downloading && (
-        <button class="btn btn-ghost update-notice-btn" onClick={() => { dismissed.value = true; }}>
-          Later
-        </button>
       )}
     </div>
   );

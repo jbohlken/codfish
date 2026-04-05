@@ -3,9 +3,10 @@ import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
 import { project, isDirty, activeProfile, profiles, pushHistory, canUndo, canRedo, undo, redo, undoDescription, redoDescription } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders } from "@phosphor-icons/react";
+import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish } from "@phosphor-icons/react";
 import { profileEditorOpen } from "../ProfileEditor";
 import { helpOpen } from "../HelpModal";
+import { hasUpdate, isUpdating, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
 import { theme, toggleTheme } from "../../store/theme";
 import { listModels } from "../../lib/transcription";
 
@@ -67,6 +68,18 @@ export function TitleBar() {
       <div class="titlebar-center" />
 
       <div class="titlebar-right">
+        {hasUpdate() && (
+          <div class="update-icon-wrapper">
+            <button
+              class={`btn btn-ghost btn-icon update-icon ${isUpdating() ? "update-icon--active" : ""}`}
+              data-tooltip="Updates available"
+              onClick={toggleUpdatePopover}
+            >
+              <Fish size={14} weight="fill" />
+            </button>
+            <UpdatePopover />
+          </div>
+        )}
         <button
           class="btn btn-ghost btn-icon"
           data-tooltip={theme.value === "dark" ? "Switch to light mode" : "Switch to dark mode"}
