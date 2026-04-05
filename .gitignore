@@ -20,6 +20,10 @@ sidecar/*.spec
 sidecar/.venv*/
 
 OLD/
+.env
+.env.*
+*.key
+*.pem
 
 # Editor directories and files
 .vscode/*
