@@ -2,19 +2,20 @@
 """
 Build the Codfish transcription sidecar with PyInstaller.
 
-Run from the repo root or from the sidecar/ directory:
-    python sidecar/build.py           # CPU build
-    python sidecar/build.py --cuda    # CUDA build (requires CUDA-enabled PyTorch)
+Prerequisites:
+    python sidecar/fetch_ffmpeg.py           # one-time: downloads LGPL ffmpeg binaries
+
+Dev builds (placed in src-tauri/binaries/ for local Tauri development):
+    python sidecar/build.py                  # CPU build
+    python sidecar/build.py --cuda           # CUDA build
+
+Release builds (placed in sidecar/dist/ with variant naming for distribution):
+    python sidecar/build.py --release        # CPU release
+    python sidecar/build.py --release --cuda # CUDA release
+    python sidecar/make_manifest.py --version X.Y.Z --dir sidecar/dist/
 
 For a CUDA build, first install the CUDA requirements into your environment:
     pip install -r sidecar/requirements-cuda.txt
-
-The binary is placed in src-tauri/binaries/ with the Tauri target-triple
-naming convention expected by tauri-plugin-shell:
-    transcribe-x86_64-pc-windows-msvc.exe   (Windows x64)
-    transcribe-aarch64-apple-darwin          (macOS Apple Silicon)
-    transcribe-x86_64-apple-darwin           (macOS Intel)
-    transcribe-x86_64-unknown-linux-gnu      (Linux x64)
 """
 
 import os
@@ -69,9 +70,17 @@ def check_cuda_available() -> bool:
 
 def main():
     cuda = "--cuda" in sys.argv
+    release = "--release" in sys.argv
     triple = target_triple()
     is_windows = platform.system().lower() == "windows"
-    binary_name = f"transcribe-{triple}" + (".exe" if is_windows else "")
+
+    if release:
+        # Release builds include the variant in the filename for distribution
+        variant = "cuda" if cuda else "cpu"
+        binary_name = f"transcribe-{variant}-{triple}" + (".exe" if is_windows else "")
+    else:
+        # Dev builds use the Tauri target-triple convention
+        binary_name = f"transcribe-{triple}" + (".exe" if is_windows else "")
 
     if cuda:
         if not check_cuda_available():
@@ -89,6 +98,29 @@ def main():
     print(f"Output binary : {BINARIES_DIR / binary_name}")
     print()
 
+    # Locate LGPL ffmpeg binaries (fetched by fetch_ffmpeg.py)
+    ffmpeg_dir = SCRIPT_DIR / "ffmpeg"
+    add_binary_args = []
+    ffmpeg_name = "ffmpeg.exe" if is_windows else "ffmpeg"
+    ffprobe_name = "ffprobe.exe" if is_windows else "ffprobe"
+    ffmpeg_bin = ffmpeg_dir / ffmpeg_name
+    ffprobe_bin = ffmpeg_dir / ffprobe_name
+
+    if ffmpeg_bin.is_file():
+        add_binary_args += ["--add-binary", f"{ffmpeg_bin}{os.pathsep}."]
+        print(f"Bundling ffmpeg:  {ffmpeg_bin}  ({ffmpeg_bin.stat().st_size / 1e6:.1f} MB)")
+    else:
+        sys.exit(
+            f"ERROR: {ffmpeg_bin} not found.\n"
+            "Run 'python sidecar/fetch_ffmpeg.py' first to download LGPL ffmpeg binaries."
+        )
+
+    if ffprobe_bin.is_file():
+        add_binary_args += ["--add-binary", f"{ffprobe_bin}{os.pathsep}."]
+        print(f"Bundling ffprobe: {ffprobe_bin}  ({ffprobe_bin.stat().st_size / 1e6:.1f} MB)")
+    else:
+        print("WARNING: ffprobe not found — audio stream detection will be skipped at runtime.")
+
     BINARIES_DIR.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -99,7 +131,6 @@ def main():
         "--workpath", str(SCRIPT_DIR / "build"),
         "--specpath", str(SCRIPT_DIR),
         # Collect all submodules and data files
-        "--collect-all", "imageio_ffmpeg",
         "--collect-all", "whisperx",
         "--collect-all", "faster_whisper",
         "--collect-all", "ctranslate2",
@@ -114,6 +145,7 @@ def main():
         "--copy-metadata", "torchaudio",
         # Suppress the console window on Windows (stdout is still captured by Tauri)
         "--console",
+        *add_binary_args,
         str(SCRIPT_DIR / "transcribe.py"),
     ]
 
@@ -122,11 +154,20 @@ def main():
     if result.returncode != 0:
         sys.exit(f"PyInstaller failed with exit code {result.returncode}")
 
-    # ── Copy to src-tauri/binaries/ ────────────────────────────────────────
+    # ── Copy outputs ──────────────────────────────────────────────────────
     src_binary = DIST_DIR / ("transcribe.exe" if is_windows else "transcribe")
-    dst_binary = BINARIES_DIR / binary_name
 
-    shutil.copy2(src_binary, dst_binary)
+    if release:
+        # Release: rename in-place in dist/ for make_manifest.py
+        dst_binary = DIST_DIR / binary_name
+        if dst_binary != src_binary:
+            shutil.move(str(src_binary), str(dst_binary))
+    else:
+        # Dev: copy to src-tauri/binaries/ with target-triple naming
+        BINARIES_DIR.mkdir(parents=True, exist_ok=True)
+        dst_binary = BINARIES_DIR / binary_name
+        shutil.copy2(src_binary, dst_binary)
+
     if not is_windows:
         dst_binary.chmod(0o755)
 

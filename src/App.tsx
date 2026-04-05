@@ -5,9 +5,10 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
-import { isPlaying, undo, redo, isDirty, profiles } from "./store/app";
+import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus } from "./store/app";
 import { saveCurrentProject } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirmUnsavedChanges } from "./components/UnsavedChanges";
 import { ErrorModal } from "./components/ErrorModal";
@@ -17,6 +18,7 @@ import { MediaSettings } from "./components/MediaSettings";
 import { UnsavedChanges } from "./components/UnsavedChanges";
 import { HelpModal } from "./components/HelpModal";
 import { Tooltip } from "./components/Tooltip";
+import { SidecarSetup } from "./components/SidecarSetup";
 
 export function App() {
   useEffect(() => {
@@ -33,6 +35,14 @@ export function App() {
       await win.destroy();
     });
     return () => { unlisten.then((f) => f()); };
+  }, []);
+
+  useEffect(() => {
+    invoke("get_sidecar_status").then((status: any) => {
+      sidecarStatus.value = status.status === "ready" ? "ready" : "not_installed";
+    }).catch(() => {
+      sidecarStatus.value = "not_installed";
+    });
   }, []);
 
   useEffect(() => {
@@ -76,6 +86,10 @@ export function App() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  if (sidecarStatus.value === "checking") return null;
+  if (sidecarStatus.value !== "ready" && sidecarStatus.value !== "update_available") {
+    return <SidecarSetup />;
+  }
   if (profiles.value.length === 0) return null;
 
   return (

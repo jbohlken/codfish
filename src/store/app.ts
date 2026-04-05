@@ -19,6 +19,10 @@ export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 // ── Profiles ───────────────────────────────────────────────────────────────
 export const profiles = signal<CaptionProfile[]>([]);
 
+// ── Sidecar ──────────��────────────────────────────────────────────────────
+export type SidecarState = "checking" | "not_installed" | "downloading" | "ready" | "update_available";
+export const sidecarStatus = signal<SidecarState>("checking");
+
 // ── Undo / Redo ────────────────────────────────────────────────────────────
 
 interface HistoryEntry {

@@ -1,3 +1,4 @@
+mod sidecar;
 mod transcription;
 
 use std::path::PathBuf;
@@ -505,10 +506,14 @@ async fn transcribe_media(
         args.push(lang);
     }
 
+    let bin = sidecar::sidecar_bin_path(&app)?;
+    if !bin.exists() {
+        return Err("Transcription engine not installed. Download it from the setup screen.".into());
+    }
+
     let (mut rx, _child) = app
         .shell()
-        .sidecar("transcribe")
-        .map_err(|e| format!("sidecar error: {e}"))?
+        .command(bin)
         .args(&args)
         .spawn()
         .map_err(|e| format!("spawn error: {e}"))?;
@@ -647,6 +652,9 @@ pub fn run() {
             save_profile,
             delete_profile,
             get_profiles_dir,
+            sidecar::get_sidecar_status,
+            sidecar::detect_gpu,
+            sidecar::download_sidecar,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

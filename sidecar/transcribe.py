@@ -20,28 +20,27 @@ from pathlib import Path
 
 
 def ensure_ffmpeg_on_path():
-    """Add the imageio-ffmpeg bundled binary's directory to PATH."""
-    # Try imageio-ffmpeg's bundled binary first
-    try:
-        import imageio_ffmpeg
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        if Path(ffmpeg_exe).is_file():
-            ffmpeg_dir = str(Path(ffmpeg_exe).parent)
-            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
-            return
-    except Exception:
-        pass
+    """Ensure the bundled or system ffmpeg is reachable on PATH."""
+    import shutil
 
-    # PyInstaller bundle: ffmpeg may be alongside the executable
+    # PyInstaller bundle: ffmpeg is placed at the bundle root by build.py
     if getattr(sys, 'frozen', False):
         bundle_dir = Path(sys._MEIPASS)
         for candidate in [bundle_dir / "ffmpeg.exe", bundle_dir / "ffmpeg"]:
             if candidate.is_file():
-                os.environ["PATH"] = str(candidate.parent) + os.pathsep + os.environ.get("PATH", "")
+                os.environ["PATH"] = str(bundle_dir) + os.pathsep + os.environ.get("PATH", "")
                 return
 
-    # Verify ffmpeg is reachable on PATH
-    import shutil
+    # Dev mode: check sidecar/ffmpeg/ directory
+    script_dir = Path(__file__).parent
+    ffmpeg_dir = script_dir / "ffmpeg"
+    if ffmpeg_dir.is_dir():
+        for candidate in [ffmpeg_dir / "ffmpeg.exe", ffmpeg_dir / "ffmpeg"]:
+            if candidate.is_file():
+                os.environ["PATH"] = str(ffmpeg_dir) + os.pathsep + os.environ.get("PATH", "")
+                return
+
+    # Fall back to system PATH
     if not shutil.which("ffmpeg"):
         print(json.dumps({
             "type": "error",
@@ -135,11 +134,8 @@ def _check_has_audio(file_path: str):
     """Raise a clear RuntimeError if the file has no audio stream."""
     import subprocess
 
-    try:
-        import imageio_ffmpeg
-        ffprobe_exe = str(Path(imageio_ffmpeg.get_ffmpeg_exe()).parent / "ffprobe")
-    except Exception:
-        ffprobe_exe = "ffprobe"  # fall back to system ffprobe
+    # ffprobe is bundled alongside ffmpeg (both added to PATH by ensure_ffmpeg_on_path)
+    ffprobe_exe = "ffprobe"
 
     try:
         out = subprocess.check_output(

@@ -3,9 +3,6 @@ whisperx
 faster-whisper
 ctranslate2
 
-# Bundled ffmpeg — provides ffmpeg binary without requiring system installation
-imageio-ffmpeg
-
 # PyTorch — CPU-only build keeps bundle smaller; users with CUDA get auto-upgraded
 # at runtime via whisperx's own dependency resolution.
 # For a CUDA build, replace with the appropriate torch+cuda index.
