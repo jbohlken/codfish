@@ -1,0 +1,53 @@
+name: Release Sidecar
+
+on:
+  push:
+    tags:
+      - "sidecar-v*"
+
+jobs:
+  build-cpu:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r sidecar/requirements.txt
+
+      - name: Download LGPL ffmpeg
+        run: python sidecar/fetch_ffmpeg.py
+
+      - name: Build CPU sidecar
+        run: python sidecar/build.py --release
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#sidecar-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate manifest
+        run: python sidecar/make_manifest.py --version ${{ steps.version.outputs.version }} --dir sidecar/dist
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Transcription Engine ${{ steps.version.outputs.version }}"
+          body: |
+            CPU variant for Windows x64.
+
+            To add the CUDA variant, build locally and upload:
+            ```
+            sidecar\.venv-cuda\Scripts\activate
+            python sidecar\build.py --release --cuda
+            ```
+            Then split if over 2GB and upload the parts + regenerated manifest.
+          draft: true
+          files: |
+            sidecar/dist/transcribe-cpu-*.exe
+            sidecar/dist/sidecar-manifest.json
