@@ -3,9 +3,10 @@ import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
 import { project, isDirty, activeProfile, profiles, pushHistory, canUndo, canRedo, undo, redo, undoDescription, redoDescription } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish } from "@phosphor-icons/react";
+import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, BugIcon as Bug } from "@phosphor-icons/react";
 import { profileEditorOpen } from "../ProfileEditor";
 import { helpOpen } from "../HelpModal";
+import { bugReportOpen } from "../BugReportModal";
 import { hasUpdate, isUpdating, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
 import { theme, toggleTheme } from "../../store/theme";
 import { listModels } from "../../lib/transcription";
@@ -86,6 +87,13 @@ export function TitleBar() {
           onClick={toggleTheme}
         >
           {theme.value === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
+        <button
+          class="btn btn-ghost btn-icon"
+          data-tooltip="Report a bug"
+          onClick={() => { bugReportOpen.value = true; }}
+        >
+          <Bug size={14} />
         </button>
         <button
           class="btn btn-ghost btn-icon"

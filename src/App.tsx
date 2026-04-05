@@ -21,6 +21,7 @@ import { HelpModal } from "./components/HelpModal";
 import { Tooltip } from "./components/Tooltip";
 import { SidecarSetup } from "./components/SidecarSetup";
 import { useUpdateChecker } from "./components/UpdateNotice";
+import { BugReportModal } from "./components/BugReportModal";
 
 export function App() {
   useUpdateChecker();
@@ -128,6 +129,7 @@ export function App() {
       <MediaSettings />
       <UnsavedChanges />
       <HelpModal />
+      <BugReportModal />
       <Tooltip />
     </div>
   );

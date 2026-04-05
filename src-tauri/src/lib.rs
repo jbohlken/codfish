@@ -1,3 +1,4 @@
+mod bug_report;
 mod sidecar;
 mod transcription;
 
@@ -668,6 +669,7 @@ pub fn run() {
             sidecar::detect_gpu,
             sidecar::check_sidecar_update,
             sidecar::download_sidecar,
+            bug_report::submit_bug_report,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
