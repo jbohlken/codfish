@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { signal } from "@preact/signals";
 import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, playbackTime, isPlaying, pushHistory, resetHistory } from "../../store/app";
+import { showError } from "../../components/ErrorModal";
 
 export const savedFlash = signal(false);
 let _savedFlashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -204,7 +205,9 @@ export async function fileExists(path: string): Promise<boolean> {
 export async function probeFps(path: string): Promise<number | null> {
   try {
     return await invoke<number | null>("probe_fps", { path });
-  } catch {
+  } catch (e: any) {
+    const msg = typeof e === "string" ? e : e?.message || "Unknown error probing frame rate";
+    showError(msg);
     return null;
   }
 }

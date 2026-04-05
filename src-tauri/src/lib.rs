@@ -8,6 +8,32 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
 
+// ── Logging ─────────────────────────────────────────────────────────────────
+
+fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|p| p.join("codfish.log"))
+        .map_err(|e| format!("could not resolve app data dir: {e}"))
+}
+
+fn log(app: &AppHandle, message: &str) {
+    use std::io::Write;
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("[{now}] {message}\n");
+    eprintln!("{}", line.trim());
+    if let Ok(path) = log_path(app) {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
+#[tauri::command]
+fn get_log_path(app: AppHandle) -> Result<String, String> {
+    log_path(&app).map(|p| p.to_string_lossy().into_owned())
+}
+
 // ── Default resources (embedded at compile time) ────────────────────────────
 
 const SRT_JS:  &str = include_str!("../resources/export_formats/srt.js");
@@ -418,13 +444,48 @@ fn file_exists(path: String) -> bool {
 
 // ── Model commands ───────────────────────────────────────────────────────────
 
-/// Probe a media file for its frame rate using ffprobe.
-/// Returns the FPS as a float, or null if ffprobe is unavailable or the file
-/// has no video stream (e.g. audio-only).
-/// Snaps common NTSC rates (23.976, 29.97, 59.94) to their exact rational values.
+/// Probe a media file for its frame rate.
+/// Tries the sidecar binary first (which has ffprobe bundled), then falls back
+/// to a system ffprobe. Returns null for audio-only files, or an error if
+/// probing fails entirely.
 #[tauri::command]
-fn probe_fps(path: String) -> Option<f64> {
-    let output = std::process::Command::new("ffprobe")
+fn probe_fps(app: AppHandle, path: String) -> Result<Option<f64>, String> {
+    // Try sidecar first — it has ffprobe bundled
+    if let Ok(bin) = sidecar::sidecar_bin_path(&app) {
+        if bin.exists() {
+            log(&app, &format!("probe_fps: trying sidecar at {}", bin.display()));
+            match std::process::Command::new(&bin)
+                .args(["--file", &path, "--probe-fps"])
+                .output()
+            {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    log(&app, &format!("probe_fps: sidecar stdout: {}", stdout.trim()));
+                    for line in stdout.lines() {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+                            if val.get("type").and_then(|t| t.as_str()) == Some("result") {
+                                let fps = val.get("fps").and_then(|f| f.as_f64());
+                                if let Some(f) = fps {
+                                    log(&app, &format!("probe_fps: detected {f}"));
+                                } else {
+                                    log(&app, "probe_fps: no video stream (audio-only)");
+                                }
+                                return Ok(fps);
+                            }
+                        }
+                    }
+                    log(&app, "probe_fps: sidecar returned no fps result");
+                }
+                Err(e) => {
+                    log(&app, &format!("probe_fps: sidecar failed to run: {e}"));
+                }
+            }
+        }
+    }
+
+    // Fall back to system ffprobe
+    log(&app, "probe_fps: falling back to system ffprobe");
+    let output = match std::process::Command::new("ffprobe")
         .args([
             "-v", "quiet",
             "-print_format", "json",
@@ -433,27 +494,46 @@ fn probe_fps(path: String) -> Option<f64> {
             &path,
         ])
         .output()
-        .ok()?;
+    {
+        Ok(o) => o,
+        Err(e) => {
+            let msg = format!("Could not detect frame rate: ffprobe not available ({e}). The default frame rate from your profile will be used.");
+            log(&app, &format!("probe_fps: {msg}"));
+            return Err(msg);
+        }
+    };
 
     if !output.status.success() && output.stdout.is_empty() {
-        return None;
+        let msg = "Could not detect frame rate: ffprobe returned no data. The default frame rate from your profile will be used.".to_string();
+        log(&app, &format!("probe_fps: {msg}"));
+        return Err(msg);
     }
 
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let streams = json["streams"].as_array()?;
-    if streams.is_empty() {
-        return None; // audio-only
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Could not detect frame rate: failed to parse ffprobe output ({e})"))?;
+    let streams = json["streams"].as_array();
+    if streams.map_or(true, |s| s.is_empty()) {
+        log(&app, "probe_fps: no video streams (audio-only)");
+        return Ok(None); // audio-only is not an error
     }
 
-    // Prefer avg_frame_rate; fall back to r_frame_rate
+    let streams = streams.unwrap();
     let fps_str = streams[0]["avg_frame_rate"]
         .as_str()
-        .or_else(|| streams[0]["r_frame_rate"].as_str())?;
+        .or_else(|| streams[0]["r_frame_rate"].as_str());
 
-    let fps = parse_rational_fps(fps_str)?;
-
-    // Snap common NTSC rates to their canonical values
-    Some(snap_fps(fps))
+    match fps_str.and_then(parse_rational_fps) {
+        Some(fps) => {
+            let snapped = snap_fps(fps);
+            log(&app, &format!("probe_fps: detected {snapped}"));
+            Ok(Some(snapped))
+        }
+        None => {
+            let msg = "Could not detect frame rate: no valid frame rate in video stream. The default frame rate from your profile will be used.".to_string();
+            log(&app, &format!("probe_fps: {msg}"));
+            Err(msg)
+        }
+    }
 }
 
 fn parse_rational_fps(s: &str) -> Option<f64> {
@@ -465,7 +545,6 @@ fn parse_rational_fps(s: &str) -> Option<f64> {
 }
 
 fn snap_fps(fps: f64) -> f64 {
-    // NTSC drop-frame rates stored as exact rational numbers
     const SNAPS: &[(f64, f64)] = &[
         (23.976, 24000.0 / 1001.0),
         (29.97,  30000.0 / 1001.0),
@@ -476,7 +555,6 @@ fn snap_fps(fps: f64) -> f64 {
             return label;
         }
     }
-    // Round everything else to 3 decimal places
     (fps * 1000.0).round() / 1000.0
 }
 
@@ -501,14 +579,17 @@ async fn transcribe_media(
     model_id: String,
     language: Option<String>,
 ) -> Result<TranscriptionResult, String> {
-    let mut args = vec!["--file".to_string(), media_path, "--model".to_string(), model_id];
-    if let Some(lang) = language {
+    let mut args = vec!["--file".to_string(), media_path.clone(), "--model".to_string(), model_id.clone()];
+    if let Some(lang) = language.clone() {
         args.push("--language".to_string());
         args.push(lang);
     }
 
+    log(&app, &format!("transcribe: file={media_path} model={model_id} lang={}", language.as_deref().unwrap_or("auto")));
+
     let bin = sidecar::sidecar_bin_path(&app)?;
     if !bin.exists() {
+        log(&app, "transcribe: sidecar binary not found");
         return Err("Transcription engine not installed. Download it from the setup screen.".into());
     }
 
@@ -597,13 +678,16 @@ async fn transcribe_media(
                 }
             }
             CommandEvent::Error(e) => {
+                log(&app, &format!("transcribe: sidecar error: {e}"));
                 return Err(format!("sidecar error: {e}"));
             }
             CommandEvent::Terminated(payload) => {
                 if payload.code != Some(0) && result_words.is_none() {
-                    return Err(error_msg.unwrap_or_else(|| {
+                    let msg = error_msg.unwrap_or_else(|| {
                         format!("sidecar exited with code {:?}", payload.code)
-                    }));
+                    });
+                    log(&app, &format!("transcribe: {msg}"));
+                    return Err(msg);
                 }
                 break;
             }
@@ -659,6 +743,7 @@ pub fn run() {
             load_project,
             file_exists,
             probe_fps,
+            get_log_path,
             list_models,
             transcribe_media,
             list_profiles,

@@ -2,6 +2,7 @@ import { signal } from "@preact/signals";
 import { XIcon as X } from "@phosphor-icons/react";
 import { useEffect, useState } from "preact/hooks";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 
 export const helpOpen = signal(false);
 
@@ -23,9 +24,19 @@ const SHORTCUTS = [
 
 export function HelpModal() {
   const [version, setVersion] = useState<string | null>(null);
+  const [sidecarVersion, setSidecarVersion] = useState<string | null>(null);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
+    invoke<{ status: string; version?: string; variant?: string }>("get_sidecar_status")
+      .then((s) => {
+        if (s.version && s.variant) {
+          setSidecarVersion(`v${s.version} (${s.variant})`);
+        } else if (s.status === "not_installed") {
+          setSidecarVersion("not installed");
+        }
+      })
+      .catch(() => {});
   }, []);
 
   if (!helpOpen.value) return null;
@@ -64,6 +75,7 @@ export function HelpModal() {
           <section class="help-section">
             <h3 class="help-section-title">About</h3>
             <p class="help-about-name">Codfish{version && <span class="help-about-version">v{version}</span>}</p>
+            {sidecarVersion && <p class="help-about-desc">Transcription engine: {sidecarVersion}</p>}
             <p class="help-about-desc">Caption editor for video and audio files.</p>
             <p class="help-about-desc">Made by Jared Bohlken.</p>
           </section>

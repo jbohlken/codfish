@@ -1,64 +1,108 @@
 # Codfish
 
-A desktop caption editor built with Tauri + Preact. Transcribes audio/video using WhisperX and lets you edit, time, and export captions.
+A desktop caption editor built with Tauri v2 + Preact. Transcribes audio/video using WhisperX and lets you edit, time, and export captions.
+
+## Architecture
+
+- **App** (Tauri/Rust + Preact) — the editor UI and file management
+- **Sidecar** (Python/PyInstaller) — the transcription engine, downloaded on first launch
+- The app and sidecar are versioned independently (`v*` and `sidecar-v*` tags)
+- The sidecar ships in three variants: CPU (Windows), CPU (macOS arm64), and CUDA (Windows)
+- GPU detection happens at install time — users with Nvidia GPUs get the CUDA variant
 
 ## Development
 
+### Prerequisites
+
+- Node.js 20+
+- Rust (via [rustup](https://rustup.rs/))
+- Windows: no extra requirements
+- macOS: Xcode Command Line Tools (`xcode-select --install`)
+
+### Running locally
+
 ```bash
 npm install
-npm run tauri dev
+npx tauri dev
 ```
 
-## Building
+The app will show the sidecar setup screen if no sidecar binary is installed. For local sidecar development, build it with `python sidecar/build.py` (see below) — this places the binary in `src-tauri/binaries/` for Tauri to find.
 
-### 1. Set up the sidecar Python environment
+### Sidecar development
 
-The transcription sidecar uses PyInstaller. You need a Python environment with the required packages.
-
-**CPU build** (works on any machine):
 ```bash
-python -m venv sidecar/.venv
-sidecar\.venv\Scripts\activate        # Windows
-# source sidecar/.venv/bin/activate   # macOS/Linux
+python -m venv sidecar/.venv-cpu
+# Windows: sidecar\.venv-cpu\Scripts\activate
+# macOS:   source sidecar/.venv-cpu/bin/activate
 pip install -r sidecar/requirements.txt
+python sidecar/fetch_ffmpeg.py
+python sidecar/build.py
 ```
 
-**CUDA build** (requires an Nvidia GPU with CUDA installed):
+For CUDA builds:
+
 ```bash
 python -m venv sidecar/.venv-cuda
-sidecar\.venv-cuda\Scripts\activate        # Windows
-# source sidecar/.venv-cuda/bin/activate   # macOS/Linux
+# Windows: sidecar\.venv-cuda\Scripts\activate
 pip install -r sidecar/requirements-cuda.txt
-```
-
-The CUDA build requires [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) to be installed on the build machine. `requirements-cuda.txt` installs PyTorch with CUDA 12.6 support — adjust the index URL for other CUDA versions.
-
-### 2. Build the sidecar binary
-
-Make sure the appropriate venv is active first.
-
-```bash
-# CPU
-python sidecar/build.py
-
-# CUDA
+python sidecar/fetch_ffmpeg.py
 python sidecar/build.py --cuda
 ```
 
-The script validates that `torch.cuda.is_available()` before proceeding — it will fail fast with a clear error if CUDA isn't set up correctly.
+## Releasing
 
-### 3. Build the app installer
+### App release
 
-```bash
-npm run tauri build
-```
+1. Bump version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`
+2. Run `cargo update --workspace` in `src-tauri/`
+3. Commit, tag, and push:
+   ```bash
+   git tag v0.5.6
+   git push origin main v0.5.6
+   ```
+4. CI builds Windows (NSIS) and macOS (DMG) installers and creates a draft release
+5. Publish the draft on GitHub
 
-Output: `src-tauri/target/release/bundle/nsis/Codfish_<version>_x64-setup.exe`
+### Sidecar release
 
-The installer is large (~several GB) because WhisperX and PyTorch are bundled into the sidecar binary.
+1. Commit any sidecar changes and push
+2. Tag and push:
+   ```bash
+   git tag sidecar-v0.1.1
+   git push origin sidecar-v0.1.1
+   ```
+3. CI builds Windows + macOS CPU variants and creates a draft release
+4. Add the CUDA variant from your Windows PC:
+   ```bash
+   sidecar\.venv-cuda\Scripts\activate
+   python sidecar/release-cuda.py --version 0.1.1
+   ```
+5. Publish the draft on GitHub
 
-### Notes
+Release the sidecar before the app so new sidecar features are available when users update.
 
-- The venv only needs to be active for the `python sidecar/build.py` step. `npm run tauri build` is independent.
-- `build.py` places the sidecar binary in `src-tauri/binaries/` automatically.
-- End users need a modern Nvidia driver (418+) for GPU acceleration — the CUDA runtime is bundled with it.
+## CI/CD
+
+### Workflows
+
+- **Release App** (`.github/workflows/release-app.yml`) — triggered by `v*` tags, builds Windows + macOS
+- **Release Sidecar** (`.github/workflows/release-sidecar.yml`) — triggered by `sidecar-v*` tags, builds CPU variants
+
+### Required secrets
+
+| Secret | Purpose |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | Minisign private key for update signing |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the signing key |
+| `CODFISH_GH_PAT` | Fine-grained PAT (Issues: read/write) for in-app bug reporter |
+
+### Build-time environment
+
+The app reads `CODFISH_GH_PAT` at compile time (via `src-tauri/.env` locally, or the CI secret). It is XOR-encoded into the binary — never stored as plaintext in source.
+
+## macOS notes
+
+- Unsigned builds require `xattr -cr /Applications/Codfish.app` or System Settings > Privacy & Security > Open Anyway
+- macOS Sequoia removed the right-click > Open workaround for unsigned apps
+- An Apple Developer account ($99/yr) eliminates these warnings via code signing and notarization
+- The macOS sidecar build requires Homebrew ffmpeg (`brew install ffmpeg`) — it's bundled into the binary, end users don't need it

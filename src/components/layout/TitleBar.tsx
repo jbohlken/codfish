@@ -72,11 +72,10 @@ export function TitleBar() {
         {hasUpdate() && (
           <div class="update-icon-wrapper">
             <button
-              class={`btn btn-ghost btn-icon update-icon ${isUpdating() ? "update-icon--active" : ""}`}
-              data-tooltip="Updates available"
+              class={`btn btn-ghost update-icon ${isUpdating() ? "update-icon--active" : ""}`}
               onClick={toggleUpdatePopover}
             >
-              <Fish size={14} weight="fill" />
+              <Fish size={14} weight="fill" /> Update available
             </button>
             <UpdatePopover />
           </div>
