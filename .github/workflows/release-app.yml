@@ -40,3 +40,4 @@ jobs:
           releaseBody: ""
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true

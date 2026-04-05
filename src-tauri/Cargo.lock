@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "codfish"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "futures-util",
  "reqwest 0.12.28",
