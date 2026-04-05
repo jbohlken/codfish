@@ -155,12 +155,64 @@ def _check_has_audio(file_path: str):
         pass
 
 
+def probe_fps(file_path: str):
+    """Probe a video file for its frame rate and emit the result as JSON."""
+    import subprocess
+
+    try:
+        out = subprocess.check_output(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-select_streams", "v:0", file_path],
+            stderr=subprocess.DEVNULL,
+        ).decode()
+        data = json.loads(out)
+        streams = data.get("streams", [])
+        if not streams:
+            emit({"type": "result", "fps": None})
+            return
+
+        fps_str = streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate")
+        if not fps_str:
+            emit({"type": "result", "fps": None})
+            return
+
+        parts = fps_str.split("/")
+        num = float(parts[0])
+        den = float(parts[1]) if len(parts) > 1 else 1.0
+        if num == 0 or den == 0:
+            emit({"type": "result", "fps": None})
+            return
+
+        fps = num / den
+        # Snap common NTSC rates
+        snaps = [(23.976, 24000 / 1001), (29.97, 30000 / 1001), (59.94, 60000 / 1001)]
+        for label, exact in snaps:
+            if abs(fps - exact) < 0.01:
+                fps = label
+                break
+        else:
+            fps = round(fps * 1000) / 1000
+
+        emit({"type": "result", "fps": fps})
+    except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError, ValueError):
+        emit({"type": "result", "fps": None})
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True, help="Path to audio/video file")
-    parser.add_argument("--model", required=True, help="Whisper model id (tiny, base, small, medium, large-v3)")
+    parser.add_argument("--model", default=None, help="Whisper model id (tiny, base, small, medium, large-v3)")
     parser.add_argument("--language", default=None, help="ISO language code (e.g. en). Auto-detect if omitted.")
+    parser.add_argument("--probe-fps", action="store_true", help="Probe frame rate and exit")
     args = parser.parse_args()
+
+    if args.probe_fps:
+        probe_fps(args.file)
+        return
+
+    if not args.model:
+        emit({"type": "error", "message": "--model is required for transcription"})
+        sys.exit(1)
 
     try:
         import warnings

@@ -6,7 +6,7 @@ on:
       - "sidecar-v*"
 
 jobs:
-  build-cpu:
+  build-cpu-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,9 +25,59 @@ jobs:
       - name: Build CPU sidecar
         run: python sidecar/build.py --release
 
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-windows
+          path: sidecar/dist/transcribe-cpu-*
+
+  build-cpu-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r sidecar/requirements.txt
+
+      - name: Install ffmpeg via Homebrew
+        run: brew install ffmpeg
+
+      - name: Copy ffmpeg for bundling
+        run: python sidecar/fetch_ffmpeg.py
+
+      - name: Build CPU sidecar
+        run: python sidecar/build.py --release
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-macos
+          path: sidecar/dist/transcribe-cpu-*
+
+  release:
+    needs: [build-cpu-windows, build-cpu-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: sidecar/dist/
+          merge-multiple: true
+
       - name: Extract version from tag
         id: version
-        shell: bash
         run: echo "version=${GITHUB_REF_NAME#sidecar-v}" >> "$GITHUB_OUTPUT"
 
       - name: Generate manifest
@@ -39,15 +89,20 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: "Transcription Engine ${{ steps.version.outputs.version }}"
           body: |
-            CPU variant for Windows x64.
+            CPU variants for Windows x64 and macOS arm64.
 
             To add the CUDA variant, build locally and upload:
             ```
             sidecar\.venv-cuda\Scripts\activate
             python sidecar\build.py --release --cuda
             ```
-            Then split if over 2GB and upload the parts + regenerated manifest.
+            Then split if over 2GB, upload the parts, download all assets
+            locally, regenerate the manifest, and re-upload it:
+            ```
+            python sidecar/make_manifest.py --version ${{ steps.version.outputs.version }} --dir sidecar/dist
+            gh release upload sidecar-v${{ steps.version.outputs.version }} sidecar/dist/sidecar-manifest.json --clobber
+            ```
           draft: true
           files: |
-            sidecar/dist/transcribe-cpu-*.exe
+            sidecar/dist/transcribe-cpu-*
             sidecar/dist/sidecar-manifest.json
