@@ -19,6 +19,7 @@ import { UnsavedChanges } from "./components/UnsavedChanges";
 import { HelpModal } from "./components/HelpModal";
 import { Tooltip } from "./components/Tooltip";
 import { SidecarSetup } from "./components/SidecarSetup";
+import { UpdateNotice } from "./components/UpdateNotice";
 
 export function App() {
   useEffect(() => {
@@ -108,6 +109,7 @@ export function App() {
       <UnsavedChanges />
       <HelpModal />
       <Tooltip />
+      <UpdateNotice />
     </div>
   );
 }

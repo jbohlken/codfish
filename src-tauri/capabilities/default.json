@@ -11,6 +11,8 @@
     "opener:default",
     "dialog:default",
     "shell:allow-execute",
-    "shell:allow-spawn"
+    "shell:allow-spawn",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
