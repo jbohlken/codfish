@@ -1850,9 +1850,9 @@ kbd {
   bottom: var(--space-4);
   right: var(--space-4);
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--color-accent-light);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-md);
@@ -1860,6 +1860,12 @@ kbd {
   color: var(--color-text-primary);
   z-index: 9999;
   box-shadow: var(--shadow-md);
+}
+
+.update-notice-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .update-notice-text {

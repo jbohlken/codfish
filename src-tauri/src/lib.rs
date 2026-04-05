@@ -656,6 +656,7 @@ pub fn run() {
             get_profiles_dir,
             sidecar::get_sidecar_status,
             sidecar::detect_gpu,
+            sidecar::check_sidecar_update,
             sidecar::download_sidecar,
         ])
         .run(tauri::generate_context!())

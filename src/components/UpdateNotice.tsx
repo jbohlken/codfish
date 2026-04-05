@@ -2,40 +2,78 @@ import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { sidecarStatus } from "../store/app";
 
-interface UpdateState {
+interface AppUpdateState {
   version: string;
   installing: boolean;
   progress: number | null;
 }
 
-const update = signal<UpdateState | null>(null);
+interface SidecarUpdateState {
+  current: string;
+  latest: string;
+  variant: string;
+  downloading: boolean;
+  progress: number | null;
+}
+
+const appUpdate = signal<AppUpdateState | null>(null);
+const sidecarUpdate = signal<SidecarUpdateState | null>(null);
 const dismissed = signal(false);
 
 export function UpdateNotice() {
+  // Check for app updates after 5s
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
         const available = await check();
         if (available) {
-          update.value = {
+          appUpdate.value = {
             version: available.version,
             installing: false,
             progress: null,
           };
         }
-      } catch {
-        // Silently ignore — update check is best-effort
-      }
+      } catch {}
     }, 5000);
     return () => clearTimeout(timer);
   }, []);
 
-  const state = update.value;
-  if (!state || dismissed.value) return null;
+  // Watch for sidecar update_available status
+  useEffect(() => {
+    if (sidecarStatus.value === "update_available") {
+      invoke("check_sidecar_update").then((result: any) => {
+        if (result.status === "update_available") {
+          sidecarUpdate.value = {
+            current: result.current,
+            latest: result.latest,
+            variant: result.variant,
+            downloading: false,
+            progress: null,
+          };
+        }
+      }).catch(() => {});
+    }
+  }, [sidecarStatus.value]);
 
-  const handleInstall = async () => {
-    update.value = { ...state, installing: true, progress: 0 };
+  // Listen for sidecar download progress
+  useEffect(() => {
+    const unlisten = listen<any>("sidecar://download-progress", (e) => {
+      const state = sidecarUpdate.value;
+      if (state?.downloading) {
+        sidecarUpdate.value = { ...state, progress: e.payload.percent };
+      }
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
+  const handleAppInstall = async () => {
+    const state = appUpdate.value;
+    if (!state) return;
+    appUpdate.value = { ...state, installing: true, progress: 0 };
     try {
       const available = await check();
       if (!available) return;
@@ -51,37 +89,73 @@ export function UpdateNotice() {
           const percent = totalBytes > 0
             ? Math.round((downloadedBytes / totalBytes) * 100)
             : 0;
-          update.value = { ...state, installing: true, progress: percent };
+          appUpdate.value = { ...state, installing: true, progress: percent };
         } else if (event.event === "Finished") {
-          update.value = { ...state, installing: true, progress: 100 };
+          appUpdate.value = { ...state, installing: true, progress: 100 };
         }
       });
 
       await relaunch();
     } catch {
-      update.value = { ...state, installing: false, progress: null };
+      appUpdate.value = { ...state, installing: false, progress: null };
     }
   };
 
+  const handleSidecarUpdate = async () => {
+    const state = sidecarUpdate.value;
+    if (!state) return;
+    sidecarUpdate.value = { ...state, downloading: true, progress: 0 };
+    try {
+      await invoke("download_sidecar", { variant: state.variant });
+      sidecarUpdate.value = null;
+      sidecarStatus.value = "ready";
+    } catch {
+      sidecarUpdate.value = { ...state, downloading: false, progress: null };
+    }
+  };
+
+  if (dismissed.value) return null;
+
+  const app = appUpdate.value;
+  const sc = sidecarUpdate.value;
+  if (!app && !sc) return null;
+
   return (
     <div class="update-notice">
-      {state.installing ? (
-        <span class="update-notice-text">
-          Installing v{state.version}...
-          {state.progress !== null && ` ${state.progress}%`}
-        </span>
-      ) : (
-        <>
-          <span class="update-notice-text">
-            v{state.version} available
-          </span>
-          <button class="btn btn-ghost update-notice-btn" onClick={handleInstall}>
-            Update
-          </button>
-          <button class="btn btn-ghost update-notice-btn" onClick={() => { dismissed.value = true; }}>
-            Later
-          </button>
-        </>
+      {app && (
+        <div class="update-notice-item">
+          {app.installing ? (
+            <span class="update-notice-text">
+              Installing v{app.version}...
+              {app.progress !== null && ` ${app.progress}%`}
+            </span>
+          ) : (
+            <>
+              <span class="update-notice-text">App v{app.version} available</span>
+              <button class="btn btn-ghost update-notice-btn" onClick={handleAppInstall}>Update</button>
+            </>
+          )}
+        </div>
+      )}
+      {sc && (
+        <div class="update-notice-item">
+          {sc.downloading ? (
+            <span class="update-notice-text">
+              Updating transcription engine...
+              {sc.progress !== null && ` ${sc.progress}%`}
+            </span>
+          ) : (
+            <>
+              <span class="update-notice-text">Transcription engine v{sc.latest} available</span>
+              <button class="btn btn-ghost update-notice-btn" onClick={handleSidecarUpdate}>Update</button>
+            </>
+          )}
+        </div>
+      )}
+      {!app?.installing && !sc?.downloading && (
+        <button class="btn btn-ghost update-notice-btn" onClick={() => { dismissed.value = true; }}>
+          Later
+        </button>
       )}
     </div>
   );

@@ -31,6 +31,7 @@ pub struct SidecarMeta {
 pub enum SidecarStatus {
     NotInstalled,
     Ready { version: String, variant: String },
+    UpdateAvailable { current: String, latest: String, variant: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +174,42 @@ pub fn detect_gpu() -> GpuInfo {
             gpu_name: None,
             vram_mb: None,
         },
+    }
+}
+
+#[tauri::command]
+pub async fn check_sidecar_update(app: AppHandle) -> Result<SidecarStatus, String> {
+    let meta = match read_meta(&app)? {
+        Some(m) => m,
+        None => return Ok(SidecarStatus::NotInstalled),
+    };
+
+    let bin = sidecar_bin_path(&app)?;
+    if !bin.exists() {
+        return Ok(SidecarStatus::NotInstalled);
+    }
+
+    let client = reqwest::Client::new();
+    let manifest = client
+        .get(SIDECAR_MANIFEST_URL)
+        .send()
+        .await
+        .map_err(|e| format!("fetch manifest: {e}"))?
+        .json::<SidecarManifest>()
+        .await
+        .map_err(|e| format!("parse manifest: {e}"))?;
+
+    if manifest.version != meta.version {
+        Ok(SidecarStatus::UpdateAvailable {
+            current: meta.version,
+            latest: manifest.version,
+            variant: meta.variant,
+        })
+    } else {
+        Ok(SidecarStatus::Ready {
+            version: meta.version,
+            variant: meta.variant,
+        })
     }
 }
 

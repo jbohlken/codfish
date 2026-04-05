@@ -40,7 +40,17 @@ export function App() {
 
   useEffect(() => {
     invoke("get_sidecar_status").then((status: any) => {
-      sidecarStatus.value = status.status === "ready" ? "ready" : "not_installed";
+      if (status.status === "ready") {
+        sidecarStatus.value = "ready";
+        // Check for sidecar updates in the background
+        invoke("check_sidecar_update").then((result: any) => {
+          if (result.status === "update_available") {
+            sidecarStatus.value = "update_available";
+          }
+        }).catch(() => {});
+      } else {
+        sidecarStatus.value = "not_installed";
+      }
     }).catch(() => {
       sidecarStatus.value = "not_installed";
     });
