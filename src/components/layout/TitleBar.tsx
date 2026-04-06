@@ -8,7 +8,7 @@ import { profileEditorOpen } from "../ProfileEditor";
 import { importProfile } from "../../lib/profiles";
 import { helpOpen } from "../HelpModal";
 import { bugReportOpen } from "../BugReportModal";
-import { hasUpdate, isUpdating, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
+import { hasUpdate, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
 import { theme, toggleTheme } from "../../store/theme";
 import { listModels } from "../../lib/transcription";
 
@@ -73,7 +73,7 @@ export function TitleBar() {
         {hasUpdate() && (
           <div class="update-icon-wrapper">
             <button
-              class={`btn btn-ghost update-icon ${isUpdating() ? "update-icon--active" : ""}`}
+              class="btn btn-ghost update-icon"
               onClick={toggleUpdatePopover}
             >
               <Fish size={14} weight="fill" /> Update available

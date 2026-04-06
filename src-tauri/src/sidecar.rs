@@ -260,7 +260,11 @@ pub async fn check_sidecar_update(app: AppHandle) -> Result<SidecarStatus, Strin
         return Ok(SidecarStatus::NotInstalled);
     }
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .read_timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("build http client: {e}"))?;
     let manifest = fetch_sidecar_manifest(&client).await?;
 
     if manifest.version != meta.version {
@@ -283,9 +287,25 @@ pub async fn download_sidecar(
     window: Window,
     variant: String,
 ) -> Result<(), String> {
+    use crate::log;
+    log(&app, &format!("sidecar update: begin (variant={variant})"));
+
     // 1. Fetch manifest
-    let client = reqwest::Client::new();
-    let manifest = fetch_sidecar_manifest(&client).await?;
+    // Per-read/connect timeouts so a mid-download network kill surfaces as an
+    // error instead of hanging the stream indefinitely.
+    let client = reqwest::Client::builder()
+        .read_timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("build http client: {e}"))?;
+    let manifest = match fetch_sidecar_manifest(&client).await {
+        Ok(m) => m,
+        Err(e) => {
+            log(&app, &format!("sidecar update: fetch manifest failed: {e}"));
+            return Err(e);
+        }
+    };
+    log(&app, &format!("sidecar update: manifest version={}", manifest.version));
 
     // 2. Look up the variant
     let triple = target_triple();
@@ -294,6 +314,11 @@ pub async fn download_sidecar(
         .variants
         .get(&variant_key)
         .ok_or_else(|| format!("variant '{variant_key}' not found in manifest"))?;
+    log(&app, &format!(
+        "sidecar update: variant_key={variant_key} size={} bytes parts={}",
+        info.size_bytes,
+        info.parts.as_ref().map(|p| p.len()).unwrap_or(0),
+    ));
 
     // 3. Ensure target directory exists
     let dir = sidecar_dir(&app)?;
@@ -356,16 +381,19 @@ pub async fn download_sidecar(
     }
 
     drop(file);
+    log(&app, &format!("sidecar update: download complete ({downloaded} bytes)"));
 
     // 6. Verify SHA-256 of the full reassembled zip
     let hash = format!("{:x}", hasher.finalize());
     if hash != info.sha256 {
         let _ = std::fs::remove_file(&tmp_path);
+        log(&app, &format!("sidecar update: SHA mismatch expected={} got={hash}", info.sha256));
         return Err(format!(
             "SHA-256 mismatch: expected {}, got {hash}",
             info.sha256
         ));
     }
+    log(&app, "sidecar update: SHA verified");
 
     // 7. Clean up any previous install (old onefile binary, leftover _MEI extracts,
     //    or previous onedir contents) so the extract starts from a known state.
@@ -373,10 +401,19 @@ pub async fn download_sidecar(
         "sidecar://download-progress",
         DownloadProgress { downloaded_bytes: total_bytes, total_bytes, percent: 100 },
     );
-    cleanup_existing_install(&dir)?;
+    log(&app, "sidecar update: cleaning existing install");
+    if let Err(e) = cleanup_existing_install(&dir) {
+        log(&app, &format!("sidecar update: cleanup failed: {e}"));
+        return Err(e);
+    }
+    log(&app, "sidecar update: extracting zip");
 
     // 8. Extract the zip directly into the bin directory
-    extract_zip(&tmp_path, &dir)?;
+    if let Err(e) = extract_zip(&tmp_path, &dir, Some(&app)) {
+        log(&app, &format!("sidecar update: extract failed: {e}"));
+        return Err(e);
+    }
+    log(&app, "sidecar update: extract complete");
     let _ = std::fs::remove_file(&tmp_path);
 
     if !bin_path.exists() {
@@ -398,11 +435,12 @@ pub async fn download_sidecar(
     write_meta(
         &app,
         &SidecarMeta {
-            version: manifest.version,
+            version: manifest.version.clone(),
             variant,
             sha256: hash,
         },
     )?;
+    log(&app, &format!("sidecar update: done, version={}", manifest.version));
 
     Ok(())
 }
@@ -439,11 +477,20 @@ fn cleanup_existing_install(dir: &std::path::Path) -> Result<(), String> {
 
 /// Extract a zip archive into `dest`. Files are written under `dest` preserving
 /// the archive's internal directory structure.
-fn extract_zip(zip_path: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+fn extract_zip(
+    zip_path: &std::path::Path,
+    dest: &std::path::Path,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("open zip: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("read zip: {e}"))?;
+    let total = archive.len();
+    let mut last_logged_pct: usize = 0;
+    if let Some(a) = app {
+        crate::log(a, &format!("sidecar update: extracting {total} entries"));
+    }
 
-    for i in 0..archive.len() {
+    for i in 0..total {
         let mut entry = archive.by_index(i).map_err(|e| format!("zip entry: {e}"))?;
         let rel = match entry.enclosed_name() {
             Some(p) => p.to_path_buf(),
@@ -473,6 +520,22 @@ fn extract_zip(zip_path: &std::path::Path, dest: &std::path::Path) -> Result<(),
                     &out_path,
                     std::fs::Permissions::from_mode(mode),
                 );
+            }
+        }
+
+        // Drop the entry so it releases its borrow on `archive` before we
+        // log via `app` (which is a separate borrow).
+        drop(entry);
+
+        if let Some(a) = app {
+            let pct = ((i + 1) * 100) / total.max(1);
+            let _ = a.emit(
+                "sidecar://extract-progress",
+                serde_json::json!({ "percent": pct, "index": i + 1, "total": total }),
+            );
+            if pct >= last_logged_pct + 10 {
+                last_logged_pct = pct - (pct % 10);
+                crate::log(a, &format!("sidecar update: extract {pct}% ({}/{total})", i + 1));
             }
         }
     }

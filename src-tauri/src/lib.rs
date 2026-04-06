@@ -15,14 +15,14 @@ type DaemonState = AsyncMutex<Option<Arc<SidecarDaemon>>>;
 
 // ── Logging ─────────────────────────────────────────────────────────────────
 
-fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map(|p| p.join("codfish.log"))
         .map_err(|e| format!("could not resolve app data dir: {e}"))
 }
 
-fn log(app: &AppHandle, message: &str) {
+pub(crate) fn log(app: &AppHandle, message: &str) {
     use std::io::Write;
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let line = format!("[{now}] {message}\n");
@@ -504,6 +504,58 @@ fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).is_file()
 }
 
+// ── Recovery commands ────────────────────────────────────────────────────────
+// Autosave hook for update safety: before we tear down the app or sidecar for
+// an update, the frontend drops an in-memory snapshot here so nothing is lost
+// if the relaunch/extraction goes sideways.
+
+fn recovery_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app data dir: {e}"))?
+        .join("recovery");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir recovery: {e}"))?;
+    Ok(dir.join("active.json"))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RecoveryBlob {
+    original_path: Option<String>,
+    saved_at: String,
+    json: String,
+}
+
+#[tauri::command]
+fn save_recovery(app: AppHandle, json: String, original_path: Option<String>) -> Result<(), String> {
+    let blob = RecoveryBlob {
+        original_path,
+        saved_at: chrono::Local::now().to_rfc3339(),
+        json,
+    };
+    let serialized = serde_json::to_string(&blob).map_err(|e| format!("serialize: {e}"))?;
+    std::fs::write(recovery_path(&app)?, serialized).map_err(|e| format!("write recovery: {e}"))
+}
+
+#[tauri::command]
+fn load_recovery(app: AppHandle) -> Result<Option<RecoveryBlob>, String> {
+    let path = recovery_path(&app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("read recovery: {e}"))?;
+    serde_json::from_str::<RecoveryBlob>(&raw).map(Some).map_err(|e| format!("parse recovery: {e}"))
+}
+
+#[tauri::command]
+fn clear_recovery(app: AppHandle) -> Result<(), String> {
+    let path = recovery_path(&app)?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("remove recovery: {e}"))?;
+    }
+    Ok(())
+}
+
 // ── Model commands ───────────────────────────────────────────────────────────
 
 /// Probe a media file for its frame rate via the running daemon.
@@ -582,15 +634,19 @@ async fn start_daemon(
 /// child, and the executable becomes unlocked on Windows so we can replace
 /// it during a sidecar update.
 #[tauri::command]
-async fn stop_daemon(state: State<'_, DaemonState>) -> Result<(), String> {
+async fn stop_daemon(app: AppHandle, state: State<'_, DaemonState>) -> Result<(), String> {
     let daemon = {
         let mut guard = state.lock().await;
         guard.take()
     };
     if let Some(d) = daemon {
+        log(&app, "daemon: stop requested, killing child");
         // Synchronously kill+wait so Windows releases the executable lock
         // before we try to overwrite it during a sidecar update.
         d.shutdown().await;
+        log(&app, "daemon: child exited");
+    } else {
+        log(&app, "daemon: stop requested but no daemon running");
     }
     // Brief pause for the Windows kernel to actually release the file handle
     // after the process has exited.
@@ -718,6 +774,9 @@ pub fn run() {
             save_project,
             load_project,
             file_exists,
+            save_recovery,
+            load_recovery,
+            clear_recovery,
             probe_fps,
             get_log_path,
             list_models,

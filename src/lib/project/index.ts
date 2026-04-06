@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { signal } from "@preact/signals";
-import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, playbackTime, isPlaying, pushHistory, resetHistory } from "../../store/app";
+import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory } from "../../store/app";
 import { showError } from "../../components/ErrorModal";
 
 export const savedFlash = signal(false);
@@ -12,6 +12,7 @@ function flashSaved() {
   _savedFlashTimer = setTimeout(() => { savedFlash.value = false; }, 2000);
 }
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
+import { clearRecovery } from "../recovery";
 import type { CodProject, MediaItem } from "../../types/project";
 
 const PROJECT_VERSION = 1;
@@ -22,17 +23,39 @@ const MEDIA_EXTS = [...VIDEO_EXTS, ...AUDIO_EXTS];
 
 // ── Public actions ────────────────────────────────────────────────────────────
 
-/** Check for unsaved changes, prompt if needed, then run action. */
-async function withUnsavedCheck(action: () => Promise<boolean>): Promise<boolean> {
+/** Check for unsaved changes, prompt if needed, then run action.
+ *  If the user picks save or discard, the current project is closed
+ *  *before* the action runs — so cancelling a follow-up file dialog
+ *  leaves the app with no project open, not half the old one. */
+export async function withUnsavedCheck(action: () => Promise<boolean>): Promise<boolean> {
   if (isDirty.value && project.value) {
     const choice = await confirmUnsavedChanges();
     if (choice === "cancel") return false;
     if (choice === "save") {
       const saved = await saveCurrentProject();
       if (!saved) return false;
+    } else if (choice === "discard") {
+      await clearRecovery();
     }
+    closeProject();
+  } else if (project.value) {
+    // Clean project — still close it so the action starts from a clean slate.
+    closeProject();
   }
   return action();
+}
+
+/** Clear the current project from the store. Does not touch disk. */
+function closeProject(): void {
+  resetHistory();
+  project.value = null;
+  projectPath.value = null;
+  isDirty.value = false;
+  selectedMediaId.value = null;
+  selectedCaptionIndex.value = null;
+  playbackTime.value = 0;
+  isPlaying.value = false;
+  mediaDuration.value = 0;
 }
 
 export function newProjectGuarded(): Promise<boolean> {
@@ -116,6 +139,7 @@ export async function saveCurrentProject(): Promise<boolean> {
 
   await writeToDisk(path, proj);
   isDirty.value = false;
+  await clearRecovery();
   flashSaved();
   return true;
 }
@@ -137,6 +161,7 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   project.value = updated;
   projectPath.value = savePath;
   isDirty.value = false;
+  await clearRecovery();
   flashSaved();
   return true;
 }

@@ -2037,6 +2037,36 @@ kbd {
   transition: width 0.2s ease;
 }
 
+/* ── Update blocker ───────────────────────────────────────────────────── */
+.update-blocker {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(2px);
+}
+.update-blocker-card {
+  background: var(--color-bg-secondary, #222);
+  border: 1px solid var(--color-border, #444);
+  border-radius: 8px;
+  padding: var(--space-4, 16px);
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.update-blocker-label {
+  font-weight: 600;
+}
+.update-blocker-hint {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
 /* ── Bug Report ───────────────────────────────────────────────────────── */
 .bug-report-field {
   display: flex;

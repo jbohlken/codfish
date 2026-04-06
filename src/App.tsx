@@ -5,7 +5,7 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
-import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus, daemonStatus } from "./store/app";
+import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
 import { saveCurrentProject, loadProjectFromPath } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,23 +22,66 @@ import { Tooltip } from "./components/Tooltip";
 import { SidecarSetup } from "./components/SidecarSetup";
 import { Splash, startDaemon } from "./components/Splash";
 import { daemonError } from "./store/app";
-import { useUpdateChecker } from "./components/UpdateNotice";
+import { useUpdateChecker, sidecarUpdate, UpdateBlocker, isUpdating } from "./components/UpdateNotice";
 import { BugReportModal } from "./components/BugReportModal";
+import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery";
+import type { CodProject } from "./types/project";
+import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
 
 export function App() {
   useUpdateChecker();
+  useAutosaveRecovery();
+
+  // On boot, check for a recovery snapshot and offer to restore it.
+  // Gated on sidecar + daemon + profiles being ready so the prompt doesn't
+  // queue up behind the Splash/SidecarSetup screens.
+  useEffect(() => {
+    if (sidecarStatus.value !== "ready" && sidecarStatus.value !== "update_available") return;
+    if (daemonStatus.value !== "ready") return;
+    if (profiles.value.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const blob = await loadRecovery();
+      if (cancelled || !blob) return;
+      const restore = await askRestoreRecovery(blob.saved_at);
+      if (cancelled) return;
+      if (restore) {
+        try {
+          const proj = JSON.parse(blob.json) as CodProject;
+          resetHistory(proj);
+          project.value = proj;
+          projectPath.value = blob.original_path ?? null;
+          // Mark dirty so the user is prompted to save — the recovery
+          // file represents unsaved work, and on-disk is still stale.
+          isDirty.value = true;
+        } catch (e) {
+          console.error("recovery parse failed", e);
+        }
+      }
+      await clearRecovery();
+    })();
+    return () => { cancelled = true; };
+  }, [sidecarStatus.value, daemonStatus.value, profiles.value.length]);
 
   useEffect(() => {
     const win = getCurrentWindow();
     const unlisten = win.onCloseRequested(async (e) => {
       e.preventDefault();
+      // Never allow close mid-update — the sidecar/app is being replaced
+      // under us and closing now can corrupt the install.
+      if (isUpdating()) return;
       if (isDirty.value) {
         const choice = await confirmUnsavedChanges();
         if (choice === "cancel") return;
         if (choice === "save") {
-          await saveCurrentProject();
+          const saved = await saveCurrentProject();
+          if (!saved) return;
         }
       }
+      // Either nothing was dirty, the user saved, or they discarded — in
+      // all cases we're committing to close, so wipe the recovery snapshot
+      // so it doesn't resurrect on next launch.
+      await clearRecovery();
       await win.destroy();
     });
     return () => { unlisten.then((f) => f()); };
@@ -114,6 +157,13 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Swallow everything while an update is in flight — the blocker is up
+      // and there's no project state left to act on.
+      if (isUpdating()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       // Don't intercept shortcuts while editing text
       if (
         e.target instanceof HTMLInputElement ||
@@ -147,28 +197,35 @@ export function App() {
   if (sidecarStatus.value !== "ready" && sidecarStatus.value !== "update_available") {
     return <SidecarSetup />;
   }
-  if (daemonStatus.value !== "ready") {
+  // While a sidecar update is actively downloading, keep the main shell up
+  // so the update popover stays visible. The daemon is intentionally dead
+  // during this window; showing the crash splash would hide the progress UI.
+  if (daemonStatus.value !== "ready" && !sidecarUpdate.value?.downloading) {
     return <Splash />;
   }
   if (profiles.value.length === 0) return null;
 
   return (
-    <div class="app-shell">
-      <TitleBar />
-      <div class="main-panels">
-        <ProjectPanel />
-        <VideoPanel />
-        <CaptionPanel />
+    <>
+      <div class="app-shell" {...(isUpdating() ? { inert: true } : {})}>
+        <TitleBar />
+        <div class="main-panels">
+          <ProjectPanel />
+          <VideoPanel />
+          <CaptionPanel />
+        </div>
+        <Timeline />
+        <ErrorModal />
+        <ProfileEditor />
+        <ContextMenu />
+        <MediaSettings />
+        <UnsavedChanges />
+        <HelpModal />
+        <BugReportModal />
+        <RecoveryPrompt />
+        <Tooltip />
       </div>
-      <Timeline />
-      <ErrorModal />
-      <ProfileEditor />
-      <ContextMenu />
-      <MediaSettings />
-      <UnsavedChanges />
-      <HelpModal />
-      <BugReportModal />
-      <Tooltip />
-    </div>
+      <UpdateBlocker />
+    </>
   );
 }
