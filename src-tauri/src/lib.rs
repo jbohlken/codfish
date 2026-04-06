@@ -1,12 +1,17 @@
 mod bug_report;
+mod daemon;
 mod sidecar;
 mod transcription;
 
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager, Window};
-use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandEvent;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State, Window};
+use tokio::sync::Mutex as AsyncMutex;
 use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
+
+use crate::daemon::{DaemonStatus, SidecarDaemon};
+
+type DaemonState = AsyncMutex<Option<Arc<SidecarDaemon>>>;
 
 // ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -501,143 +506,85 @@ fn file_exists(path: String) -> bool {
 
 // ── Model commands ───────────────────────────────────────────────────────────
 
-/// Probe a media file for its frame rate.
-/// Tries standalone ffprobe first (instant), then the sidecar (slow PyInstaller
-/// startup), then system ffprobe as last resort. Returns null for audio-only
-/// files, or an error if probing fails entirely.
+/// Probe a media file for its frame rate via the running daemon.
+/// Returns null for audio-only files.
 #[tauri::command]
-fn probe_fps(app: AppHandle, path: String) -> Result<Option<f64>, String> {
-    // Try standalone ffprobe first — downloaded alongside the sidecar, instant
-    if let Ok(fp) = sidecar::ffprobe_bin_path(&app) {
-        if fp.exists() {
-            log(&app, &format!("probe_fps: trying standalone ffprobe at {}", fp.display()));
-            if let Some(result) = run_ffprobe(&app, fp.to_string_lossy().as_ref(), &path) {
-                return result;
-            }
-        }
-    }
-
-    // Fall back to sidecar (slow — PyInstaller unpacks Python + imports torch)
-    if let Ok(bin) = sidecar::sidecar_bin_path(&app) {
-        if bin.exists() {
-            log(&app, &format!("probe_fps: trying sidecar at {}", bin.display()));
-            match std::process::Command::new(&bin)
-                .args(["--file", &path, "--probe-fps"])
-                .output()
-            {
-                Ok(output) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    log(&app, &format!("probe_fps: sidecar stdout: {}", stdout.trim()));
-                    for line in stdout.lines() {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line.trim()) {
-                            if val.get("type").and_then(|t| t.as_str()) == Some("result") {
-                                let fps = val.get("fps").and_then(|f| f.as_f64());
-                                if let Some(f) = fps {
-                                    log(&app, &format!("probe_fps: detected {f}"));
-                                } else {
-                                    log(&app, "probe_fps: no video stream (audio-only)");
-                                }
-                                return Ok(fps);
-                            }
-                        }
-                    }
-                    log(&app, "probe_fps: sidecar returned no fps result");
-                }
-                Err(e) => {
-                    log(&app, &format!("probe_fps: sidecar failed to run: {e}"));
-                }
-            }
-        }
-    }
-
-    // Last resort: system ffprobe
-    log(&app, "probe_fps: falling back to system ffprobe");
-    if let Some(result) = run_ffprobe(&app, "ffprobe", &path) {
-        return result;
-    }
-
-    let msg = "Could not detect frame rate: no ffprobe available. The default frame rate from your profile will be used.".to_string();
-    log(&app, &format!("probe_fps: {msg}"));
-    Err(msg)
-}
-
-/// Run ffprobe at the given path and parse the result. Returns None if ffprobe
-/// couldn't be executed (so the caller can try the next fallback).
-fn run_ffprobe(app: &AppHandle, ffprobe_path: &str, media_path: &str) -> Option<Result<Option<f64>, String>> {
-    let output = match std::process::Command::new(ffprobe_path)
-        .args([
-            "-v", "quiet",
-            "-print_format", "json",
-            "-show_streams",
-            "-select_streams", "v:0",
-            media_path,
-        ])
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) => {
-            log(app, &format!("probe_fps: {ffprobe_path} failed to run: {e}"));
-            return None; // couldn't run — try next fallback
-        }
+async fn probe_fps(
+    app: AppHandle,
+    path: String,
+    state: State<'_, DaemonState>,
+) -> Result<Option<f64>, String> {
+    let daemon = {
+        let guard = state.lock().await;
+        guard.clone().ok_or_else(|| "transcription engine not running".to_string())?
     };
 
-    if !output.status.success() && output.stdout.is_empty() {
-        log(app, &format!("probe_fps: {ffprobe_path} returned no data"));
-        return None;
-    }
+    #[derive(serde::Deserialize)]
+    struct R { fps: Option<f64> }
 
-    let json: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(e) => {
-            log(app, &format!("probe_fps: failed to parse ffprobe output: {e}"));
-            return None;
-        }
-    };
-
-    let streams = json["streams"].as_array();
-    if streams.map_or(true, |s| s.is_empty()) {
-        log(app, "probe_fps: no video streams (audio-only)");
-        return Some(Ok(None));
-    }
-
-    let streams = streams.unwrap();
-    let fps_str = streams[0]["avg_frame_rate"]
-        .as_str()
-        .or_else(|| streams[0]["r_frame_rate"].as_str());
-
-    match fps_str.and_then(parse_rational_fps) {
-        Some(fps) => {
-            let snapped = snap_fps(fps);
-            log(app, &format!("probe_fps: detected {snapped}"));
-            Some(Ok(Some(snapped)))
-        }
-        None => {
-            log(app, "probe_fps: no valid frame rate in video stream");
-            None
-        }
-    }
+    let r: R = daemon
+        .request("probe_fps", serde_json::json!({ "path": path }))
+        .await?;
+    log(&app, &format!("probe_fps: {:?}", r.fps));
+    Ok(r.fps)
 }
 
-fn parse_rational_fps(s: &str) -> Option<f64> {
-    let mut parts = s.splitn(2, '/');
-    let num: f64 = parts.next()?.parse().ok()?;
-    let den: f64 = parts.next().unwrap_or("1").parse().ok()?;
-    if den == 0.0 || num == 0.0 { return None; }
-    Some(num / den)
-}
+// ── Daemon commands ──────────────────────────────────────────────────────────
 
-fn snap_fps(fps: f64) -> f64 {
-    const SNAPS: &[(f64, f64)] = &[
-        (23.976, 24000.0 / 1001.0),
-        (29.97,  30000.0 / 1001.0),
-        (59.94,  60000.0 / 1001.0),
-    ];
-    for &(label, exact) in SNAPS {
-        if (fps - exact).abs() < 0.01 {
-            return label;
+#[tauri::command]
+async fn start_daemon(
+    app: AppHandle,
+    state: State<'_, DaemonState>,
+) -> Result<(), String> {
+    let mut guard = state.lock().await;
+    // If a daemon already exists but has crashed, drop it so we can respawn.
+    if let Some(existing) = guard.as_ref() {
+        match existing.current_status() {
+            DaemonStatus::Crashed { .. } | DaemonStatus::NotInstalled => {
+                *guard = None;
+            }
+            _ => return Ok(()),
         }
     }
-    (fps * 1000.0).round() / 1000.0
+
+    // Refuse to spawn an incompatible sidecar (pre-daemon protocol).
+    if let Ok(Some(meta)) = sidecar::read_meta_public(&app) {
+        if !sidecar::version_at_least(&meta.version, sidecar::MIN_SIDECAR_VERSION) {
+            return Err(format!(
+                "Transcription engine version {} is too old. Please update to {} or newer from the setup screen.",
+                meta.version,
+                sidecar::MIN_SIDECAR_VERSION
+            ));
+        }
+    }
+
+    log(&app, "daemon: spawning sidecar");
+    let daemon = SidecarDaemon::spawn(&app)?;
+    *guard = Some(daemon.clone());
+    drop(guard);
+
+    // Forward status changes to the frontend
+    let app_clone = app.clone();
+    let mut rx = daemon.subscribe_status();
+    tokio::spawn(async move {
+        loop {
+            let status = rx.borrow().clone();
+            let _ = app_clone.emit("daemon://status", &status);
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_daemon_status(state: State<'_, DaemonState>) -> Result<DaemonStatus, String> {
+    let guard = state.lock().await;
+    Ok(match guard.as_ref() {
+        Some(d) => d.current_status(),
+        None => DaemonStatus::NotInstalled,
+    })
 }
 
 /// Return the static list of known Whisper models.
@@ -650,9 +597,8 @@ fn list_models() -> Vec<ModelInfo> {
 
 // ── Transcription command ────────────────────────────────────────────────────
 
-/// Transcribe a media file using the WhisperX Python sidecar.
+/// Transcribe a media file via the long-lived sidecar daemon.
 /// Streams `transcription://progress` events to the window during the run.
-/// Returns a flat list of words with timestamps on success.
 #[tauri::command]
 async fn transcribe_media(
     app: AppHandle,
@@ -660,129 +606,56 @@ async fn transcribe_media(
     media_path: String,
     model_id: String,
     language: Option<String>,
+    state: State<'_, DaemonState>,
 ) -> Result<TranscriptionResult, String> {
-    let mut args = vec!["--file".to_string(), media_path.clone(), "--model".to_string(), model_id.clone()];
-    if let Some(lang) = language.clone() {
-        args.push("--language".to_string());
-        args.push(lang);
+    log(&app, &format!(
+        "transcribe: file={media_path} model={model_id} lang={}",
+        language.as_deref().unwrap_or("auto")
+    ));
+
+    let daemon = {
+        let guard = state.lock().await;
+        guard.clone().ok_or_else(|| {
+            "Transcription engine not running. Restart the app to retry.".to_string()
+        })?
+    };
+
+    let params = serde_json::json!({
+        "path": media_path,
+        "model": model_id,
+        "language": language.unwrap_or_default(),
+    });
+
+    let on_event = move |ev: serde_json::Value| {
+        let percent = ev.get("percent").and_then(|p| p.as_u64()).unwrap_or(0) as u8;
+        let message = ev
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
+        let _ = window.emit(
+            "transcription://progress",
+            ProgressPayload {
+                stage: "transcribing".to_string(),
+                percent,
+                message,
+            },
+        );
+    };
+
+    #[derive(serde::Deserialize)]
+    struct R {
+        words: Vec<TranscribedWord>,
+        language: String,
     }
 
-    log(&app, &format!("transcribe: file={media_path} model={model_id} lang={}", language.as_deref().unwrap_or("auto")));
-
-    let bin = sidecar::sidecar_bin_path(&app)?;
-    if !bin.exists() {
-        log(&app, "transcribe: sidecar binary not found");
-        return Err("Transcription engine not installed. Download it from the setup screen.".into());
-    }
-
-    let (mut rx, _child) = app
-        .shell()
-        .command(bin)
-        .args(&args)
-        .spawn()
-        .map_err(|e| format!("spawn error: {e}"))?;
-
-    let mut stdout_buf = String::new();
-    let mut result_words: Option<(Vec<TranscribedWord>, String)> = None;
-    let mut error_msg: Option<String> = None;
-
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) => {
-                stdout_buf.push_str(&String::from_utf8_lossy(&bytes));
-                // Process all complete lines
-                while let Some(pos) = stdout_buf.find('\n') {
-                    let line = stdout_buf[..pos].trim().to_string();
-                    stdout_buf = stdout_buf[pos + 1..].to_string();
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                        match value.get("type").and_then(|t| t.as_str()) {
-                            Some("progress") => {
-                                let percent = value.get("percent")
-                                    .and_then(|p| p.as_u64())
-                                    .unwrap_or(0) as u8;
-                                let message = value.get("message")
-                                    .and_then(|m| m.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let _ = window.emit(
-                                    "transcription://progress",
-                                    ProgressPayload { stage: "transcribing".to_string(), percent, message },
-                                );
-                            }
-                            Some("result") => {
-                                if let Some(words_val) = value.get("words") {
-                                    if let Ok(words) = serde_json::from_value::<Vec<TranscribedWord>>(words_val.clone()) {
-                                        let language = value.get("language")
-                                            .and_then(|l| l.as_str())
-                                            .unwrap_or("en")
-                                            .to_string();
-                                        result_words = Some((words, language));
-                                    }
-                                }
-                            }
-                            Some("error") => {
-                                error_msg = Some(
-                                    value.get("message")
-                                        .and_then(|m| m.as_str())
-                                        .unwrap_or("unknown sidecar error")
-                                        .to_string(),
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            CommandEvent::Stderr(bytes) => {
-                // Forward non-empty stderr lines as progress events so the UI
-                // can show download/tqdm output that whisperx writes to stderr.
-                // Skip Python warning boilerplate (UserWarning, warn() calls, etc.)
-                let text = String::from_utf8_lossy(&bytes);
-                let line = text.trim();
-                if !line.is_empty() {
-                    eprintln!("[sidecar stderr] {line}");
-                    let is_py_warning = line.contains("Warning")
-                        || line.contains("warn(")
-                        || line.contains("Lightning automatically upgraded")
-                        || line.starts_with("  File \"")
-                        || line.starts_with("  ");
-                    if !is_py_warning {
-                        let _ = window.emit(
-                            "transcription://progress",
-                            ProgressPayload { stage: "downloading".to_string(), percent: 0, message: line.to_string() },
-                        );
-                    }
-                }
-            }
-            CommandEvent::Error(e) => {
-                log(&app, &format!("transcribe: sidecar error: {e}"));
-                return Err(format!("sidecar error: {e}"));
-            }
-            CommandEvent::Terminated(payload) => {
-                if payload.code != Some(0) && result_words.is_none() {
-                    let msg = error_msg.unwrap_or_else(|| {
-                        format!("sidecar exited with code {:?}", payload.code)
-                    });
-                    log(&app, &format!("transcribe: {msg}"));
-                    return Err(msg);
-                }
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(msg) = error_msg {
-        return Err(msg);
-    }
-
-    let (words, language) = result_words.ok_or_else(|| "sidecar did not return a result".to_string())?;
-    Ok(TranscriptionResult { words, language })
+    let r: R = daemon
+        .request_streaming("transcribe", params, on_event)
+        .await?;
+    Ok(TranscriptionResult {
+        words: r.words,
+        language: r.language,
+    })
 }
 
 // ── App entry point ──────────────────────────────────────────────────────────
@@ -790,6 +663,7 @@ async fn transcribe_media(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage::<DaemonState>(AsyncMutex::new(None))
         .setup(|app| {
             if let Err(e) = seed_format_files(app.handle()) {
                 eprintln!("warning: could not seed export format files: {e}");
@@ -828,6 +702,8 @@ pub fn run() {
             get_log_path,
             list_models,
             transcribe_media,
+            start_daemon,
+            get_daemon_status,
             list_profiles,
             save_profile,
             delete_profile,

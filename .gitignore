@@ -13,6 +13,9 @@ dist-ssr
 *.local
 src-tauri/target/
 src-tauri/binaries/
+# PyInstaller onefile bootstrap extracts (created next to the sidecar binary
+# at runtime via --runtime-tmpdir ".")
+**/_MEI*/
 sidecar/dist/
 sidecar/build/
 sidecar/ffmpeg/

@@ -5,7 +5,7 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
-import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus } from "./store/app";
+import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus, daemonStatus } from "./store/app";
 import { saveCurrentProject, loadProjectFromPath } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { invoke } from "@tauri-apps/api/core";
@@ -20,6 +20,8 @@ import { UnsavedChanges } from "./components/UnsavedChanges";
 import { HelpModal } from "./components/HelpModal";
 import { Tooltip } from "./components/Tooltip";
 import { SidecarSetup } from "./components/SidecarSetup";
+import { Splash, startDaemon } from "./components/Splash";
+import { daemonError } from "./store/app";
 import { useUpdateChecker } from "./components/UpdateNotice";
 import { BugReportModal } from "./components/BugReportModal";
 
@@ -59,6 +61,39 @@ export function App() {
       sidecarStatus.value = "not_installed";
     });
   }, []);
+
+  // Persistent daemon status listener — must outlive the Splash component
+  // so mid-session crashes flip the UI back to the splash.
+  useEffect(() => {
+    const unlisten = listen<{ state: string; device?: string; reason?: string }>(
+      "daemon://status",
+      (e) => {
+        const s = e.payload;
+        if (s.state === "ready") {
+          daemonStatus.value = "ready";
+          daemonError.value = null;
+        } else if (s.state === "booting") {
+          daemonStatus.value = "booting";
+        } else if (s.state === "crashed") {
+          daemonStatus.value = "crashed";
+          daemonError.value = s.reason ?? "Transcription engine crashed";
+        } else if (s.state === "not_installed") {
+          daemonStatus.value = "not_installed";
+        }
+      },
+    );
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
+  // Kick off the daemon once the sidecar is confirmed installed.
+  useEffect(() => {
+    if (
+      (sidecarStatus.value === "ready" || sidecarStatus.value === "update_available") &&
+      daemonStatus.value === "checking"
+    ) {
+      startDaemon();
+    }
+  }, [sidecarStatus.value, daemonStatus.value]);
 
   useEffect(() => {
     loadProfiles().then((p) => { profiles.value = p; });
@@ -111,6 +146,9 @@ export function App() {
   if (sidecarStatus.value === "checking") return null;
   if (sidecarStatus.value !== "ready" && sidecarStatus.value !== "update_available") {
     return <SidecarSetup />;
+  }
+  if (daemonStatus.value !== "ready") {
+    return <Splash />;
   }
   if (profiles.value.length === 0) return null;
 

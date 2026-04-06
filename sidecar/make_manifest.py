@@ -5,11 +5,11 @@ Generate a sidecar-manifest.json for a Codfish sidecar release.
 Usage:
     python sidecar/make_manifest.py --version 0.1.0 --dir sidecar/dist/
 
-The --dir should contain release binaries named like:
-    transcribe-cpu-x86_64-pc-windows-msvc.exe
-    transcribe-cuda-x86_64-pc-windows-msvc.exe
+The --dir should contain release zips named like:
+    transcribe-cpu-x86_64-pc-windows-msvc.zip
+    transcribe-cuda-x86_64-pc-windows-msvc.zip
 
-For binaries over 2GB (GitHub's limit), split them into .part1, .part2, etc.
+For zips over 2GB (GitHub's limit), split them into .part1, .part2, etc.
 The script detects parts automatically and lists them in the manifest.
 """
 
@@ -22,13 +22,10 @@ from pathlib import Path
 
 REPO = "jbohlken/codfish"
 BINARY_PATTERN = re.compile(
-    r"^transcribe-(?P<variant>cpu|cuda)-(?P<triple>[a-z0-9_-]+?)(?:\.exe)?$"
+    r"^transcribe-(?P<variant>cpu|cuda)-(?P<triple>[a-z0-9_-]+?)\.zip$"
 )
 PART_PATTERN = re.compile(
-    r"^transcribe-(?P<variant>cpu|cuda)-(?P<triple>[a-z0-9_-]+?)\.exe\.part(?P<num>\d+)$"
-)
-FFPROBE_PATTERN = re.compile(
-    r"^ffprobe-(?P<triple>[a-z0-9_-]+?)(?:\.exe)?$"
+    r"^transcribe-(?P<variant>cpu|cuda)-(?P<triple>[a-z0-9_-]+?)\.zip\.part(?P<num>\d+)$"
 )
 
 
@@ -115,26 +112,10 @@ def main():
     if not variants:
         sys.exit(f"No release binaries found in {dist}")
 
-    # Collect standalone ffprobe binaries
-    ffprobe = {}
-    for path in sorted(dist.iterdir()):
-        match = FFPROBE_PATTERN.match(path.name)
-        if not match:
-            continue
-        triple = match.group("triple")
-        print(f"  ffprobe-{triple}: {path.name} ({path.stat().st_size / 1_000_000:.1f} MB)")
-        ffprobe[triple] = {
-            "url": f"https://github.com/{REPO}/releases/download/{tag}/{path.name}",
-            "sha256": sha256_file(path),
-            "size_bytes": path.stat().st_size,
-        }
-
     manifest = {
         "version": args.version,
         "variants": variants,
     }
-    if ffprobe:
-        manifest["ffprobe"] = ffprobe
 
     out_path = dist / "sidecar-manifest.json"
     with open(out_path, "w") as f:

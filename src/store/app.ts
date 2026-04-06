@@ -23,6 +23,11 @@ export const profiles = signal<CaptionProfile[]>([]);
 export type SidecarState = "checking" | "not_installed" | "downloading" | "ready" | "update_available";
 export const sidecarStatus = signal<SidecarState>("checking");
 
+// ── Daemon (long-lived sidecar process) ────────────────────────────────────
+export type DaemonState = "checking" | "booting" | "ready" | "crashed" | "not_installed";
+export const daemonStatus = signal<DaemonState>("checking");
+export const daemonError = signal<string | null>(null);
+
 // ── Undo / Redo ────────────────────────────────────────────────────────────
 
 interface HistoryEntry {

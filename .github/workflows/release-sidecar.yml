@@ -30,8 +30,7 @@ jobs:
         with:
           name: sidecar-windows
           path: |
-            sidecar/dist/transcribe-cpu-*
-            sidecar/dist/ffprobe-*
+            sidecar/dist/transcribe-cpu-*.zip
 
   build-cpu-macos:
     runs-on: macos-latest
@@ -60,8 +59,7 @@ jobs:
         with:
           name: sidecar-macos
           path: |
-            sidecar/dist/transcribe-cpu-*
-            sidecar/dist/ffprobe-*
+            sidecar/dist/transcribe-cpu-*.zip
 
   release:
     needs: [build-cpu-windows, build-cpu-macos]
@@ -108,6 +106,5 @@ jobs:
             ```
           draft: true
           files: |
-            sidecar/dist/transcribe-cpu-*
-            sidecar/dist/ffprobe-*
+            sidecar/dist/transcribe-cpu-*.zip
             sidecar/dist/sidecar-manifest.json

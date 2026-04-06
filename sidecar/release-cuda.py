@@ -113,18 +113,11 @@ def main():
     for f in upload_files:
         run(["gh", "release", "upload", tag, str(f), "--clobber", "--repo", REPO])
 
-    # ── 4. Download CPU binaries and ffprobe ──────────────���─────────────
-    print("\n=== Step 4: Downloading CPU binaries and ffprobe ===")
+    # ── 4. Download CPU binaries ─────────────────────────────────────────
+    print("\n=== Step 4: Downloading CPU binaries ===")
     run([
         "gh", "release", "download", tag,
         "--pattern", "transcribe-cpu-*",
-        "--dir", str(DIST_DIR),
-        "--clobber",
-        "--repo", REPO,
-    ])
-    run([
-        "gh", "release", "download", tag,
-        "--pattern", "ffprobe-*",
         "--dir", str(DIST_DIR),
         "--clobber",
         "--repo", REPO,

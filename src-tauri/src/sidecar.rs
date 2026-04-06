@@ -16,6 +16,20 @@ const SIDECAR_BIN_NAME: &str = if cfg!(windows) {
     "transcribe"
 };
 
+/// Minimum sidecar version this build of the app is compatible with.
+/// 0.2.0 introduced the daemon JSON-Lines protocol; earlier sidecars are argv-based
+/// and will hang the splash if launched.
+pub const MIN_SIDECAR_VERSION: &str = "0.2.0";
+
+/// Compare two semver-ish version strings ("a.b.c"). Returns true if `a >= b`.
+pub fn version_at_least(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> (u32, u32, u32) {
+        let mut it = s.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+        (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
+    };
+    parse(a) >= parse(b)
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,18 +65,9 @@ pub struct DownloadProgress {
 }
 
 #[derive(Debug, Deserialize)]
-struct FfprobeInfo {
-    url: String,
-    sha256: String,
-    size_bytes: u64,
-}
-
-#[derive(Debug, Deserialize)]
 struct SidecarManifest {
     version: String,
     variants: HashMap<String, VariantInfo>,
-    #[serde(default)]
-    ffprobe: HashMap<String, FfprobeInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,18 +150,12 @@ pub fn sidecar_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
     sidecar_dir(app).map(|d| d.join(SIDECAR_BIN_NAME))
 }
 
-const FFPROBE_BIN_NAME: &str = if cfg!(windows) {
-    "ffprobe.exe"
-} else {
-    "ffprobe"
-};
-
-pub fn ffprobe_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
-    sidecar_dir(app).map(|d| d.join(FFPROBE_BIN_NAME))
-}
-
 fn sidecar_meta_path(app: &AppHandle) -> Result<PathBuf, String> {
     sidecar_dir(app).map(|d| d.join("sidecar.json"))
+}
+
+pub fn read_meta_public(app: &AppHandle) -> Result<Option<SidecarMeta>, String> {
+    read_meta(app)
 }
 
 fn read_meta(app: &AppHandle) -> Result<Option<SidecarMeta>, String> {
@@ -296,7 +295,7 @@ pub async fn download_sidecar(
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
 
     let bin_path = sidecar_bin_path(&app)?;
-    let tmp_path = dir.join("transcribe.tmp");
+    let tmp_path = dir.join("transcribe.zip.tmp");
 
     // 4. Build list of URLs to download
     let total_bytes = info.size_bytes;
@@ -353,7 +352,7 @@ pub async fn download_sidecar(
 
     drop(file);
 
-    // 6. Verify SHA-256 of the full reassembled binary
+    // 6. Verify SHA-256 of the full reassembled zip
     let hash = format!("{:x}", hasher.finalize());
     if hash != info.sha256 {
         let _ = std::fs::remove_file(&tmp_path);
@@ -363,15 +362,26 @@ pub async fn download_sidecar(
         ));
     }
 
-    // 7. Atomic rename into place
-    if bin_path.exists() {
-        std::fs::remove_file(&bin_path)
-            .map_err(|e| format!("remove old binary: {e}"))?;
-    }
-    std::fs::rename(&tmp_path, &bin_path)
-        .map_err(|e| format!("rename: {e}"))?;
+    // 7. Clean up any previous install (old onefile binary, leftover _MEI extracts,
+    //    or previous onedir contents) so the extract starts from a known state.
+    let _ = window.emit(
+        "sidecar://download-progress",
+        DownloadProgress { downloaded_bytes: total_bytes, total_bytes, percent: 100 },
+    );
+    cleanup_existing_install(&dir)?;
 
-    // 8. Set executable permission on Unix
+    // 8. Extract the zip directly into the bin directory
+    extract_zip(&tmp_path, &dir)?;
+    let _ = std::fs::remove_file(&tmp_path);
+
+    if !bin_path.exists() {
+        return Err(format!(
+            "extracted archive but {} not found",
+            bin_path.display()
+        ));
+    }
+
+    // 9. Set executable permission on Unix
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -379,7 +389,7 @@ pub async fn download_sidecar(
             .map_err(|e| format!("chmod: {e}"))?;
     }
 
-    // 9. Write metadata
+    // 10. Write metadata
     write_meta(
         &app,
         &SidecarMeta {
@@ -389,41 +399,77 @@ pub async fn download_sidecar(
         },
     )?;
 
-    // 10. Download standalone ffprobe if available in manifest
-    let triple = target_triple();
-    if let Some(fp_info) = manifest.ffprobe.get(triple) {
-        let fp_path = ffprobe_bin_path(&app)?;
-        let fp_tmp = dir.join("ffprobe.tmp");
+    Ok(())
+}
 
-        let response = client
-            .get(&fp_info.url)
-            .send()
-            .await
-            .map_err(|e| format!("download ffprobe: {e}"))?;
-
-        let bytes = response.bytes().await.map_err(|e| format!("read ffprobe: {e}"))?;
-
-        // Verify SHA-256
-        let mut fp_hasher = Sha256::new();
-        fp_hasher.update(&bytes);
-        let fp_hash = format!("{:x}", fp_hasher.finalize());
-        if fp_hash != fp_info.sha256 {
-            return Err(format!("ffprobe SHA-256 mismatch: expected {}, got {fp_hash}", fp_info.sha256));
+/// Remove any previous sidecar install from `dir`: old onefile binary, runtime
+/// `_MEI*` extracts from previous onefile installs, and any prior onedir contents
+/// (everything except sidecar.json metadata).
+fn cleanup_existing_install(dir: &std::path::Path) -> Result<(), String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        // Preserve metadata; everything else is fair game.
+        if name == "sidecar.json" {
+            continue;
         }
-
-        std::fs::write(&fp_tmp, &bytes).map_err(|e| format!("write ffprobe: {e}"))?;
-        if fp_path.exists() {
-            std::fs::remove_file(&fp_path).map_err(|e| format!("remove old ffprobe: {e}"))?;
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(e) = result {
+            return Err(format!("cleanup {}: {e}", path.display()));
         }
-        std::fs::rename(&fp_tmp, &fp_path).map_err(|e| format!("rename ffprobe: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Extract a zip archive into `dest`. Files are written under `dest` preserving
+/// the archive's internal directory structure.
+fn extract_zip(zip_path: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("open zip: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("read zip: {e}"))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| format!("zip entry: {e}"))?;
+        let rel = match entry.enclosed_name() {
+            Some(p) => p.to_path_buf(),
+            None => continue, // skip suspicious paths
+        };
+        let out_path = dest.join(&rel);
+
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path)
+                .map_err(|e| format!("mkdir {}: {e}", out_path.display()))?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        }
+        let mut out = std::fs::File::create(&out_path)
+            .map_err(|e| format!("create {}: {e}", out_path.display()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("write {}: {e}", out_path.display()))?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&fp_path, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("chmod ffprobe: {e}"))?;
+            if let Some(mode) = entry.unix_mode() {
+                let _ = std::fs::set_permissions(
+                    &out_path,
+                    std::fs::Permissions::from_mode(mode),
+                );
+            }
         }
     }
-
     Ok(())
 }

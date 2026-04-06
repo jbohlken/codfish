@@ -1745,6 +1745,71 @@ kbd {
   padding: var(--space-6);
 }
 
+.splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--color-bg);
+}
+
+.splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.splash-icon {
+  width: 96px;
+  height: 96px;
+  animation: splash-swim 3s linear infinite;
+}
+
+/* translateY = -12 * sin(t),  rotate = -10 * cos(t)   (tilt leads the bob) */
+@keyframes splash-swim {
+  0%     { transform: translateY(0px)     rotate(-10deg); }
+  6.25%  { transform: translateY(-4.6px)  rotate(-9.2deg); }
+  12.5%  { transform: translateY(-8.5px)  rotate(-7.1deg); }
+  18.75% { transform: translateY(-11.1px) rotate(-3.8deg); }
+  25%    { transform: translateY(-12px)   rotate(0deg); }
+  31.25% { transform: translateY(-11.1px) rotate(3.8deg); }
+  37.5%  { transform: translateY(-8.5px)  rotate(7.1deg); }
+  43.75% { transform: translateY(-4.6px)  rotate(9.2deg); }
+  50%    { transform: translateY(0px)     rotate(10deg); }
+  56.25% { transform: translateY(4.6px)   rotate(9.2deg); }
+  62.5%  { transform: translateY(8.5px)   rotate(7.1deg); }
+  68.75% { transform: translateY(11.1px)  rotate(3.8deg); }
+  75%    { transform: translateY(12px)    rotate(0deg); }
+  81.25% { transform: translateY(11.1px)  rotate(-3.8deg); }
+  87.5%  { transform: translateY(8.5px)   rotate(-7.1deg); }
+  93.75% { transform: translateY(4.6px)   rotate(-9.2deg); }
+  100%   { transform: translateY(0px)     rotate(-10deg); }
+}
+
+.splash-message {
+  font-size: var(--text-md);
+  color: var(--color-text-secondary);
+}
+
+.splash-error {
+  font-size: var(--text-md);
+  color: var(--color-text-primary);
+  max-width: 480px;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+.splash-retry {
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-accent, #4a9eff);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-md);
+}
+
 .sidecar-setup-card {
   max-width: 480px;
   width: 100%;

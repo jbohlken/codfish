@@ -1,37 +1,70 @@
 #!/usr/bin/env python3
 """
-Codfish WhisperX transcription sidecar.
+Codfish transcription sidecar — daemon mode.
 
-Usage:
-    transcribe --file <path> --model <id> [--language <code>]
+Long-lived process. Reads JSON Lines requests on stdin, writes JSON Lines
+responses and events on stdout. stderr is a free-form log channel.
 
-Streams JSON lines to stdout:
-    {"type": "progress", "percent": 0-100, "message": "..."}
-    {"type": "result", "words": [{"text": "...", "start": 0.0, "end": 0.5, "confidence": 0.95}]}
-    {"type": "error", "message": "..."}
+Protocol
+--------
+Boot:
+    {"event": "booting"}
+    {"event": "ready"}            # heavy imports done, ready for requests
+
+Request:
+    {"id": "<rid>", "op": "probe_fps", "params": {"path": "..."}}
+    {"id": "<rid>", "op": "transcribe", "params": {"path": "...", "model": "base", "language": ""}}
+
+Response:
+    {"id": "<rid>", "ok": true, "result": {...}}
+    {"id": "<rid>", "ok": false, "error": "..."}
+
+Streaming events (transcribe):
+    {"id": "<rid>", "event": "progress", "percent": 42, "message": "..."}
 """
 
 import sys
 import os
+import io
 import json
-import argparse
+import contextlib
 import traceback
 from pathlib import Path
 
+# ── stdout protocol setup ─────────────────────────────────────────────────────
+# Force UTF-8 so non-ASCII paths don't blow up on Windows.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
+# Save the real stdout — only protocol writes go here. Everything else
+# (library prints, tqdm, warnings) gets redirected to stderr so it can't
+# corrupt the JSON Lines stream.
+_PROTO_STDOUT = sys.stdout
+
+
+def emit(obj: dict):
+    _PROTO_STDOUT.write(json.dumps(obj) + "\n")
+    _PROTO_STDOUT.flush()
+
+
+def log(msg: str):
+    print(msg, file=sys.stderr, flush=True)
+
+
+# ── ffmpeg discovery ──────────────────────────────────────────────────────────
 def ensure_ffmpeg_on_path():
-    """Ensure the bundled or system ffmpeg is reachable on PATH."""
     import shutil
 
-    # PyInstaller bundle: ffmpeg is placed at the bundle root by build.py
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         bundle_dir = Path(sys._MEIPASS)
         for candidate in [bundle_dir / "ffmpeg.exe", bundle_dir / "ffmpeg"]:
             if candidate.is_file():
                 os.environ["PATH"] = str(bundle_dir) + os.pathsep + os.environ.get("PATH", "")
                 return
 
-    # Dev mode: check sidecar/ffmpeg/ directory
     script_dir = Path(__file__).parent
     ffmpeg_dir = script_dir / "ffmpeg"
     if ffmpeg_dir.is_dir():
@@ -40,29 +73,36 @@ def ensure_ffmpeg_on_path():
                 os.environ["PATH"] = str(ffmpeg_dir) + os.pathsep + os.environ.get("PATH", "")
                 return
 
-    # Fall back to system PATH
     if not shutil.which("ffmpeg"):
-        print(json.dumps({
-            "type": "error",
-            "message": "ffmpeg not found. Please install ffmpeg and ensure it is on your system PATH."
-        }), flush=True)
-        sys.exit(1)
+        # Defer the error to the first request — we still need to boot so the
+        # parent gets a "ready" event and can show a useful message.
+        log("WARNING: ffmpeg not found on PATH or in bundle")
 
 
+# ── boot: heavy imports ───────────────────────────────────────────────────────
+emit({"event": "booting"})
 ensure_ffmpeg_on_path()
 
+# Redirect stdout during heavy imports so any stray prints from torch /
+# whisperx / numba etc. don't poison the protocol channel.
+with contextlib.redirect_stdout(sys.stderr):
+    import warnings
+    warnings.filterwarnings("ignore")
+    import subprocess  # noqa: E402
+    import torch  # noqa: E402
+    import whisperx  # noqa: E402
 
-def emit(obj: dict):
-    print(json.dumps(obj), flush=True)
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+COMPUTE_TYPE = "float16" if DEVICE == "cuda" else "int8"
+
+# Lazily-populated model cache: model_id -> loaded whisperx model
+_MODEL_CACHE: dict = {}
+
+emit({"event": "ready", "device": DEVICE})
 
 
-def progress(percent: int, message: str):
-    emit({"type": "progress", "percent": percent, "message": message})
-
-
+# ── HF cache helpers (unchanged) ──────────────────────────────────────────────
 def hf_cache_root() -> Path:
-    """Mirror the HuggingFace cache path logic used by huggingface_hub."""
-    import os
     if hf_home := os.environ.get("HF_HOME"):
         return Path(hf_home) / "hub"
     if xdg := os.environ.get("XDG_CACHE_HOME"):
@@ -73,7 +113,6 @@ def hf_cache_root() -> Path:
 
 
 def is_model_cached(model_id: str) -> bool:
-    """Check whether the faster-whisper model is fully cached (model.bin present)."""
     snapshots = hf_cache_root() / f"models--Systran--faster-whisper-{model_id}" / "snapshots"
     try:
         for snapshot_dir in snapshots.iterdir():
@@ -84,26 +123,20 @@ def is_model_cached(model_id: str) -> bool:
         return False
 
 
-def download_model_with_progress(model_id: str, percent_start: int, percent_end: int):
-    """
-    Download the faster-whisper model from HuggingFace with progress reporting.
-    Uses huggingface_hub directly so we can emit meaningful progress events.
-    """
+def download_model_with_progress(rid: str, model_id: str, percent_start: int, percent_end: int):
     from huggingface_hub import snapshot_download
-    from huggingface_hub import constants as hf_constants
     import threading
+    import time
 
     repo_id = f"Systran/faster-whisper-{model_id}"
-    progress(percent_start, f"Downloading {model_id} model from HuggingFace…")
+    progress(rid, percent_start, f"Downloading {model_id} model from HuggingFace…")
 
-    # Run download in a thread so we can emit heartbeat progress while waiting
     result = {"done": False, "error": None}
 
     def do_download():
         try:
-            # local_dir_use_symlinks=False avoids WinError 1314 (symlink privilege)
-            # on Windows machines without Developer Mode enabled.
-            snapshot_download(repo_id, local_files_only=False, local_dir_use_symlinks=False)
+            with contextlib.redirect_stdout(sys.stderr):
+                snapshot_download(repo_id, local_files_only=False, local_dir_use_symlinks=False)
         except Exception as e:
             result["error"] = e
         finally:
@@ -112,34 +145,75 @@ def download_model_with_progress(model_id: str, percent_start: int, percent_end:
     thread = threading.Thread(target=do_download, daemon=True)
     thread.start()
 
-    # Emit a slow-moving progress bar while download runs (we don't have byte-level hooks)
-    import time
     steps = 10
     for i in range(steps):
         thread.join(timeout=3.0)
         if result["done"]:
             break
         pct = percent_start + int((i + 1) / steps * (percent_end - percent_start - 2))
-        progress(pct, f"Downloading {model_id} model… (this may take a few minutes)")
+        progress(rid, pct, f"Downloading {model_id} model… (this may take a few minutes)")
 
     thread.join()
-
     if result["error"]:
         raise result["error"]
+    progress(rid, percent_end, "Model downloaded.")
 
-    progress(percent_end, f"Model downloaded.")
+
+def progress(rid: str, percent: int, message: str):
+    emit({"id": rid, "event": "progress", "percent": percent, "message": message})
+
+
+# ── handlers ──────────────────────────────────────────────────────────────────
+def handle_probe_fps(params: dict) -> dict:
+    file_path = params["path"]
+    try:
+        out = subprocess.check_output(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-select_streams", "v:0", file_path],
+            stderr=subprocess.DEVNULL,
+        ).decode()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {"fps": None}
+
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return {"fps": None}
+
+    streams = data.get("streams", [])
+    if not streams:
+        return {"fps": None}
+
+    fps_str = streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate")
+    if not fps_str:
+        return {"fps": None}
+
+    try:
+        parts = fps_str.split("/")
+        num = float(parts[0])
+        den = float(parts[1]) if len(parts) > 1 else 1.0
+    except ValueError:
+        return {"fps": None}
+
+    if num == 0 or den == 0:
+        return {"fps": None}
+
+    fps = num / den
+    snaps = [(23.976, 24000 / 1001), (29.97, 30000 / 1001), (59.94, 60000 / 1001)]
+    for label, exact in snaps:
+        if abs(fps - exact) < 0.01:
+            fps = label
+            break
+    else:
+        fps = round(fps * 1000) / 1000
+
+    return {"fps": fps}
 
 
 def _check_has_audio(file_path: str):
-    """Raise a clear RuntimeError if the file has no audio stream."""
-    import subprocess
-
-    # ffprobe is bundled alongside ffmpeg (both added to PATH by ensure_ffmpeg_on_path)
-    ffprobe_exe = "ffprobe"
-
     try:
         out = subprocess.check_output(
-            [ffprobe_exe, "-v", "error", "-select_streams", "a",
+            ["ffprobe", "-v", "error", "-select_streams", "a",
              "-show_entries", "stream=codec_type", "-of", "csv=p=0", file_path],
             stderr=subprocess.DEVNULL,
         ).decode().strip()
@@ -149,167 +223,131 @@ def _check_has_audio(file_path: str):
                 "This file cannot be transcribed."
             )
     except FileNotFoundError:
-        # ffprobe not available — skip the check and let load_audio fail naturally
         pass
     except subprocess.CalledProcessError:
         pass
 
 
-def probe_fps(file_path: str):
-    """Probe a video file for its frame rate and emit the result as JSON."""
-    import subprocess
+def _get_or_load_model(rid: str, model_id: str, language: str | None):
+    """Lazy load + cache. Cache key includes language because whisperx bakes it in."""
+    cache_key = f"{model_id}|{language or ''}"
+    if cache_key in _MODEL_CACHE:
+        return _MODEL_CACHE[cache_key]
 
-    try:
-        out = subprocess.check_output(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", "-select_streams", "v:0", file_path],
-            stderr=subprocess.DEVNULL,
-        ).decode()
-        data = json.loads(out)
-        streams = data.get("streams", [])
-        if not streams:
-            emit({"type": "result", "fps": None})
-            return
+    if not is_model_cached(model_id):
+        download_model_with_progress(rid, model_id, percent_start=2, percent_end=18)
 
-        fps_str = streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate")
-        if not fps_str:
-            emit({"type": "result", "fps": None})
-            return
-
-        parts = fps_str.split("/")
-        num = float(parts[0])
-        den = float(parts[1]) if len(parts) > 1 else 1.0
-        if num == 0 or den == 0:
-            emit({"type": "result", "fps": None})
-            return
-
-        fps = num / den
-        # Snap common NTSC rates
-        snaps = [(23.976, 24000 / 1001), (29.97, 30000 / 1001), (59.94, 60000 / 1001)]
-        for label, exact in snaps:
-            if abs(fps - exact) < 0.01:
-                fps = label
-                break
-        else:
-            fps = round(fps * 1000) / 1000
-
-        emit({"type": "result", "fps": fps})
-    except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError, ValueError):
-        emit({"type": "result", "fps": None})
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--file", required=True, help="Path to audio/video file")
-    parser.add_argument("--model", default=None, help="Whisper model id (tiny, base, small, medium, large-v3)")
-    parser.add_argument("--language", default=None, help="ISO language code (e.g. en). Auto-detect if omitted.")
-    parser.add_argument("--probe-fps", action="store_true", help="Probe frame rate and exit")
-    args = parser.parse_args()
-
-    if args.probe_fps:
-        probe_fps(args.file)
-        return
-
-    if not args.model:
-        emit({"type": "error", "message": "--model is required for transcription"})
-        sys.exit(1)
-
-    try:
-        import warnings
-        warnings.filterwarnings("ignore")
-        progress(1, "Loading libraries…")
-        import torch
-        import whisperx
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        compute_type = "float16" if device == "cuda" else "int8"
-
-        # ── 1. Download model if not cached ───────────────────────────────
-        if not is_model_cached(args.model):
-            download_model_with_progress(args.model, percent_start=2, percent_end=18)
-
-        # ── 2. Load model ──────────────────────────────────────────────────
-        progress(20, f"Loading {args.model} model…")
+    progress(rid, 20, f"Loading {model_id} model…")
+    with contextlib.redirect_stdout(sys.stderr):
         model = whisperx.load_model(
-            args.model,
-            device=device,
-            compute_type=compute_type,
-            language=args.language,
+            model_id,
+            device=DEVICE,
+            compute_type=COMPUTE_TYPE,
+            language=language,
         )
+    _MODEL_CACHE[cache_key] = model
+    return model
 
-        # ── 3. Load audio ──────────────────────────────────────────────────
-        progress(30, "Loading audio…")
-        _check_has_audio(args.file)
-        audio = whisperx.load_audio(args.file)
 
-        # ── 4. Transcribe ──────────────────────────────────────────────────
-        progress(40, "Transcribing…")
-        result = model.transcribe(audio, batch_size=16, language=args.language)
-        detected_language = result.get("language", args.language or "en")
+def handle_transcribe(rid: str, params: dict) -> dict:
+    file_path = params["path"]
+    model_id = params.get("model")
+    language = params.get("language") or None
+    if not model_id:
+        raise ValueError("'model' is required")
 
-        # Free GPU memory before alignment
-        del model
-        if device == "cuda":
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
+    progress(rid, 1, "Preparing…")
+    model = _get_or_load_model(rid, model_id, language)
 
-        # ── 5. Align (word-level timestamps) ──────────────────────────────
-        words = []
-        try:
-            progress(65, "Aligning word timestamps…")
+    progress(rid, 30, "Loading audio…")
+    _check_has_audio(file_path)
+    with contextlib.redirect_stdout(sys.stderr):
+        audio = whisperx.load_audio(file_path)
+
+    progress(rid, 40, "Transcribing…")
+    with contextlib.redirect_stdout(sys.stderr):
+        result = model.transcribe(audio, batch_size=16, language=language)
+    detected_language = result.get("language", language or "en")
+
+    words = []
+    try:
+        progress(rid, 65, "Aligning word timestamps…")
+        with contextlib.redirect_stdout(sys.stderr):
             align_model, metadata = whisperx.load_align_model(
                 language_code=detected_language,
-                device=device,
+                device=DEVICE,
             )
             aligned = whisperx.align(
                 result["segments"],
                 align_model,
                 metadata,
                 audio,
-                device,
+                DEVICE,
                 return_char_alignments=False,
             )
 
-            for seg in aligned.get("segments", []):
-                for w in seg.get("words", []):
-                    words.append({
-                        "text": w.get("word", "").strip(),
-                        "start": round(w.get("start", seg["start"]), 3),
-                        "end": round(w.get("end", seg["end"]), 3),
-                        "confidence": round(w.get("score", 1.0), 3),
-                    })
-
-        except Exception:
-            # Alignment failed (unsupported language, etc.) — fall back to segment-level
-            progress(70, "Alignment unavailable, using segment timestamps…")
-            for seg in result.get("segments", []):
-                text = seg.get("text", "").strip()
-                if not text:
-                    continue
+        for seg in aligned.get("segments", []):
+            for w in seg.get("words", []):
                 words.append({
-                    "text": text,
-                    "start": round(seg["start"], 3),
-                    "end": round(seg["end"], 3),
-                    "confidence": 1.0,
+                    "text": w.get("word", "").strip(),
+                    "start": round(w.get("start", seg["start"]), 3),
+                    "end": round(w.get("end", seg["end"]), 3),
+                    "confidence": round(w.get("score", 1.0), 3),
                 })
+    except Exception:
+        progress(rid, 70, "Alignment unavailable, using segment timestamps…")
+        for seg in result.get("segments", []):
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            words.append({
+                "text": text,
+                "start": round(seg["start"], 3),
+                "end": round(seg["end"], 3),
+                "confidence": 1.0,
+            })
 
-        progress(95, "Finalising…")
+    progress(rid, 100, "Done")
+    words = [w for w in words if w["text"]]
+    return {"words": words, "language": detected_language}
 
-        # Filter out empty words
-        words = [w for w in words if w["text"]]
 
-        progress(100, "Done")
-        emit({"type": "result", "words": words, "language": detected_language})
+# ── request loop ──────────────────────────────────────────────────────────────
+HANDLERS = {
+    "probe_fps": handle_probe_fps,
+    "transcribe": handle_transcribe,
+}
 
-    except Exception as e:
-        msg = str(e)
-        # Surface a clear message for the most common user-facing errors
-        if "does not contain any stream" in msg or "No audio stream" in msg:
-            emit({"type": "error", "message": f"No audio stream found in \"{Path(args.file).name}\". This file cannot be transcribed."})
-        else:
-            emit({"type": "error", "message": traceback.format_exc()})
-        sys.exit(1)
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError as e:
+            log(f"bad request (not JSON): {e}")
+            continue
+
+        rid = req.get("id", "")
+        op = req.get("op", "")
+        params = req.get("params", {}) or {}
+
+        handler = HANDLERS.get(op)
+        if handler is None:
+            emit({"id": rid, "ok": False, "error": f"unknown op: {op}"})
+            continue
+
+        try:
+            if op == "transcribe":
+                result = handler(rid, params)
+            else:
+                result = handler(params)
+            emit({"id": rid, "ok": True, "result": result})
+        except Exception as e:
+            log(traceback.format_exc())
+            emit({"id": rid, "ok": False, "error": str(e)})
 
 
 if __name__ == "__main__":
