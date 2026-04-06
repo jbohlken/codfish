@@ -60,12 +60,19 @@ impl SidecarDaemon {
             .ok_or("sidecar binary has no parent dir")?
             .to_path_buf();
 
-        let mut child = Command::new(&bin)
-            .current_dir(&bin_dir)
+        let mut cmd = Command::new(&bin);
+        cmd.current_dir(&bin_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        // Suppress the console window flash on Windows when launching the sidecar.
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn sidecar: {e}"))?;
 

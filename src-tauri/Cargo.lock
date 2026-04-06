@@ -469,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "codfish"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "chrono",
  "futures-util",

@@ -154,7 +154,7 @@ def main():
         "--copy-metadata", "faster-whisper",
         "--copy-metadata", "torch",
         "--copy-metadata", "torchaudio",
-        "--console",
+        "--noconsole",
         *add_binary_args,
         str(SCRIPT_DIR / "transcribe.py"),
     ]
