@@ -41,7 +41,7 @@ pub struct SidecarDaemon {
     pending: Pending,
     streaming: Streaming,
     status_rx: watch::Receiver<DaemonStatus>,
-    _child: Mutex<Child>,
+    child: Mutex<Child>,
 }
 
 impl SidecarDaemon {
@@ -84,29 +84,41 @@ impl SidecarDaemon {
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let streaming: Streaming = Arc::new(Mutex::new(HashMap::new()));
 
-        // stdout reader — protocol channel
+        // stdout reader — protocol channel. EOF on this stream is the
+        // authoritative "child is gone" signal. We deliberately do NOT poll
+        // try_wait() on the child handle: on macOS that races with SIGCHLD
+        // reaping when the child spawns subprocesses (ffmpeg, model download,
+        // torch workers) and can return a bogus exit status for a still-living
+        // parent, which would falsely flip the UI to crashed mid-transcription.
         {
             let pending = pending.clone();
             let streaming = streaming.clone();
             let status_tx = status_tx.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
-                loop {
+                let reason: String = loop {
                     match lines.next_line().await {
                         Ok(Some(line)) => {
                             handle_line(&line, &pending, &streaming, &status_tx).await;
                         }
-                        Ok(None) => break,
-                        Err(e) => {
-                            eprintln!("[daemon stdout] read error: {e}");
-                            break;
-                        }
+                        Ok(None) => break "sidecar stdout closed".to_string(),
+                        Err(e) => break format!("sidecar stdout read error: {e}"),
                     }
+                };
+                eprintln!("[daemon] {reason}");
+                let _ = status_tx.send(DaemonStatus::Crashed { reason: reason.clone() });
+                // Drain pending callers so they don't hang forever.
+                let mut p = pending.lock().await;
+                for (_, tx) in p.drain() {
+                    let _ = tx.send(Err(reason.clone()));
                 }
+                drop(p);
+                streaming.lock().await.clear();
             });
         }
 
-        // stderr reader — log channel
+        // stderr reader — log channel. Surface to the parent's stderr so the
+        // user's codfish.log captures the daemon's complaints.
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
@@ -116,55 +128,21 @@ impl SidecarDaemon {
 
         let daemon = Arc::new(SidecarDaemon {
             stdin: Mutex::new(stdin),
-            pending: pending.clone(),
-            streaming: streaming.clone(),
+            pending,
+            streaming,
             status_rx,
-            _child: Mutex::new(child),
+            child: Mutex::new(child),
         });
 
-        // Exit watcher — drain pending callers when the child dies.
-        // We can't move `child` into here because it's already inside the Arc;
-        // instead the kill_on_drop ensures cleanup, and the stdout EOF above
-        // is what really tells us the process is gone. When stdout closes,
-        // we mark crashed and drain.
-        {
-            let pending = pending.clone();
-            let streaming = streaming.clone();
-            let status_tx = status_tx.clone();
-            let daemon_weak = Arc::downgrade(&daemon);
-            tokio::spawn(async move {
-                // Poll status; when stdout reader exits we have no signal here,
-                // so instead piggyback on a periodic check of the child handle.
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    let Some(d) = daemon_weak.upgrade() else { return };
-                    let mut child = d._child.lock().await;
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            let reason = format!("sidecar exited: {status}");
-                            eprintln!("[daemon] {reason}");
-                            let _ = status_tx.send(DaemonStatus::Crashed { reason: reason.clone() });
-                            // Drain pending
-                            let mut p = pending.lock().await;
-                            for (_, tx) in p.drain() {
-                                let _ = tx.send(Err(reason.clone()));
-                            }
-                            drop(p);
-                            let mut s = streaming.lock().await;
-                            s.clear();
-                            return;
-                        }
-                        Ok(None) => continue,
-                        Err(e) => {
-                            eprintln!("[daemon] try_wait error: {e}");
-                            return;
-                        }
-                    }
-                }
-            });
-        }
-
         Ok(daemon)
+    }
+
+    /// Synchronously kill the child and wait for it to fully exit. Used
+    /// before sidecar updates so Windows releases its lock on the executable.
+    pub async fn shutdown(&self) {
+        let mut child = self.child.lock().await;
+        let _ = child.start_kill();
+        let _ = child.wait().await;
     }
 
     pub fn current_status(&self) -> DaemonStatus {

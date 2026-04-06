@@ -583,11 +583,18 @@ async fn start_daemon(
 /// it during a sidecar update.
 #[tauri::command]
 async fn stop_daemon(state: State<'_, DaemonState>) -> Result<(), String> {
-    let mut guard = state.lock().await;
-    *guard = None;
-    // Give Windows a beat to release the file handle after the child exits.
-    drop(guard);
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let daemon = {
+        let mut guard = state.lock().await;
+        guard.take()
+    };
+    if let Some(d) = daemon {
+        // Synchronously kill+wait so Windows releases the executable lock
+        // before we try to overwrite it during a sidecar update.
+        d.shutdown().await;
+    }
+    // Brief pause for the Windows kernel to actually release the file handle
+    // after the process has exited.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     Ok(())
 }
 
