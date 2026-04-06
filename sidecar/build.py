@@ -174,6 +174,15 @@ def main():
     print(f"\nBinary written to: {dst_binary}")
     print(f"Size: {dst_binary.stat().st_size / 1_000_000:.1f} MB")
 
+    # In release mode, also copy standalone ffprobe to dist for separate distribution
+    if release and ffprobe_bin.is_file():
+        ffprobe_release_name = f"ffprobe-{triple}" + (".exe" if is_windows else "")
+        ffprobe_dst = DIST_DIR / ffprobe_release_name
+        shutil.copy2(ffprobe_bin, ffprobe_dst)
+        if not is_windows:
+            ffprobe_dst.chmod(0o755)
+        print(f"Standalone ffprobe: {ffprobe_dst} ({ffprobe_dst.stat().st_size / 1_000_000:.1f} MB)")
+
 
 if __name__ == "__main__":
     main()

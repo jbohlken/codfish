@@ -27,6 +27,9 @@ BINARY_PATTERN = re.compile(
 PART_PATTERN = re.compile(
     r"^transcribe-(?P<variant>cpu|cuda)-(?P<triple>[a-z0-9_-]+?)\.exe\.part(?P<num>\d+)$"
 )
+FFPROBE_PATTERN = re.compile(
+    r"^ffprobe-(?P<triple>[a-z0-9_-]+?)(?:\.exe)?$"
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -112,10 +115,26 @@ def main():
     if not variants:
         sys.exit(f"No release binaries found in {dist}")
 
+    # Collect standalone ffprobe binaries
+    ffprobe = {}
+    for path in sorted(dist.iterdir()):
+        match = FFPROBE_PATTERN.match(path.name)
+        if not match:
+            continue
+        triple = match.group("triple")
+        print(f"  ffprobe-{triple}: {path.name} ({path.stat().st_size / 1_000_000:.1f} MB)")
+        ffprobe[triple] = {
+            "url": f"https://github.com/{REPO}/releases/download/{tag}/{path.name}",
+            "sha256": sha256_file(path),
+            "size_bytes": path.stat().st_size,
+        }
+
     manifest = {
         "version": args.version,
         "variants": variants,
     }
+    if ffprobe:
+        manifest["ffprobe"] = ffprobe
 
     out_path = dist / "sidecar-manifest.json"
     with open(out_path, "w") as f:

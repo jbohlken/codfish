@@ -29,7 +29,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sidecar-windows
-          path: sidecar/dist/transcribe-cpu-*
+          path: |
+            sidecar/dist/transcribe-cpu-*
+            sidecar/dist/ffprobe-*
 
   build-cpu-macos:
     runs-on: macos-latest
@@ -57,7 +59,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sidecar-macos
-          path: sidecar/dist/transcribe-cpu-*
+          path: |
+            sidecar/dist/transcribe-cpu-*
+            sidecar/dist/ffprobe-*
 
   release:
     needs: [build-cpu-windows, build-cpu-macos]
@@ -105,4 +109,5 @@ jobs:
           draft: true
           files: |
             sidecar/dist/transcribe-cpu-*
+            sidecar/dist/ffprobe-*
             sidecar/dist/sidecar-manifest.json

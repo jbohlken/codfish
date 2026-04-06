@@ -51,9 +51,18 @@ pub struct DownloadProgress {
 }
 
 #[derive(Debug, Deserialize)]
+struct FfprobeInfo {
+    url: String,
+    sha256: String,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
 struct SidecarManifest {
     version: String,
     variants: HashMap<String, VariantInfo>,
+    #[serde(default)]
+    ffprobe: HashMap<String, FfprobeInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,6 +143,16 @@ fn sidecar_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 pub fn sidecar_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
     sidecar_dir(app).map(|d| d.join(SIDECAR_BIN_NAME))
+}
+
+const FFPROBE_BIN_NAME: &str = if cfg!(windows) {
+    "ffprobe.exe"
+} else {
+    "ffprobe"
+};
+
+pub fn ffprobe_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
+    sidecar_dir(app).map(|d| d.join(FFPROBE_BIN_NAME))
 }
 
 fn sidecar_meta_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -369,6 +388,42 @@ pub async fn download_sidecar(
             sha256: hash,
         },
     )?;
+
+    // 10. Download standalone ffprobe if available in manifest
+    let triple = target_triple();
+    if let Some(fp_info) = manifest.ffprobe.get(triple) {
+        let fp_path = ffprobe_bin_path(&app)?;
+        let fp_tmp = dir.join("ffprobe.tmp");
+
+        let response = client
+            .get(&fp_info.url)
+            .send()
+            .await
+            .map_err(|e| format!("download ffprobe: {e}"))?;
+
+        let bytes = response.bytes().await.map_err(|e| format!("read ffprobe: {e}"))?;
+
+        // Verify SHA-256
+        let mut fp_hasher = Sha256::new();
+        fp_hasher.update(&bytes);
+        let fp_hash = format!("{:x}", fp_hasher.finalize());
+        if fp_hash != fp_info.sha256 {
+            return Err(format!("ffprobe SHA-256 mismatch: expected {}, got {fp_hash}", fp_info.sha256));
+        }
+
+        std::fs::write(&fp_tmp, &bytes).map_err(|e| format!("write ffprobe: {e}"))?;
+        if fp_path.exists() {
+            std::fs::remove_file(&fp_path).map_err(|e| format!("remove old ffprobe: {e}"))?;
+        }
+        std::fs::rename(&fp_tmp, &fp_path).map_err(|e| format!("rename ffprobe: {e}"))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fp_path, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("chmod ffprobe: {e}"))?;
+        }
+    }
 
     Ok(())
 }

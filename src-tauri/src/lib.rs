@@ -421,6 +421,63 @@ fn get_profiles_dir(app: AppHandle) -> Result<String, String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+fn export_profile(app: AppHandle, id: String) -> Result<String, String> {
+    let dir = profiles_dir(&app)?;
+    let src = dir.join(format!("{id}.ini"));
+    if !src.exists() {
+        return Err(format!("profile '{id}' not found"));
+    }
+    let content = std::fs::read_to_string(&src)
+        .map_err(|e| format!("read error: {e}"))?;
+
+    // Extract the profile name from the INI header for the default filename
+    let name = content.lines()
+        .find_map(|l| l.strip_prefix("# @name "))
+        .map(|n| n.trim().to_string())
+        .unwrap_or_else(|| id.clone());
+
+    Ok(serde_json::json!({ "content": content, "defaultName": name }).to_string())
+}
+
+#[tauri::command]
+fn import_profile(app: AppHandle, content: String) -> Result<CaptionProfile, String> {
+    let id = format!("user_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0));
+
+    // Validate that the content parses as a profile
+    let mut profile = parse_profile(&id, &content)?;
+    profile.built_in = false;
+
+    // Check for name collisions with existing profiles
+    let dir = profiles_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let existing_names: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("read_dir: {e}"))?
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("ini"))
+        .filter_map(|entry| {
+            let content = std::fs::read_to_string(entry.path()).ok()?;
+            content.lines()
+                .find_map(|l| l.strip_prefix("# @name "))
+                .map(|n| n.trim().to_string())
+        })
+        .collect();
+
+    if existing_names.contains(&profile.name) {
+        profile.name = format!("{} (imported)", profile.name);
+    }
+
+    // Write to disk
+    let dest = dir.join(format!("{id}.ini"));
+    let serialized = serialize_profile(&profile);
+    std::fs::write(&dest, serialized).map_err(|e| format!("write error: {e}"))?;
+
+    Ok(profile)
+}
+
 // ── Project file commands ────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -445,12 +502,22 @@ fn file_exists(path: String) -> bool {
 // ── Model commands ───────────────────────────────────────────────────────────
 
 /// Probe a media file for its frame rate.
-/// Tries the sidecar binary first (which has ffprobe bundled), then falls back
-/// to a system ffprobe. Returns null for audio-only files, or an error if
-/// probing fails entirely.
+/// Tries standalone ffprobe first (instant), then the sidecar (slow PyInstaller
+/// startup), then system ffprobe as last resort. Returns null for audio-only
+/// files, or an error if probing fails entirely.
 #[tauri::command]
 fn probe_fps(app: AppHandle, path: String) -> Result<Option<f64>, String> {
-    // Try sidecar first — it has ffprobe bundled
+    // Try standalone ffprobe first — downloaded alongside the sidecar, instant
+    if let Ok(fp) = sidecar::ffprobe_bin_path(&app) {
+        if fp.exists() {
+            log(&app, &format!("probe_fps: trying standalone ffprobe at {}", fp.display()));
+            if let Some(result) = run_ffprobe(&app, fp.to_string_lossy().as_ref(), &path) {
+                return result;
+            }
+        }
+    }
+
+    // Fall back to sidecar (slow — PyInstaller unpacks Python + imports torch)
     if let Ok(bin) = sidecar::sidecar_bin_path(&app) {
         if bin.exists() {
             log(&app, &format!("probe_fps: trying sidecar at {}", bin.display()));
@@ -483,38 +550,54 @@ fn probe_fps(app: AppHandle, path: String) -> Result<Option<f64>, String> {
         }
     }
 
-    // Fall back to system ffprobe
+    // Last resort: system ffprobe
     log(&app, "probe_fps: falling back to system ffprobe");
-    let output = match std::process::Command::new("ffprobe")
+    if let Some(result) = run_ffprobe(&app, "ffprobe", &path) {
+        return result;
+    }
+
+    let msg = "Could not detect frame rate: no ffprobe available. The default frame rate from your profile will be used.".to_string();
+    log(&app, &format!("probe_fps: {msg}"));
+    Err(msg)
+}
+
+/// Run ffprobe at the given path and parse the result. Returns None if ffprobe
+/// couldn't be executed (so the caller can try the next fallback).
+fn run_ffprobe(app: &AppHandle, ffprobe_path: &str, media_path: &str) -> Option<Result<Option<f64>, String>> {
+    let output = match std::process::Command::new(ffprobe_path)
         .args([
             "-v", "quiet",
             "-print_format", "json",
             "-show_streams",
             "-select_streams", "v:0",
-            &path,
+            media_path,
         ])
         .output()
     {
         Ok(o) => o,
         Err(e) => {
-            let msg = format!("Could not detect frame rate: ffprobe not available ({e}). The default frame rate from your profile will be used.");
-            log(&app, &format!("probe_fps: {msg}"));
-            return Err(msg);
+            log(app, &format!("probe_fps: {ffprobe_path} failed to run: {e}"));
+            return None; // couldn't run — try next fallback
         }
     };
 
     if !output.status.success() && output.stdout.is_empty() {
-        let msg = "Could not detect frame rate: ffprobe returned no data. The default frame rate from your profile will be used.".to_string();
-        log(&app, &format!("probe_fps: {msg}"));
-        return Err(msg);
+        log(app, &format!("probe_fps: {ffprobe_path} returned no data"));
+        return None;
     }
 
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("Could not detect frame rate: failed to parse ffprobe output ({e})"))?;
+    let json: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            log(app, &format!("probe_fps: failed to parse ffprobe output: {e}"));
+            return None;
+        }
+    };
+
     let streams = json["streams"].as_array();
     if streams.map_or(true, |s| s.is_empty()) {
-        log(&app, "probe_fps: no video streams (audio-only)");
-        return Ok(None); // audio-only is not an error
+        log(app, "probe_fps: no video streams (audio-only)");
+        return Some(Ok(None));
     }
 
     let streams = streams.unwrap();
@@ -525,13 +608,12 @@ fn probe_fps(app: AppHandle, path: String) -> Result<Option<f64>, String> {
     match fps_str.and_then(parse_rational_fps) {
         Some(fps) => {
             let snapped = snap_fps(fps);
-            log(&app, &format!("probe_fps: detected {snapped}"));
-            Ok(Some(snapped))
+            log(app, &format!("probe_fps: detected {snapped}"));
+            Some(Ok(Some(snapped)))
         }
         None => {
-            let msg = "Could not detect frame rate: no valid frame rate in video stream. The default frame rate from your profile will be used.".to_string();
-            log(&app, &format!("probe_fps: {msg}"));
-            Err(msg)
+            log(app, "probe_fps: no valid frame rate in video stream");
+            None
         }
     }
 }
@@ -750,6 +832,8 @@ pub fn run() {
             save_profile,
             delete_profile,
             get_profiles_dir,
+            export_profile,
+            import_profile,
             sidecar::get_sidecar_status,
             sidecar::detect_gpu,
             sidecar::check_sidecar_update,
