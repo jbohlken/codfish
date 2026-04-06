@@ -421,8 +421,8 @@ fn cleanup_existing_install(dir: &std::path::Path) -> Result<(), String> {
             Some(n) => n,
             None => continue,
         };
-        // Preserve metadata; everything else is fair game.
-        if name == "sidecar.json" {
+        // Preserve metadata and the in-flight download; everything else is fair game.
+        if name == "sidecar.json" || name == "transcribe.zip.tmp" {
             continue;
         }
         let result = if path.is_dir() {
