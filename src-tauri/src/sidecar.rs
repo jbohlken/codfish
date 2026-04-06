@@ -204,16 +204,21 @@ pub fn get_sidecar_status(app: AppHandle) -> Result<SidecarStatus, String> {
         return Ok(SidecarStatus::NotInstalled);
     }
     match read_meta(&app)? {
-        Some(meta) => Ok(SidecarStatus::Ready {
-            version: meta.version,
-            variant: meta.variant,
-        }),
-        None => {
-            // Binary exists but no metadata — treat as ready with unknown version
+        Some(meta) => {
+            // Pre-daemon sidecars don't speak the JSON-Lines protocol — route the
+            // user back through the setup screen so they can download a fresh one.
+            // SidecarSetup's download flow wipes the old install before extracting.
+            if !version_at_least(&meta.version, MIN_SIDECAR_VERSION) {
+                return Ok(SidecarStatus::NotInstalled);
+            }
             Ok(SidecarStatus::Ready {
-                version: "unknown".to_string(),
-                variant: "unknown".to_string(),
+                version: meta.version,
+                variant: meta.variant,
             })
+        }
+        None => {
+            // Binary exists but no metadata — assume incompatible and re-download.
+            Ok(SidecarStatus::NotInstalled)
         }
     }
 }
