@@ -5,7 +5,10 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const bugReportOpen = signal(false);
 
+type FeedbackKind = "bug" | "feature";
+
 export function BugReportModal() {
+  const [kind, setKind] = useState<FeedbackKind>("bug");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -16,6 +19,7 @@ export function BugReportModal() {
 
   const close = () => {
     bugReportOpen.value = false;
+    setKind("bug");
     setTitle("");
     setDescription("");
     setResult(null);
@@ -28,21 +32,23 @@ export function BugReportModal() {
     setError(null);
     try {
       const res = await invoke<{ url: string; number: number }>("submit_bug_report", {
-        report: { title: title.trim(), description: description.trim() },
+        report: { title: title.trim(), description: description.trim(), kind },
       });
       setResult(res);
     } catch (e: any) {
-      setError(typeof e === "string" ? e : e.message || "Failed to submit report");
+      setError(typeof e === "string" ? e : e.message || "Failed to submit feedback");
     } finally {
       setSubmitting(false);
     }
   };
 
+  const isBug = kind === "bug";
+
   return (
     <div class="modal-backdrop" onClick={close}>
       <div class="help-modal" onClick={(e) => e.stopPropagation()}>
         <div class="help-modal-header">
-          <span class="help-modal-title">Report a Bug</span>
+          <span class="help-modal-title">Submit Feedback</span>
           <button class="btn btn-ghost btn-icon" onClick={close}><X size={14} /></button>
         </div>
 
@@ -50,17 +56,38 @@ export function BugReportModal() {
           {result ? (
             <div class="bug-report-success">
               <CheckCircle size={32} weight="fill" />
-              <p>Bug report submitted! (#{result.number})</p>
+              <p>Feedback submitted! (#{result.number})</p>
               <p class="bug-report-thanks">Thank you for your feedback.</p>
             </div>
           ) : (
             <>
               <div class="bug-report-field">
+                <label class="bug-report-label">Type</label>
+                <div class="bug-report-kind">
+                  <button
+                    type="button"
+                    class={`btn ${isBug ? "btn-primary" : "btn-ghost"}`}
+                    onClick={() => setKind("bug")}
+                    disabled={submitting}
+                  >
+                    Bug report
+                  </button>
+                  <button
+                    type="button"
+                    class={`btn ${!isBug ? "btn-primary" : "btn-ghost"}`}
+                    onClick={() => setKind("feature")}
+                    disabled={submitting}
+                  >
+                    Feature request
+                  </button>
+                </div>
+              </div>
+              <div class="bug-report-field">
                 <label class="bug-report-label">Title</label>
                 <input
                   class="bug-report-input"
                   type="text"
-                  placeholder="Brief summary of the issue"
+                  placeholder={isBug ? "Brief summary of the issue" : "Brief summary of the idea"}
                   value={title}
                   onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
                   disabled={submitting}
@@ -70,7 +97,7 @@ export function BugReportModal() {
                 <label class="bug-report-label">Description</label>
                 <textarea
                   class="bug-report-textarea"
-                  placeholder="What happened? What did you expect?"
+                  placeholder={isBug ? "What happened? What did you expect?" : "What would you like to see? Why would it help?"}
                   value={description}
                   onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
                   disabled={submitting}
@@ -84,7 +111,7 @@ export function BugReportModal() {
                 onClick={submit}
                 disabled={submitting || !title.trim()}
               >
-                {submitting ? "Submitting..." : "Submit Report"}
+                {submitting ? "Submitting..." : "Submit Feedback"}
               </button>
             </>
           )}

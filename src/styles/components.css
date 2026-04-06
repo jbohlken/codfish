@@ -2044,6 +2044,11 @@ kbd {
   gap: var(--space-1);
 }
 
+.bug-report-kind {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .bug-report-label {
   font-size: var(--text-xs);
   font-weight: var(--font-weight-semibold);

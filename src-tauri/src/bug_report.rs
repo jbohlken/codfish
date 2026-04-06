@@ -23,6 +23,16 @@ fn github_token() -> Result<String, String> {
 pub struct BugReport {
     title: String,
     description: String,
+    #[serde(default)]
+    kind: FeedbackKind,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FeedbackKind {
+    #[default]
+    Bug,
+    Feature,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,10 +86,15 @@ pub async fn submit_bug_report(
         report.description, system_info
     );
 
+    let (kind_label, title_prefix) = match report.kind {
+        FeedbackKind::Bug => ("bug", "[Bug]"),
+        FeedbackKind::Feature => ("enhancement", "[Feature]"),
+    };
+
     let payload = serde_json::json!({
-        "title": report.title,
+        "title": format!("{} {}", title_prefix, report.title),
         "body": body,
-        "labels": ["bug", "user-report"],
+        "labels": [kind_label, "user-report"],
     });
 
     let token = github_token()?;

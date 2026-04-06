@@ -90,7 +90,7 @@ export function TitleBar() {
         </button>
         <button
           class="btn btn-ghost btn-icon"
-          data-tooltip="Report a bug"
+          data-tooltip="Submit feedback"
           onClick={() => { bugReportOpen.value = true; }}
         >
           <Bug size={14} />
