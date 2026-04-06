@@ -578,6 +578,19 @@ async fn start_daemon(
     Ok(())
 }
 
+/// Drop the running daemon (if any). The Arc dies, kill_on_drop kills the
+/// child, and the executable becomes unlocked on Windows so we can replace
+/// it during a sidecar update.
+#[tauri::command]
+async fn stop_daemon(state: State<'_, DaemonState>) -> Result<(), String> {
+    let mut guard = state.lock().await;
+    *guard = None;
+    // Give Windows a beat to release the file handle after the child exits.
+    drop(guard);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    Ok(())
+}
+
 #[tauri::command]
 async fn get_daemon_status(state: State<'_, DaemonState>) -> Result<DaemonStatus, String> {
     let guard = state.lock().await;
@@ -703,6 +716,7 @@ pub fn run() {
             list_models,
             transcribe_media,
             start_daemon,
+            stop_daemon,
             get_daemon_status,
             list_profiles,
             save_profile,

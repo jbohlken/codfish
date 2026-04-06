@@ -154,7 +154,10 @@ def main():
         "--copy-metadata", "faster-whisper",
         "--copy-metadata", "torch",
         "--copy-metadata", "torchaudio",
-        "--noconsole",
+        # --noconsole is Windows-only: it hides the console window flash when
+        # the daemon spawns. On macOS the same flag tells PyInstaller to build
+        # an .app bundle, which detaches stdio and breaks the JSON-Lines pipe.
+        *(["--noconsole"] if is_windows else ["--console"]),
         *add_binary_args,
         str(SCRIPT_DIR / "transcribe.py"),
     ]

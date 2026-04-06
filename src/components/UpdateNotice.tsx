@@ -4,7 +4,8 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { sidecarStatus } from "../store/app";
+import { sidecarStatus, daemonStatus } from "../store/app";
+import { startDaemon } from "./Splash";
 
 interface AppUpdateState {
   version: string;
@@ -119,11 +120,20 @@ const handleSidecarUpdate = async () => {
   if (!state) return;
   sidecarUpdate.value = { ...state, downloading: true, progress: 0 };
   try {
+    // Kill the running daemon first — Windows locks the executable while
+    // the process is alive, so we can't replace it otherwise.
+    await invoke("stop_daemon");
+    daemonStatus.value = "checking";
     await invoke("download_sidecar", { variant: state.variant });
     sidecarUpdate.value = null;
     sidecarStatus.value = "ready";
-  } catch {
+    // Respawn against the freshly extracted binary.
+    await startDaemon();
+  } catch (e) {
     sidecarUpdate.value = { ...state, downloading: false, progress: null };
+    // Bring the old daemon back so the user isn't stranded.
+    await startDaemon().catch(() => {});
+    console.error("sidecar update failed:", e);
   }
 };
 
