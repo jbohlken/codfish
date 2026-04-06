@@ -159,7 +159,7 @@ def main():
         str(SCRIPT_DIR / "transcribe.py"),
     ]
 
-    print("Running PyInstaller…")
+    print("Running PyInstaller...")
     result = subprocess.run(cmd, cwd=SCRIPT_DIR)
     if result.returncode != 0:
         sys.exit(f"PyInstaller failed with exit code {result.returncode}")
@@ -177,7 +177,7 @@ def main():
         zip_path = DIST_DIR / zip_name
         if zip_path.exists():
             zip_path.unlink()
-        print(f"\nZipping → {zip_path} (this may take a minute)…")
+        print(f"\nZipping -> {zip_path} (this may take a minute)...")
         zip_directory(onedir_out, zip_path)
         print(f"Zip size: {zip_path.stat().st_size / 1_000_000:.1f} MB")
     else:
