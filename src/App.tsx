@@ -25,12 +25,14 @@ import { daemonError } from "./store/app";
 import { useUpdateChecker, sidecarUpdate, UpdateBlocker, isUpdating } from "./components/UpdateNotice";
 import { BugReportModal } from "./components/BugReportModal";
 import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery";
+import { ensureGpuDetected } from "./lib/gpu";
 import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
 
 export function App() {
   useUpdateChecker();
   useAutosaveRecovery();
+  ensureGpuDetected();
 
   // On boot, check for a recovery snapshot and offer to restore it.
   // Gated on sidecar + daemon + profiles being ready so the prompt doesn't

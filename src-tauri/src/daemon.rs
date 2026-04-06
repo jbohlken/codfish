@@ -94,6 +94,7 @@ impl SidecarDaemon {
             let pending = pending.clone();
             let streaming = streaming.clone();
             let status_tx = status_tx.clone();
+            let app = app.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 let reason: String = loop {
@@ -106,6 +107,7 @@ impl SidecarDaemon {
                     }
                 };
                 eprintln!("[daemon] {reason}");
+                crate::log(&app, &format!("daemon: CRASHED — {reason}"));
                 let _ = status_tx.send(DaemonStatus::Crashed { reason: reason.clone() });
                 // Drain pending callers so they don't hang forever.
                 let mut p = pending.lock().await;
@@ -117,14 +119,18 @@ impl SidecarDaemon {
             });
         }
 
-        // stderr reader — log channel. Surface to the parent's stderr so the
-        // user's codfish.log captures the daemon's complaints.
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("[sidecar] {line}");
-            }
-        });
+        // stderr reader — log channel. Mirror every line to codfish.log so
+        // we have a real audit trail when the sidecar dies mid-transcription.
+        {
+            let app = app.clone();
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    eprintln!("[sidecar] {line}");
+                    crate::log(&app, &format!("[sidecar] {line}"));
+                }
+            });
+        }
 
         let daemon = Arc::new(SidecarDaemon {
             stdin: Mutex::new(stdin),

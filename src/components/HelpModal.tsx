@@ -3,13 +3,9 @@ import { XIcon as X } from "@phosphor-icons/react";
 import { useEffect, useState } from "preact/hooks";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { switchSidecarVariant } from "./UpdateNotice";
-
-interface GpuInfo {
-  hasCuda: boolean;
-  gpuName: string | null;
-  vramMb: number | null;
-}
+import { gpuInfo, ensureGpuDetected } from "../lib/gpu";
 
 export const helpOpen = signal(false);
 
@@ -33,10 +29,10 @@ export function HelpModal() {
   const [version, setVersion] = useState<string | null>(null);
   const [sidecarVersion, setSidecarVersion] = useState<string | null>(null);
   const [sidecarVariant, setSidecarVariant] = useState<string | null>(null);
-  const [gpu, setGpu] = useState<GpuInfo | null>(null);
 
   useEffect(() => {
     if (!helpOpen.value) return;
+    ensureGpuDetected();
     getVersion().then(setVersion).catch(() => {});
     invoke<{ status: string; version?: string; variant?: string }>("get_sidecar_status")
       .then((s) => {
@@ -48,9 +44,9 @@ export function HelpModal() {
         }
       })
       .catch(() => {});
-    invoke<GpuInfo>("detect_gpu").then(setGpu).catch(() => {});
   }, [helpOpen.value]);
 
+  const gpu = gpuInfo.value;
   const otherVariant: "cpu" | "cuda" | null =
     sidecarVariant === "cuda" ? "cpu"
     : sidecarVariant === "cpu" && gpu?.hasCuda ? "cuda"
@@ -93,6 +89,25 @@ export function HelpModal() {
                 )}
               </tbody>
             </table>
+          </section>
+
+          <section class="help-section">
+            <h3 class="help-section-title">Diagnostics</h3>
+            <p class="help-about-desc">
+              <button
+                class="btn btn-ghost btn-sm"
+                onClick={async () => {
+                  try {
+                    const path = await invoke<string>("get_log_path");
+                    await revealItemInDir(path);
+                  } catch (e) {
+                    console.error("open log failed", e);
+                  }
+                }}
+              >
+                Open log file
+              </button>
+            </p>
           </section>
 
           <section class="help-section">
