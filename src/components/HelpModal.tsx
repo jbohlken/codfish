@@ -3,6 +3,13 @@ import { XIcon as X } from "@phosphor-icons/react";
 import { useEffect, useState } from "preact/hooks";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { switchSidecarVariant } from "./UpdateNotice";
+
+interface GpuInfo {
+  hasCuda: boolean;
+  gpuName: string | null;
+  vramMb: number | null;
+}
 
 export const helpOpen = signal(false);
 
@@ -25,19 +32,35 @@ const SHORTCUTS = [
 export function HelpModal() {
   const [version, setVersion] = useState<string | null>(null);
   const [sidecarVersion, setSidecarVersion] = useState<string | null>(null);
+  const [sidecarVariant, setSidecarVariant] = useState<string | null>(null);
+  const [gpu, setGpu] = useState<GpuInfo | null>(null);
 
   useEffect(() => {
+    if (!helpOpen.value) return;
     getVersion().then(setVersion).catch(() => {});
     invoke<{ status: string; version?: string; variant?: string }>("get_sidecar_status")
       .then((s) => {
         if (s.version && s.variant) {
           setSidecarVersion(`v${s.version} (${s.variant})`);
+          setSidecarVariant(s.variant);
         } else if (s.status === "not_installed") {
           setSidecarVersion("not installed");
         }
       })
       .catch(() => {});
-  }, []);
+    invoke<GpuInfo>("detect_gpu").then(setGpu).catch(() => {});
+  }, [helpOpen.value]);
+
+  const otherVariant: "cpu" | "cuda" | null =
+    sidecarVariant === "cuda" ? "cpu"
+    : sidecarVariant === "cpu" && gpu?.hasCuda ? "cuda"
+    : null;
+
+  const handleSwitch = async () => {
+    if (!otherVariant) return;
+    helpOpen.value = false;
+    await switchSidecarVariant(otherVariant);
+  };
 
   if (!helpOpen.value) return null;
 
@@ -75,7 +98,19 @@ export function HelpModal() {
           <section class="help-section">
             <h3 class="help-section-title">About</h3>
             <p class="help-about-name">Codfish{version && <span class="help-about-version">v{version}</span>}</p>
-            {sidecarVersion && <p class="help-about-desc">Transcription engine: {sidecarVersion}</p>}
+            {sidecarVersion && (
+              <p class="help-about-desc">
+                Transcription engine: {sidecarVersion}
+                {otherVariant && (
+                  <>
+                    {" — "}
+                    <button class="btn btn-ghost btn-sm" onClick={handleSwitch}>
+                      Switch to {otherVariant.toUpperCase()}
+                    </button>
+                  </>
+                )}
+              </p>
+            )}
             <p class="help-about-desc">Caption editor for video and audio files.</p>
             <p class="help-about-desc">Made by Jared Bohlken.</p>
           </section>

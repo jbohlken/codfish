@@ -198,13 +198,17 @@ const handleAppInstall = async () => {
   }
 };
 
-const handleSidecarUpdate = async () => {
-  const state = sidecarUpdate.value;
-  if (!state) return;
-  if (!(await gateForUpdate("engine"))) return;
+/**
+ * Shared install routine used by both the update flow and the manual
+ * variant switcher in the help modal. Caller is responsible for calling
+ * gateForUpdate first. `latestVersion` is just for the blocker label.
+ */
+async function runSidecarInstall(variant: string, latestVersion: string): Promise<void> {
   popoverOpen.value = false;
   sidecarUpdate.value = {
-    ...state,
+    current: "",
+    latest: latestVersion,
+    variant,
     downloading: true,
     phase: "downloading",
     progress: 0,
@@ -215,39 +219,46 @@ const handleSidecarUpdate = async () => {
     // App.tsx's auto-start effect would immediately respawn the daemon and
     // re-lock the exe before we could overwrite it.
     await invoke("stop_daemon");
-    await invoke("download_sidecar", { variant: state.variant });
-    // Extraction complete at this point — flip to a finishing state so the
-    // blocker shows something while we respawn the daemon.
+    await invoke("download_sidecar", { variant });
+    // Extraction complete — flip to finishing for the blocker label.
     sidecarUpdate.value = {
-      ...state,
+      current: "",
+      latest: latestVersion,
+      variant,
       downloading: true,
       phase: "finishing",
       progress: 100,
     };
     sidecarStatus.value = "ready";
-    // Brief pad so "Finalizing…" is actually legible even on fast machines
-    // before the daemon respawn completes.
     await new Promise((r) => setTimeout(r, 600));
     await startDaemon();
     await clearRecovery();
     sidecarUpdate.value = null;
   } catch (e) {
     const msg = typeof e === "string" ? e : (e as any)?.message ?? String(e);
-    // Phase determines recovery strategy:
-    // - "downloading": nothing was overwritten, revive the old daemon.
-    // - "extracting":  bin dir is half-written, force reinstall via SidecarSetup.
-    // - "finishing":   extraction succeeded, only the daemon respawn failed —
-    //                  the new binary is fine, let the splash show the crash.
     const phaseAtFailure = sidecarUpdate.value?.phase ?? "downloading";
     sidecarUpdate.value = null;
-    showError(`Transcription engine update failed: ${msg}`);
+    showError(`Transcription engine install failed: ${msg}`);
     if (phaseAtFailure === "downloading") {
       await startDaemon().catch(() => {});
     } else if (phaseAtFailure === "extracting") {
       sidecarStatus.value = "not_installed";
     }
-    // "finishing": leave sidecarStatus as "ready"; daemon splash handles the rest.
   }
+}
+
+/** Manual variant switch from the help modal. */
+export async function switchSidecarVariant(variant: "cpu" | "cuda"): Promise<void> {
+  if (!(await gateForUpdate("engine"))) return;
+  // We don't know the manifest version here; the blocker just shows "engine".
+  await runSidecarInstall(variant, "");
+}
+
+const handleSidecarUpdate = async () => {
+  const state = sidecarUpdate.value;
+  if (!state) return;
+  if (!(await gateForUpdate("engine"))) return;
+  await runSidecarInstall(state.variant, state.latest);
 };
 
 export function toggleUpdatePopover() {
