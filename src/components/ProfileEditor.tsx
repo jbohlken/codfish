@@ -3,7 +3,7 @@ import { useState, useEffect } from "preact/hooks";
 import { XIcon as X, CaretRightIcon as CaretRight, CaretDownIcon as CaretDown } from "@phosphor-icons/react";
 import { profiles, activeProfile, project, pushHistory } from "../store/app";
 import type { CaptionProfile, ProfileRule, TimedRule } from "../types/profile";
-import { saveProfile as saveProfileToDisk, deleteProfile as deleteProfileFromDisk } from "../lib/profiles";
+import { saveProfile as saveProfileToDisk, deleteProfile as deleteProfileFromDisk, exportProfile } from "../lib/profiles";
 
 export const profileEditorOpen = signal(false);
 const advancedOpen = signal(false);
@@ -306,8 +306,14 @@ export function ProfileEditor() {
           </div>
         </div>
 
-        {!isBuiltIn && (
-          <div class="profile-editor-footer">
+        <div class="profile-editor-footer">
+          <button
+            class="btn btn-ghost"
+            onClick={() => exportProfile(profile.id)}
+          >
+            Export
+          </button>
+          {!isBuiltIn && (
             <button
               class="btn btn-danger-ghost"
               onClick={handleDelete}
@@ -315,8 +321,8 @@ export function ProfileEditor() {
             >
               Delete profile
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

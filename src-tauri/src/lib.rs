@@ -41,9 +41,9 @@ const VTT_JS:  &str = include_str!("../resources/export_formats/vtt.js");
 const JSON_JS: &str = include_str!("../resources/export_formats/json.js");
 const TXT_JS:  &str = include_str!("../resources/export_formats/txt.js");
 
-const PROFILE_DEFAULT: &str = include_str!("../resources/profiles/default.ini");
-const PROFILE_NETFLIX: &str = include_str!("../resources/profiles/netflix.ini");
-const PROFILE_BBC:     &str = include_str!("../resources/profiles/bbc.ini");
+const PROFILE_DEFAULT: &str = include_str!("../resources/profiles/default.cfp");
+const PROFILE_NETFLIX: &str = include_str!("../resources/profiles/netflix.cfp");
+const PROFILE_BBC:     &str = include_str!("../resources/profiles/bbc.cfp");
 
 fn export_formats_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -154,9 +154,9 @@ fn seed_profile_files(app: &AppHandle) -> Result<(), String> {
     let dir = profiles_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
     for (name, content) in [
-        ("default.ini", PROFILE_DEFAULT),
-        ("netflix.ini", PROFILE_NETFLIX),
-        ("bbc.ini", PROFILE_BBC),
+        ("default.cfp", PROFILE_DEFAULT),
+        ("netflix.cfp", PROFILE_NETFLIX),
+        ("bbc.cfp", PROFILE_BBC),
     ] {
         let dest = dir.join(name);
         if !dest.exists() {
@@ -382,7 +382,7 @@ fn list_profiles(app: AppHandle) -> Result<Vec<CaptionProfile>, String> {
     let mut profiles: Vec<CaptionProfile> = std::fs::read_dir(&dir)
         .map_err(|e| format!("read_dir error: {e}"))?
         .flatten()
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("ini"))
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("cfp"))
         .filter_map(|entry| {
             let path = entry.path();
             let id = path.file_stem()?.to_str()?.to_string();
@@ -399,7 +399,7 @@ fn list_profiles(app: AppHandle) -> Result<Vec<CaptionProfile>, String> {
 fn save_profile(app: AppHandle, profile: CaptionProfile) -> Result<(), String> {
     let dir = profiles_dir(&app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
-    let dest = dir.join(format!("{}.ini", profile.id));
+    let dest = dir.join(format!("{}.cfp", profile.id));
     let content = serialize_profile(&profile);
     std::fs::write(&dest, content).map_err(|e| format!("write error: {e}"))
 }
@@ -407,7 +407,7 @@ fn save_profile(app: AppHandle, profile: CaptionProfile) -> Result<(), String> {
 #[tauri::command]
 fn delete_profile(app: AppHandle, id: String) -> Result<(), String> {
     let dir = profiles_dir(&app)?;
-    let dest = dir.join(format!("{id}.ini"));
+    let dest = dir.join(format!("{id}.cfp"));
     if dest.exists() {
         std::fs::remove_file(&dest).map_err(|e| format!("delete error: {e}"))?;
     }
@@ -424,7 +424,7 @@ fn get_profiles_dir(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn export_profile(app: AppHandle, id: String) -> Result<String, String> {
     let dir = profiles_dir(&app)?;
-    let src = dir.join(format!("{id}.ini"));
+    let src = dir.join(format!("{id}.cfp"));
     if !src.exists() {
         return Err(format!("profile '{id}' not found"));
     }
@@ -457,7 +457,7 @@ fn import_profile(app: AppHandle, content: String) -> Result<CaptionProfile, Str
     let existing_names: Vec<String> = std::fs::read_dir(&dir)
         .map_err(|e| format!("read_dir: {e}"))?
         .flatten()
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("ini"))
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("cfp"))
         .filter_map(|entry| {
             let content = std::fs::read_to_string(entry.path()).ok()?;
             content.lines()
@@ -471,7 +471,7 @@ fn import_profile(app: AppHandle, content: String) -> Result<CaptionProfile, Str
     }
 
     // Write to disk
-    let dest = dir.join(format!("{id}.ini"));
+    let dest = dir.join(format!("{id}.cfp"));
     let serialized = serialize_profile(&profile);
     std::fs::write(&dest, serialized).map_err(|e| format!("write error: {e}"))?;
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { CaretDownIcon as CaretDown, DownloadSimpleIcon as DownloadSimple, type Icon } from "@phosphor-icons/react";
+import type { ComponentChildren } from "preact";
 
 export function SelectButton<T extends string>({
   icon: Icon,
@@ -8,6 +9,7 @@ export function SelectButton<T extends string>({
   onChange,
   tooltip,
   direction = "down",
+  footer,
 }: {
   icon: Icon;
   tooltip: string;
@@ -15,6 +17,7 @@ export function SelectButton<T extends string>({
   value: T;
   onChange: (value: T) => void;
   direction?: "up" | "down";
+  footer?: (close: () => void) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
   const [fixedPos, setFixedPos] = useState<{ bottom: number; left: number } | null>(null);
@@ -58,6 +61,12 @@ export function SelectButton<T extends string>({
           )}
         </button>
       ))}
+      {footer && (
+        <>
+          <div class="titlebar-select-divider" />
+          {footer(() => setOpen(false))}
+        </>
+      )}
     </div>
   );
 

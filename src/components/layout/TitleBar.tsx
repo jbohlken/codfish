@@ -3,8 +3,9 @@ import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
 import { project, isDirty, activeProfile, profiles, pushHistory, canUndo, canRedo, undo, redo, undoDescription, redoDescription } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, BugIcon as Bug } from "@phosphor-icons/react";
+import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, BugIcon as Bug, UploadSimpleIcon as UploadSimple } from "@phosphor-icons/react";
 import { profileEditorOpen } from "../ProfileEditor";
+import { importProfile } from "../../lib/profiles";
 import { helpOpen } from "../HelpModal";
 import { bugReportOpen } from "../BugReportModal";
 import { hasUpdate, isUpdating, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
@@ -153,6 +154,21 @@ export function TitleBar() {
               options={profiles.value.map((p) => ({ value: p.id, label: p.name }))}
               value={profile.id}
               onChange={(v) => pushHistory({ ...proj, profileId: v }, "Change profile")}
+              footer={(close) => (
+                <button
+                  class="titlebar-select-option"
+                  onClick={async () => {
+                    close();
+                    const imported = await importProfile();
+                    if (imported) {
+                      profiles.value = [...profiles.value, imported];
+                      pushHistory({ ...proj, profileId: imported.id }, "Import profile");
+                    }
+                  }}
+                >
+                  <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><UploadSimple size={12} /> Import profile...</span>
+                </button>
+              )}
             />
             <button
               class="btn btn-ghost btn-icon"

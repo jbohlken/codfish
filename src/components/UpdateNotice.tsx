@@ -170,7 +170,7 @@ export function UpdatePopover() {
                 <span class="update-popover-label">Codfish</span>
                 <span class="update-popover-version">v{app.version}</span>
               </div>
-              <button class="btn btn-primary btn-sm" onClick={handleAppInstall}>Update</button>
+              <button class="btn btn-primary btn-sm" onClick={handleAppInstall} disabled={sc?.downloading}>Update</button>
             </>
           )}
         </div>
@@ -192,7 +192,7 @@ export function UpdatePopover() {
                 <span class="update-popover-label">Transcription engine</span>
                 <span class="update-popover-version">v{sc.latest}</span>
               </div>
-              <button class="btn btn-primary btn-sm" onClick={handleSidecarUpdate}>Update</button>
+              <button class="btn btn-primary btn-sm" onClick={handleSidecarUpdate} disabled={app?.installing}>Update</button>
             </>
           )}
         </div>
