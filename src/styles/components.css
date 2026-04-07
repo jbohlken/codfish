@@ -1651,6 +1651,23 @@
   gap: var(--space-5);
 }
 
+.help-modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.help-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.help-modal-body::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 3px;
+}
+
+.help-modal-body::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
 .help-section {
   display: flex;
   flex-direction: column;

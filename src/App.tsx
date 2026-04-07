@@ -67,26 +67,39 @@ export function App() {
 
   useEffect(() => {
     const win = getCurrentWindow();
-    const unlisten = win.onCloseRequested(async (e) => {
-      e.preventDefault();
-      // Never allow close mid-update — the sidecar/app is being replaced
-      // under us and closing now can corrupt the install.
-      if (isUpdating()) return;
+
+    // Shared exit gate. Returns true if the caller should proceed with
+    // tearing down (window destroy or app exit), false to abort.
+    const runExitGate = async (): Promise<boolean> => {
+      if (isUpdating()) return false;
       if (isDirty.value) {
         const choice = await confirmUnsavedChanges();
-        if (choice === "cancel") return;
+        if (choice === "cancel") return false;
         if (choice === "save") {
           const saved = await saveCurrentProject();
-          if (!saved) return;
+          if (!saved) return false;
         }
       }
-      // Either nothing was dirty, the user saved, or they discarded — in
-      // all cases we're committing to close, so wipe the recovery snapshot
-      // so it doesn't resurrect on next launch.
       await clearRecovery();
-      await win.destroy();
+      return true;
+    };
+
+    const unlistenClose = win.onCloseRequested(async (e) => {
+      e.preventDefault();
+      if (await runExitGate()) await win.destroy();
     });
-    return () => { unlisten.then((f) => f()); };
+
+    // Cmd+Q / app menu Quit on macOS routes through here. The Rust side
+    // intercepts ExitRequested, prevents exit, and emits this event so we
+    // can run the same gate before calling force_quit.
+    const unlistenQuit = listen("app://quit-requested", async () => {
+      if (await runExitGate()) await invoke("force_quit");
+    });
+
+    return () => {
+      unlistenClose.then((f) => f());
+      unlistenQuit.then((f) => f());
+    };
   }, []);
 
   useEffect(() => {

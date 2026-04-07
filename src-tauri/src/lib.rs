@@ -795,7 +795,30 @@ pub fn run() {
             sidecar::check_sidecar_update,
             sidecar::download_sidecar,
             bug_report::submit_bug_report,
+            force_quit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| {
+            // Intercept Cmd+Q / app menu Quit so it routes through the same
+            // unsaved-changes + update gate as the window close button.
+            // Once the frontend has cleared the gate it calls `force_quit`,
+            // which sets ALLOW_EXIT and exits cleanly.
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if !ALLOW_EXIT.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_exit();
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.emit("app://quit-requested", ());
+                    }
+                }
+            }
+        });
+}
+
+static ALLOW_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+fn force_quit(app: AppHandle) {
+    ALLOW_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
 }
