@@ -13,6 +13,6 @@ repository, or at:
 This product bundles third-party software under their respective licenses.
 See THIRD_PARTY_LICENSES.md for details.
 
-"Codfish" and the Codfish logo are trademarks of Jared Bohlken. The
-Apache-2.0 license grants rights to the source code only and does not
-grant permission to use the Codfish name or branding in derivative works.
+"Codfish" is a trademark of Jared Bohlken. The Apache-2.0 license grants
+rights to the source code only and does not grant permission to use the
+Codfish name in derivative works or forks.

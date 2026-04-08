@@ -117,7 +117,7 @@ Bundled and dependent components are licensed separately — see [THIRD_PARTY_LI
 
 ## Trademark
 
-"Codfish" and the Codfish logo are trademarks of Jared Bohlken. The Apache-2.0 license grants rights to the source code only — it does **not** grant permission to use the Codfish name, logo, or branding in derivative works or forks. If you fork this project, please use a different name.
+"Codfish" is a trademark of Jared Bohlken. The Apache-2.0 license grants rights to the source code only — it does **not** grant permission to use the Codfish name in derivative works or forks. If you fork this project, please use a different name.
 
 ## Support the project
 

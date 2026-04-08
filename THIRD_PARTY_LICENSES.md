@@ -67,8 +67,7 @@ this credit is provided as a courtesy.
 
 ## Trademarks
 
-"Codfish" and the Codfish logo are trademarks of Jared Bohlken. The
-Apache-2.0 license under which the source code is distributed does not
-grant permission to use the Codfish name, logo, or branding in
-derivative works or forks. If you fork this project, please use a
-different name and branding.
+"Codfish" is a trademark of Jared Bohlken. The Apache-2.0 license under
+which the source code is distributed does not grant permission to use
+the Codfish name in derivative works or forks. If you fork this project,
+please use a different name.
