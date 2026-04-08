@@ -35,7 +35,18 @@
         padding: 4rem 1.5rem 6rem;
       }
       header { text-align: center; margin-bottom: 3rem; }
-      header img { width: 96px; height: 96px; }
+      header img {
+        width: 96px;
+        height: 96px;
+        animation: swim 3s ease-in-out infinite;
+      }
+      @keyframes swim {
+        0%, 100% { transform: translateY(0); }
+        50%      { transform: translateY(-10px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        header img { animation: none; }
+      }
       h1 { font-size: 2.75rem; margin: 1rem 0 0.5rem; letter-spacing: -0.02em; }
       .tag { color: var(--muted); font-size: 1.15rem; margin: 0; }
       .downloads {
@@ -87,7 +98,7 @@
           href="https://github.com/jbohlken/codfish/releases/latest"
           >
           <strong>Download for Windows</strong>
-          <span id="dl-win-meta">.exe installer · latest release</span>
+          <span id="dl-win-meta">64-bit .exe installer · latest release</span>
         </a>
         <a
           id="dl-mac"
@@ -115,7 +126,7 @@
             if (exe) {
               document.getElementById("dl-win").href = exe.browser_download_url;
               document.getElementById("dl-win-meta").textContent =
-                ".exe installer" + (version ? " · v" + version : "");
+                "64-bit .exe installer" + (version ? " · v" + version : "");
             }
             if (dmg) {
               document.getElementById("dl-mac").href = dmg.browser_download_url;
