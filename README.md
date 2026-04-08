@@ -1,5 +1,7 @@
 # Codfish
 
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 A desktop caption editor built with Tauri v2 + Preact. Transcribes audio/video using WhisperX and lets you edit, time, and export captions.
 
 ## Architecture
@@ -106,3 +108,17 @@ The app reads `CODFISH_GH_PAT` at compile time (via `src-tauri/.env` locally, or
 - macOS Sequoia removed the right-click > Open workaround for unsigned apps
 - An Apple Developer account ($99/yr) eliminates these warnings via code signing and notarization
 - ffmpeg is fetched as a prebuilt LGPL binary (from the `ffmpeg-*-codfish.*` release) and bundled into the sidecar — no Homebrew ffmpeg needed
+
+## License
+
+Codfish is licensed under the [Apache License 2.0](LICENSE). You are free to use, modify, and redistribute the source code under those terms.
+
+Bundled and dependent components are licensed separately — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Notably, the bundled ffmpeg is built from source under LGPL terms with no GPL components.
+
+## Trademark
+
+"Codfish" and the Codfish logo are trademarks of Jared Bohlken. The Apache-2.0 license grants rights to the source code only — it does **not** grant permission to use the Codfish name, logo, or branding in derivative works or forks. If you fork this project, please use a different name.
+
+## Support the project
+
+Codfish is built and maintained by one person in their spare time. If it's useful to you, consider [sponsoring the project on GitHub](https://github.com/sponsors/jbohlken). Sponsorships are what make continued development possible.

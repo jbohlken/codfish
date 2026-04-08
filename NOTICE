@@ -1,0 +1,18 @@
+Codfish
+Copyright 2026 Jared Bohlken
+
+This product includes software developed by Jared Bohlken.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may
+not use this software except in compliance with the License. You may
+obtain a copy of the License in the LICENSE file at the root of this
+repository, or at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product bundles third-party software under their respective licenses.
+See THIRD_PARTY_LICENSES.md for details.
+
+"Codfish" and the Codfish logo are trademarks of Jared Bohlken. The
+Apache-2.0 license grants rights to the source code only and does not
+grant permission to use the Codfish name or branding in derivative works.
