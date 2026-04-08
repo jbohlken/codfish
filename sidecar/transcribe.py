@@ -83,10 +83,7 @@ def ensure_ffmpeg_on_path():
         log("WARNING: ffmpeg not found on PATH or in bundle")
 
 
-# ── boot: heavy imports ───────────────────────────────────────────────────────
-emit({"event": "booting"})
-ensure_ffmpeg_on_path()
-
+# ── heavy imports (module level so worker subprocesses can re-import) ────────
 # Redirect stdout during heavy imports so any stray prints from torch /
 # whisperx / numba etc. don't poison the protocol channel.
 with contextlib.redirect_stdout(sys.stderr):
@@ -101,14 +98,6 @@ COMPUTE_TYPE = "float16" if DEVICE == "cuda" else "int8"
 
 # Lazily-populated model cache: model_id -> loaded whisperx model
 _MODEL_CACHE: dict = {}
-
-log(
-    f"boot pid={os.getpid()} device={DEVICE} compute_type={COMPUTE_TYPE} "
-    f"torch={torch.__version__} python={sys.version.split()[0]}",
-    tag="boot",
-)
-
-emit({"event": "ready", "device": DEVICE})
 
 
 # ── HF cache helpers (unchanged) ──────────────────────────────────────────────
@@ -385,6 +374,20 @@ HANDLERS = {
 
 
 def main():
+    # Protocol-level side effects must NOT run at module level: on macOS,
+    # PyTorch / pyannote multiprocessing workers use the "spawn" start method,
+    # which re-imports this module from the top in each worker process. Anything
+    # at module level fires once per worker, polluting the parent's stdout/stderr
+    # protocol stream and the codfish.log boot record.
+    emit({"event": "booting"})
+    ensure_ffmpeg_on_path()
+    log(
+        f"boot pid={os.getpid()} device={DEVICE} compute_type={COMPUTE_TYPE} "
+        f"torch={torch.__version__} python={sys.version.split()[0]}",
+        tag="boot",
+    )
+    emit({"event": "ready", "device": DEVICE})
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
