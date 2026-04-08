@@ -79,7 +79,7 @@ echo "Configuring ffmpeg (LGPL, audio-only, minimal, target=${TARGET})..."
 
 ./configure \
   --prefix="${SRC_DIR}/install" \
-  "${TARGET_FLAGS[@]}" \
+  ${TARGET_FLAGS[@]+"${TARGET_FLAGS[@]}"} \
   --disable-gpl \
   --disable-nonfree \
   --disable-doc \

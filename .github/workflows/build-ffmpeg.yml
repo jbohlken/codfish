@@ -29,9 +29,6 @@ jobs:
           - os: macos-14
             target: native
             artifact: macos-arm64
-          - os: macos-13
-            target: native
-            artifact: macos-x64
           - os: ubuntu-latest
             target: native
             artifact: linux-x64
