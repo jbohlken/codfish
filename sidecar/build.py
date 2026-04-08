@@ -81,6 +81,11 @@ def zip_directory(src_dir: Path, zip_path: Path):
 def main():
     cuda = "--cuda" in sys.argv
     release = "--release" in sys.argv
+    # CI builds CUDA binaries on machines without an NVIDIA GPU. The PyTorch
+    # CUDA wheels still install correctly there, and PyInstaller bundles the
+    # runtime libs from the wheels — we just can't *run* CUDA at build time
+    # to verify availability. This flag bypasses that check.
+    skip_cuda_check = "--skip-cuda-check" in sys.argv
     triple = target_triple()
     is_windows = platform.system().lower() == "windows"
     exe_suffix = ".exe" if is_windows else ""
@@ -93,13 +98,17 @@ def main():
         dev_folder_name = f"transcribe-{triple}"
 
     if cuda:
-        if not check_cuda_available():
+        if skip_cuda_check:
+            print("CUDA build: skipping torch.cuda.is_available() check (--skip-cuda-check).")
+        elif not check_cuda_available():
             sys.exit(
                 "ERROR: --cuda specified but torch.cuda.is_available() is False.\n"
                 "Install CUDA-enabled PyTorch first:\n"
-                "  pip install -r sidecar/requirements-cuda.txt"
+                "  pip install -r sidecar/requirements-cuda.txt\n"
+                "(Or pass --skip-cuda-check if building on a machine without a GPU.)"
             )
-        print("CUDA build: GPU acceleration will be available in the bundled binary.")
+        else:
+            print("CUDA build: GPU acceleration will be available in the bundled binary.")
     else:
         print("CPU build: transcription will run on CPU only.")
 
