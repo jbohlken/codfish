@@ -1,6 +1,6 @@
 [package]
 name = "codfish"
-version = "0.5.18"
+version = "0.5.19"
 description = "Caption generation and editing for media producers"
 authors = ["Jared Bohlken"]
 edition = "2021"
