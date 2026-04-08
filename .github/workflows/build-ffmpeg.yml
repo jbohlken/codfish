@@ -20,6 +20,9 @@ on:
         required: true
         default: "1"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:

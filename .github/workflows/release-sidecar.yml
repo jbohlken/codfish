@@ -5,6 +5,9 @@ on:
     tags:
       - "sidecar-v*"
 
+permissions:
+  contents: read
+
 jobs:
   build-cpu-windows:
     runs-on: windows-latest
@@ -64,6 +67,8 @@ jobs:
   release:
     needs: [build-cpu-windows, build-cpu-macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
