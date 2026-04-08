@@ -53,8 +53,6 @@ All releases are built by GitHub Actions from public source. The workflows that 
 - [`.github/workflows/release-sidecar.yml`](.github/workflows/release-sidecar.yml) — transcription engine
 - [`.github/workflows/build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml) — bundled minimal LGPL ffmpeg
 
-The CUDA sidecar variant is built and uploaded manually from the maintainer's Windows machine, as documented in the README. This step is not currently reproducible from CI.
-
 ## Bundled binaries
 
 Codfish bundles ffmpeg + ffprobe for media decoding. These are built from upstream ffmpeg source with `--disable-gpl --disable-nonfree` flags, producing a minimal LGPL-only build with no GPL components. See [`sidecar/build_ffmpeg.sh`](sidecar/build_ffmpeg.sh) for the exact configure flags and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the full bundled-software inventory.

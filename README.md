@@ -73,13 +73,8 @@ python sidecar/build.py --cuda
    git tag sidecar-v0.1.1
    git push origin sidecar-v0.1.1
    ```
-3. CI builds Windows + macOS CPU variants and creates a draft release
-4. Add the CUDA variant from your Windows PC:
-   ```bash
-   sidecar\.venv-cuda\Scripts\activate
-   python sidecar/release-cuda.py --version 0.1.1
-   ```
-5. Publish the draft on GitHub
+3. CI builds Windows + macOS CPU variants and the Windows CUDA variant, and creates a draft release
+4. Publish the draft on GitHub
 
 Release the sidecar before the app so new sidecar features are available when users update.
 
