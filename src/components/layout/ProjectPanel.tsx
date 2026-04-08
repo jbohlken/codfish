@@ -1,13 +1,10 @@
 import { useEffect } from "preact/hooks";
-import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FloppyDiskIcon as FloppyDisk, PencilSimpleIcon as PencilSimple } from "@phosphor-icons/react";
+import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen } from "@phosphor-icons/react";
 import { signal } from "@preact/signals";
-import { project, selectedMediaId, pushHistory, isDirty } from "../../store/app";
+import { project, selectedMediaId, pushHistory } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
-  saveCurrentProject,
-  saveCurrentProjectAs,
-  savedFlash,
   importMedia,
   relinkMediaItem,
   fileExists,
@@ -51,29 +48,6 @@ export function ProjectPanel() {
     <div class="panel project-panel">
       <div class="panel-header">
         <span class="panel-header-title">Project</span>
-        <div style="display:flex;align-items:center;gap:2px">
-          <button class="btn btn-ghost btn-icon" data-tooltip="New project" onClick={newProjectGuarded}>
-            <FilePlus size={14} />
-          </button>
-          <button class="btn btn-ghost btn-icon" data-tooltip="Open project" onClick={openProjectGuarded}>
-            <FolderOpen size={14} />
-          </button>
-          {proj && (
-            <>
-              <button class="btn btn-ghost btn-icon" data-tooltip="Save As…" onClick={saveCurrentProjectAs}>
-                <PencilSimple size={14} />
-              </button>
-              <button
-                class={`btn btn-ghost btn-icon${savedFlash.value ? " btn-icon--active" : isDirty.value ? " btn-icon--dirty" : ""}`}
-                data-tooltip="Save (Ctrl+S)"
-                disabled={!isDirty.value && !savedFlash.value}
-                onClick={saveCurrentProject}
-              >
-                <FloppyDisk size={14} />
-              </button>
-            </>
-          )}
-        </div>
       </div>
 
       <div class="panel-body scrollable">

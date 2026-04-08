@@ -705,12 +705,6 @@
   gap: var(--space-1);
 }
 
-.btn-icon--active {
-  background: var(--color-surface-raised, var(--color-surface));
-  color: var(--color-accent);
-}
-
-
 .panel-footer {
   flex-shrink: 0;
 }

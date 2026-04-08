@@ -5,13 +5,23 @@ mod transcription;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State, Window};
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder};
+use tauri::{AppHandle, Emitter, Manager, State, Window, Wry};
 use tokio::sync::Mutex as AsyncMutex;
 use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
 
 use crate::daemon::{DaemonStatus, SidecarDaemon};
 
 type DaemonState = AsyncMutex<Option<Arc<SidecarDaemon>>>;
+
+/// Menu item handles kept around so the frontend can toggle their enabled
+/// state via `set_menu_enabled`. Built once in `Builder::menu()`.
+struct MenuItems {
+    new_project: MenuItem<Wry>,
+    open_project: MenuItem<Wry>,
+    save_project: MenuItem<Wry>,
+    save_project_as: MenuItem<Wry>,
+}
 
 // ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -42,6 +52,18 @@ fn get_log_path(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn frontend_log(app: AppHandle, message: String) {
     log(&app, &message);
+}
+
+#[tauri::command]
+fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Result<(), String> {
+    let item = match id.as_str() {
+        "new_project" => &items.new_project,
+        "open_project" => &items.open_project,
+        "save_project" => &items.save_project,
+        "save_project_as" => &items.save_project_as,
+        other => return Err(format!("unknown menu id: {other}")),
+    };
+    item.set_enabled(enabled).map_err(|e| e.to_string())
 }
 
 // ── Default resources (embedded at compile time) ────────────────────────────
@@ -745,6 +767,106 @@ async fn transcribe_media(
 pub fn run() {
     tauri::Builder::default()
         .manage::<DaemonState>(AsyncMutex::new(None))
+        .menu(|handle| {
+            // ── Native app menu ─────────────────────────────────────────────
+            // Built before window creation so accelerators bind to the
+            // window's accelerator table on Windows. File menu actions are
+            // dispatched to the frontend via "menu://action" so they route
+            // through the same guarded handlers as the panel buttons.
+            let new_proj = MenuItemBuilder::new("New Project")
+                .id("menu_new_project")
+                .accelerator("CmdOrCtrl+N")
+                .build(handle)?;
+            let open_proj = MenuItemBuilder::new("Open Project…")
+                .id("menu_open_project")
+                .accelerator("CmdOrCtrl+O")
+                .build(handle)?;
+            let save_proj = MenuItemBuilder::new("Save")
+                .id("menu_save_project")
+                .accelerator("CmdOrCtrl+S")
+                .build(handle)?;
+            let save_as = MenuItemBuilder::new("Save As…")
+                .id("menu_save_project_as")
+                .accelerator("CmdOrCtrl+Shift+S")
+                .build(handle)?;
+
+            let exit_item = MenuItemBuilder::new("Exit")
+                .id("menu_exit")
+                .build(handle)?;
+
+            let file_menu = SubmenuBuilder::new(handle, "File")
+                .item(&new_proj)
+                .item(&open_proj)
+                .separator()
+                .item(&save_proj)
+                .item(&save_as)
+                .separator()
+                .item(&exit_item)
+                .build()?;
+
+            let mut menu_builder = MenuBuilder::new(handle);
+
+            #[cfg(target_os = "macos")]
+            {
+                let app_menu = SubmenuBuilder::new(handle, "Codfish")
+                    .about(None)
+                    .separator()
+                    .services()
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?;
+                menu_builder = menu_builder.item(&app_menu);
+            }
+
+            menu_builder = menu_builder.item(&file_menu);
+
+            #[cfg(target_os = "macos")]
+            {
+                let edit_menu = SubmenuBuilder::new(handle, "Edit")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+                let window_menu = SubmenuBuilder::new(handle, "Window")
+                    .minimize()
+                    .separator()
+                    .close_window()
+                    .build()?;
+                menu_builder = menu_builder.item(&edit_menu).item(&window_menu);
+            }
+
+            handle.manage(MenuItems {
+                new_project: new_proj.clone(),
+                open_project: open_proj.clone(),
+                save_project: save_proj.clone(),
+                save_project_as: save_as.clone(),
+            });
+
+            menu_builder.build()
+        })
+        .on_menu_event(|app, event| {
+            let id = event.id().0.as_str();
+            if id == "menu_exit" {
+                // Route through ExitRequested so the unsaved-changes gate fires.
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.close();
+                }
+                return;
+            }
+            if let Some(action) = id.strip_prefix("menu_") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("menu://action", action.to_string());
+                }
+            }
+        })
         .setup(|app| {
             if let Err(e) = seed_format_files(app.handle()) {
                 eprintln!("warning: could not seed export format files: {e}");
@@ -755,6 +877,7 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_icon(tauri::include_image!("icons/icon.png"));
             }
+
             // If launched via file association, emit the path to the frontend
             let args: Vec<String> = std::env::args().collect();
             if let Some(path) = args.get(1) {
@@ -785,6 +908,7 @@ pub fn run() {
             probe_fps,
             get_log_path,
             frontend_log,
+            set_menu_enabled,
             list_models,
             transcribe_media,
             start_daemon,

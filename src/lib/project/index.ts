@@ -1,16 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { signal } from "@preact/signals";
 import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory } from "../../store/app";
 import { showError } from "../../components/ErrorModal";
-
-export const savedFlash = signal(false);
-let _savedFlashTimer: ReturnType<typeof setTimeout> | null = null;
-function flashSaved() {
-  if (_savedFlashTimer) clearTimeout(_savedFlashTimer);
-  savedFlash.value = true;
-  _savedFlashTimer = setTimeout(() => { savedFlash.value = false; }, 2000);
-}
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
 import type { CodProject, MediaItem } from "../../types/project";
@@ -140,7 +131,6 @@ export async function saveCurrentProject(): Promise<boolean> {
   await writeToDisk(path, proj);
   isDirty.value = false;
   await clearRecovery();
-  flashSaved();
   return true;
 }
 
@@ -162,7 +152,6 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   projectPath.value = savePath;
   isDirty.value = false;
   await clearRecovery();
-  flashSaved();
   return true;
 }
 

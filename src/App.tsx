@@ -1,4 +1,5 @@
-import { useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
+import { useSignalEffect } from "@preact/signals";
 import "./styles/components.css";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ProjectPanel } from "./components/layout/ProjectPanel";
@@ -6,7 +7,7 @@ import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
-import { saveCurrentProject, loadProjectFromPath } from "./lib/project";
+import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, loadProjectFromPath } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -164,6 +165,69 @@ export function App() {
     return () => { unlisten.then((f) => f()); };
   }, []);
 
+  // Sync the OS window title to the current project + dirty state.
+  // Format follows the Adobe convention: "Codfish - filename.cod *".
+  // useSignalEffect (not useEffect) so we subscribe directly to signal reads
+  // — App.tsx doesn't render project/isDirty, so a plain effect would never
+  // re-fire on those changes. Deduped via lastTitle ref to avoid churning
+  // IPC on per-keystroke dirty toggles.
+  const lastTitle = useRef<string>("");
+  useSignalEffect(() => {
+    const proj = project.value;
+    const path = projectPath.value;
+    let title = "Codfish";
+    if (proj) {
+      const filename = path
+        ? path.replace(/\\/g, "/").split("/").pop()
+        : `${proj.name}.cod`;
+      title = `Codfish - ${filename}${isDirty.value ? " *" : ""}`;
+    }
+    if (title !== lastTitle.current) {
+      lastTitle.current = title;
+      getCurrentWindow().setTitle(title).catch(() => {});
+    }
+  });
+
+  // Push enabled-state for File menu items into the native menu whenever
+  // the underlying signals change. useSignalEffect (not useEffect) so we
+  // subscribe directly to signal reads — App doesn't render project/isDirty
+  // in its body, so a plain effect would miss those changes.
+  useSignalEffect(() => {
+    const ready =
+      (sidecarStatus.value === "ready" || sidecarStatus.value === "update_available") &&
+      daemonStatus.value === "ready" &&
+      !isUpdating();
+    const hasProject = !!project.value;
+    const dirty = isDirty.value;
+    // Touch sidecarUpdate so we re-run when an update starts/finishes
+    // downloading (isUpdating() reads it but the linter doesn't see that).
+    void sidecarUpdate.value?.downloading;
+    const set = (id: string, enabled: boolean) =>
+      invoke("set_menu_enabled", { id, enabled }).catch(() => {});
+    set("new_project", ready);
+    set("open_project", ready);
+    set("save_project_as", ready && hasProject);
+    set("save_project", ready && hasProject && dirty);
+  });
+
+  useEffect(() => {
+    const unlisten = listen<string>("menu://action", (e) => {
+      // Block menu actions while splash/setup is up or an update is in
+      // flight — otherwise file dialogs pop over the splash screen.
+      if (isUpdating()) return;
+      const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
+      if (!sidecarReady || daemonStatus.value !== "ready") return;
+      const hasProject = !!project.value;
+      switch (e.payload) {
+        case "new_project": newProjectGuarded(); break;
+        case "open_project": openProjectGuarded(); break;
+        case "save_project": if (hasProject && isDirty.value) saveCurrentProject(); break;
+        case "save_project_as": if (hasProject) saveCurrentProjectAs(); break;
+      }
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
     document.addEventListener("contextmenu", onContextMenu);
@@ -198,9 +262,22 @@ export function App() {
         e.preventDefault();
         redo();
       }
-      if (e.ctrlKey && e.key === "s") {
-        e.preventDefault();
-        saveCurrentProject();
+      // Windows-only fallback for File menu accelerators. WebView2 swallows
+      // muda's accelerator table on Windows, so menu shortcuts never reach
+      // the native handler. On macOS the system menu fires these natively
+      // and we'd double-trigger if we also handled them here.
+      const isMac = navigator.userAgent.toLowerCase().includes("mac");
+      const ready =
+        (sidecarStatus.value === "ready" || sidecarStatus.value === "update_available") &&
+        daemonStatus.value === "ready" &&
+        !isUpdating();
+      const hasProject = !!project.value;
+      if (!isMac && e.ctrlKey && ready) {
+        const k = e.key.toLowerCase();
+        if (k === "n") { e.preventDefault(); newProjectGuarded(); }
+        else if (k === "o") { e.preventDefault(); openProjectGuarded(); }
+        else if (k === "s" && e.shiftKey && hasProject) { e.preventDefault(); saveCurrentProjectAs(); }
+        else if (k === "s" && hasProject && isDirty.value) { e.preventDefault(); saveCurrentProject(); }
       }
     };
 
