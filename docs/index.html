@@ -82,20 +82,49 @@
 
       <div class="downloads">
         <a
+          id="dl-win"
           class="dl"
           href="https://github.com/jbohlken/codfish/releases/latest"
           >
           <strong>Download for Windows</strong>
-          <span>.exe installer · latest release</span>
+          <span id="dl-win-meta">.exe installer · latest release</span>
         </a>
         <a
+          id="dl-mac"
           class="dl"
           href="https://github.com/jbohlken/codfish/releases/latest"
           >
           <strong>Download for macOS</strong>
-          <span>Apple Silicon · .dmg</span>
+          <span id="dl-mac-meta">Apple Silicon · .dmg</span>
         </a>
       </div>
+
+      <script>
+        (async () => {
+          try {
+            const res = await fetch(
+              "https://api.github.com/repos/jbohlken/codfish/releases/latest",
+              { headers: { Accept: "application/vnd.github+json" } }
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            const assets = data.assets || [];
+            const exe = assets.find(a => /\.exe$/i.test(a.name));
+            const dmg = assets.find(a => /\.dmg$/i.test(a.name));
+            const version = (data.tag_name || "").replace(/^v/, "");
+            if (exe) {
+              document.getElementById("dl-win").href = exe.browser_download_url;
+              document.getElementById("dl-win-meta").textContent =
+                ".exe installer" + (version ? " · v" + version : "");
+            }
+            if (dmg) {
+              document.getElementById("dl-mac").href = dmg.browser_download_url;
+              document.getElementById("dl-mac-meta").textContent =
+                "Apple Silicon · .dmg" + (version ? " · v" + version : "");
+            }
+          } catch (e) { /* fall back to releases page */ }
+        })();
+      </script>
 
       <section>
         <h2>Why Codfish</h2>
