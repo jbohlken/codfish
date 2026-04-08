@@ -34,7 +34,16 @@
         margin: 0 auto;
         padding: 4rem 1.5rem 6rem;
       }
-      header { text-align: center; margin-bottom: 3rem; }
+      header { text-align: center; margin-bottom: 2.5rem; }
+      .shot {
+        display: block;
+        width: 100%;
+        height: auto;
+        margin: 2.5rem 0;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      }
       header img {
         width: 96px;
         height: 96px;
@@ -125,6 +134,12 @@
           <span id="dl-mac-meta">Apple Silicon · .dmg</span>
         </a>
       </div>
+
+      <img
+        class="shot"
+        src="screenshot.png"
+        alt="Codfish editing a scene with waveform timeline and caption list"
+      />
 
       <script>
         (async () => {
