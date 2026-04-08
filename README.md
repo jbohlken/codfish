@@ -105,4 +105,4 @@ The app reads `CODFISH_GH_PAT` at compile time (via `src-tauri/.env` locally, or
 - Unsigned builds require `xattr -cr /Applications/Codfish.app` or System Settings > Privacy & Security > Open Anyway
 - macOS Sequoia removed the right-click > Open workaround for unsigned apps
 - An Apple Developer account ($99/yr) eliminates these warnings via code signing and notarization
-- The macOS sidecar build requires Homebrew ffmpeg (`brew install ffmpeg`) — it's bundled into the binary, end users don't need it
+- ffmpeg is fetched as a prebuilt LGPL binary (from the `ffmpeg-*-codfish.*` release) and bundled into the sidecar — no Homebrew ffmpeg needed
