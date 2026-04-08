@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Codfish</title>
+    <meta
+      name="description"
+      content="Caption generation and editing that respects your standards, privacy, and time. Fully offline, profile-driven, with exports you own."
+    />
+    <link rel="icon" href="icon.png" />
+    <style>
+      :root {
+        --bg: #0b1220;
+        --fg: #e6edf3;
+        --muted: #9aa7b8;
+        --accent: #4ea1ff;
+        --card: #111a2c;
+        --border: #1e2a44;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        line-height: 1.6;
+      }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 4rem 1.5rem 6rem;
+      }
+      header { text-align: center; margin-bottom: 3rem; }
+      header img { width: 96px; height: 96px; }
+      h1 { font-size: 2.75rem; margin: 1rem 0 0.5rem; letter-spacing: -0.02em; }
+      .tag { color: var(--muted); font-size: 1.15rem; margin: 0; }
+      .downloads {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin: 2.5rem 0;
+      }
+      @media (max-width: 560px) { .downloads { grid-template-columns: 1fr; } }
+      .dl {
+        display: block;
+        padding: 1.25rem 1.5rem;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        text-align: center;
+        color: var(--fg);
+        transition: border-color 0.15s, transform 0.15s;
+      }
+      .dl:hover { border-color: var(--accent); text-decoration: none; transform: translateY(-1px); }
+      .dl strong { display: block; font-size: 1.1rem; }
+      .dl span { color: var(--muted); font-size: 0.9rem; }
+      section { margin: 2.5rem 0; }
+      section h2 { font-size: 1.4rem; margin-bottom: 0.75rem; }
+      ul { padding-left: 1.25rem; }
+      li { margin: 0.35rem 0; }
+      footer {
+        margin-top: 4rem;
+        padding-top: 2rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.9rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icon.png" alt="Codfish logo" />
+        <h1>Codfish</h1>
+        <p class="tag">Caption generation and editing that respects your standards, privacy, and time.</p>
+      </header>
+
+      <div class="downloads">
+        <a
+          class="dl"
+          href="https://github.com/jbohlken/codfish/releases/latest"
+          >
+          <strong>Download for Windows</strong>
+          <span>.exe installer · latest release</span>
+        </a>
+        <a
+          class="dl"
+          href="https://github.com/jbohlken/codfish/releases/latest"
+          >
+          <strong>Download for macOS</strong>
+          <span>Apple Silicon · .dmg</span>
+        </a>
+      </div>
+
+      <section>
+        <h2>Why Codfish</h2>
+        <ul>
+          <li><strong>Profile-driven captions.</strong> Define your house style once — reading speed, line length, gap timing — and every rule is validated live as you edit, so files leave your desk spec-clean.</li>
+          <li><strong>Export formats you own.</strong> SRT and VTT out of the box, plus a format engine for rolling your own. No more hand-massaging output to match a client template.</li>
+          <li><strong>Fully offline, fully private.</strong> Audio is transcribed on your machine with WhisperX. No uploads, no accounts, no telemetry — safe for NDAs, pre-release cuts, and locked-down networks.</li>
+          <li><strong>Easy-to-use editor.</strong> A streamlined interface with intuitive tools that make refining your captions feel effortless.</li>
+          <li><strong>GPU-accelerated (when available).</strong> NVIDIA CUDA support on Windows for fast transcription, with a CPU fallback for everything else — same app, same project files.</li>
+          <li><strong>Free and open source.</strong> Apache-2.0. Yours to use, fork, and audit.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Links</h2>
+        <ul>
+          <li><a href="https://github.com/jbohlken/codfish">Source on GitHub</a></li>
+          <li><a href="https://github.com/jbohlken/codfish/releases">All releases</a></li>
+          <li><a href="https://github.com/jbohlken/codfish/blob/main/PRIVACY.md">Privacy</a></li>
+          <li><a href="https://github.com/jbohlken/codfish/blob/main/SECURITY.md">Security</a></li>
+          <li><a href="https://github.com/sponsors/jbohlken">Sponsor</a></li>
+        </ul>
+      </section>
+
+      <footer>
+        Codfish is a trademark of Jared Bohlken. Logo
+        <a href="https://www.svgrepo.com/svg/65669/fish">via svgrepo</a> (CC0).
+      </footer>
+    </main>
+  </body>
+</html>
