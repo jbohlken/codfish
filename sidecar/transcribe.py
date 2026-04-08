@@ -27,8 +27,10 @@ import sys
 import os
 import io
 import json
+import time
 import contextlib
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 # ── stdout protocol setup ─────────────────────────────────────────────────────
@@ -50,8 +52,10 @@ def emit(obj: dict):
     _PROTO_STDOUT.flush()
 
 
-def log(msg: str):
-    print(msg, file=sys.stderr, flush=True)
+def log(msg: str, tag: str = "sidecar", level: str = "INFO"):
+    """Structured log line. Mirrored to codfish.log by the Rust daemon."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] [{level}] [{tag}] {msg}", file=sys.stderr, flush=True)
 
 
 # ── ffmpeg discovery ──────────────────────────────────────────────────────────
@@ -97,6 +101,12 @@ COMPUTE_TYPE = "float16" if DEVICE == "cuda" else "int8"
 
 # Lazily-populated model cache: model_id -> loaded whisperx model
 _MODEL_CACHE: dict = {}
+
+log(
+    f"boot pid={os.getpid()} device={DEVICE} compute_type={COMPUTE_TYPE} "
+    f"torch={torch.__version__} python={sys.version.split()[0]}",
+    tag="boot",
+)
 
 emit({"event": "ready", "device": DEVICE})
 
@@ -232,12 +242,21 @@ def _get_or_load_model(rid: str, model_id: str, language: str | None):
     """Lazy load + cache. Cache key includes language because whisperx bakes it in."""
     cache_key = f"{model_id}|{language or ''}"
     if cache_key in _MODEL_CACHE:
+        log(f"cache hit key={cache_key} cache_size={len(_MODEL_CACHE)}", tag="model")
         return _MODEL_CACHE[cache_key]
 
+    log(
+        f"cache miss key={cache_key} cache_size={len(_MODEL_CACHE)} "
+        f"existing_keys={list(_MODEL_CACHE.keys())}",
+        tag="model",
+    )
+
     if not is_model_cached(model_id):
+        log(f"downloading model={model_id} (not in HF cache)", tag="model")
         download_model_with_progress(rid, model_id, percent_start=2, percent_end=18)
 
     progress(rid, 20, f"Loading {model_id} model…")
+    t0 = time.monotonic()
     with contextlib.redirect_stdout(sys.stderr):
         model = whisperx.load_model(
             model_id,
@@ -245,6 +264,7 @@ def _get_or_load_model(rid: str, model_id: str, language: str | None):
             compute_type=COMPUTE_TYPE,
             language=language,
         )
+    log(f"loaded model={model_id} language={language or 'auto'} in {time.monotonic() - t0:.2f}s", tag="model")
     _MODEL_CACHE[cache_key] = model
     return model
 
@@ -256,6 +276,17 @@ def handle_transcribe(rid: str, params: dict) -> dict:
     if not model_id:
         raise ValueError("'model' is required")
 
+    try:
+        size = Path(file_path).stat().st_size
+    except OSError:
+        size = -1
+    log(
+        f"begin rid={rid} model={model_id} language={language or 'auto'} "
+        f"file={Path(file_path).name} size={size}",
+        tag="transcribe",
+    )
+    t_total = time.monotonic()
+
     progress(rid, 1, "Preparing…")
     model = _get_or_load_model(rid, model_id, language)
 
@@ -263,20 +294,30 @@ def handle_transcribe(rid: str, params: dict) -> dict:
     _check_has_audio(file_path)
     with contextlib.redirect_stdout(sys.stderr):
         audio = whisperx.load_audio(file_path)
+    log(f"audio loaded samples={len(audio)} (~{len(audio) / 16000:.1f}s)", tag="transcribe")
 
     progress(rid, 40, "Transcribing…")
+    t0 = time.monotonic()
     with contextlib.redirect_stdout(sys.stderr):
         result = model.transcribe(audio, batch_size=16, language=language)
     detected_language = result.get("language", language or "en")
+    log(
+        f"whisper done segments={len(result.get('segments', []))} "
+        f"language={detected_language} in {time.monotonic() - t0:.2f}s",
+        tag="transcribe",
+    )
 
     words = []
     try:
         progress(rid, 65, "Aligning word timestamps…")
+        t0 = time.monotonic()
         with contextlib.redirect_stdout(sys.stderr):
             align_model, metadata = whisperx.load_align_model(
                 language_code=detected_language,
                 device=DEVICE,
             )
+            t_load = time.monotonic() - t0
+            t1 = time.monotonic()
             aligned = whisperx.align(
                 result["segments"],
                 align_model,
@@ -285,6 +326,11 @@ def handle_transcribe(rid: str, params: dict) -> dict:
                 DEVICE,
                 return_char_alignments=False,
             )
+        log(
+            f"align done load={t_load:.2f}s align={time.monotonic() - t1:.2f}s "
+            f"language={detected_language}",
+            tag="align",
+        )
 
         for seg in aligned.get("segments", []):
             for w in seg.get("words", []):
@@ -294,8 +340,23 @@ def handle_transcribe(rid: str, params: dict) -> dict:
                     "end": round(w.get("end", seg["end"]), 3),
                     "confidence": round(w.get("score", 1.0), 3),
                 })
-    except Exception:
-        progress(rid, 70, "Alignment unavailable, using segment timestamps…")
+    except Exception as e:
+        # Word-level alignment failed → fall back to segment-level timestamps.
+        # This dramatically degrades caption quality (one big block per segment),
+        # so log loudly with the full traceback so we can diagnose later.
+        log(
+            f"alignment FAILED language={detected_language} "
+            f"error={type(e).__name__}: {e}",
+            tag="align",
+            level="ERROR",
+        )
+        for line in traceback.format_exc().splitlines():
+            log(line, tag="align", level="ERROR")
+        progress(
+            rid,
+            70,
+            "Word-level alignment unavailable — captions will use sentence-level timing.",
+        )
         for seg in result.get("segments", []):
             text = seg.get("text", "").strip()
             if not text:
@@ -309,6 +370,10 @@ def handle_transcribe(rid: str, params: dict) -> dict:
 
     progress(rid, 100, "Done")
     words = [w for w in words if w["text"]]
+    log(
+        f"end rid={rid} words={len(words)} total={time.monotonic() - t_total:.2f}s",
+        tag="transcribe",
+    )
     return {"words": words, "language": detected_language}
 
 

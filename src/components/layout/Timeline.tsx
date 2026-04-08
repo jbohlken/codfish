@@ -2,7 +2,7 @@ import { useRef, useEffect } from "preact/hooks";
 import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet } from "@phosphor-icons/react";
 import { useSignalEffect, signal } from "@preact/signals";
 import WaveSurfer from "wavesurfer.js";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks } from "../../lib/peaks-cache";
 import {
   selectedMedia,
@@ -86,19 +86,34 @@ export function Timeline() {
 
     let cancelled = false;
 
+    const flog = (m: string) =>
+      invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
+
     // Try loading from cache first, fall back to full decode
+    flog(`init path=${media.path}`);
     getCachedPeaks(media.path).then((cached) => {
       if (cancelled) return;
+      const url = convertFileSrc(media.path);
+      flog(`loading url=${url} cached=${!!cached}`);
       if (cached) {
         // Load with pre-computed peaks — skips the expensive Web Audio decode
-        ws.load(convertFileSrc(media.path), cached.peaks, cached.duration).catch(() => {});
+        ws.load(url, cached.peaks, cached.duration)
+          .then(() => flog("cached load resolved"))
+          .catch((e) => flog(`cached load failed: ${(e as any)?.message ?? String(e)}`));
       } else {
-        ws.load(convertFileSrc(media.path)).catch(() => {});
+        ws.load(url)
+          .then(() => flog("fresh load resolved"))
+          .catch((e) => flog(`fresh load failed: ${(e as any)?.message ?? String(e)}`));
       }
+    });
+
+    ws.on("error", (e) => {
+      flog(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
     });
 
     // Sync zoom once audio is decoded and duration is known
     ws.on("ready", () => {
+      flog(`ready duration=${ws.getDuration()}`);
       waveformState.value = "ready";
       const dur = ws.getDuration();
       if (!dur) return;

@@ -39,6 +39,11 @@ fn get_log_path(app: AppHandle) -> Result<String, String> {
     log_path(&app).map(|p| p.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+fn frontend_log(app: AppHandle, message: String) {
+    log(&app, &message);
+}
+
 // ── Default resources (embedded at compile time) ────────────────────────────
 
 const SRT_JS:  &str = include_str!("../resources/export_formats/srt.js");
@@ -779,6 +784,7 @@ pub fn run() {
             clear_recovery,
             probe_fps,
             get_log_path,
+            frontend_log,
             list_models,
             transcribe_media,
             start_daemon,
