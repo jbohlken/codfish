@@ -48,10 +48,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r sidecar/requirements.txt
 
-      - name: Install ffmpeg via Homebrew
-        run: brew install ffmpeg
-
-      - name: Copy ffmpeg for bundling
+      - name: Download LGPL ffmpeg
         run: python sidecar/fetch_ffmpeg.py
 
       - name: Build CPU sidecar
