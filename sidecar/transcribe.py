@@ -419,4 +419,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # PyInstaller-frozen multiprocessing workers re-execute this binary as
+    # their entry point. Without freeze_support(), each worker would re-run
+    # main() — spawning a duplicate sidecar that races for stdin and pollutes
+    # the protocol stream. freeze_support() detects worker mode and routes
+    # the process to its assigned worker function instead.
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()
