@@ -463,12 +463,28 @@ fn cleanup_existing_install(dir: &std::path::Path) -> Result<(), String> {
         if name == "sidecar.json" || name == "transcribe.zip.tmp" {
             continue;
         }
-        let result = if path.is_dir() {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
-        if let Err(e) = result {
+        // Windows can briefly hold a lock on a just-exited executable (the
+        // sidecar daemon, or AV scanning it on close). Retry a few times
+        // before giving up so a transient lock doesn't break the install.
+        let mut last_err: Option<std::io::Error> = None;
+        for attempt in 0..10 {
+            let result = if path.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            match result {
+                Ok(()) => {
+                    last_err = None;
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    std::thread::sleep(std::time::Duration::from_millis(150 * (attempt + 1)));
+                }
+            }
+        }
+        if let Some(e) = last_err {
             return Err(format!("cleanup {}: {e}", path.display()));
         }
     }
