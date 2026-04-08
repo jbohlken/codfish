@@ -61,8 +61,75 @@ jobs:
           path: |
             sidecar/dist/transcribe-cpu-*.zip
 
+  build-cuda-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CUDA-flavored PyTorch and sidecar deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r sidecar/requirements-cuda.txt
+
+      - name: Verify torch is the CUDA build
+        shell: pwsh
+        run: |
+          python -c "import torch; print('torch:', torch.__version__); print('cuda build:', torch.version.cuda)"
+          python -c "import torch, sys; sys.exit(0 if torch.version.cuda else 1)"
+
+      - name: Download LGPL ffmpeg
+        run: python sidecar/fetch_ffmpeg.py
+
+      - name: Build CUDA sidecar
+        run: python sidecar/build.py --release --cuda --skip-cuda-check
+
+      - name: Split if over 2GB
+        shell: pwsh
+        run: |
+          $threshold = 2000000000
+          $partSize  = 1900000000
+          $zip = Get-ChildItem sidecar/dist/transcribe-cuda-*.zip | Select-Object -First 1
+          if (-not $zip) { throw "No CUDA zip produced" }
+          if ($zip.Length -le $threshold) {
+            Write-Host "Zip is under 2GB, no splitting needed: $($zip.Length) bytes"
+            exit 0
+          }
+          Write-Host "Splitting $($zip.Name) ($($zip.Length) bytes) into ~1.9 GB parts"
+          $stream = [System.IO.File]::OpenRead($zip.FullName)
+          try {
+            $partNum = 1
+            $buffer  = New-Object byte[] $partSize
+            while ($true) {
+              $read = $stream.Read($buffer, 0, $buffer.Length)
+              if ($read -le 0) { break }
+              $partPath = "$($zip.FullName).part$partNum"
+              $fs = [System.IO.File]::OpenWrite($partPath)
+              try { $fs.Write($buffer, 0, $read) } finally { $fs.Close() }
+              Write-Host "  wrote $partPath ($read bytes)"
+              $partNum++
+            }
+          } finally {
+            $stream.Close()
+          }
+          Remove-Item $zip.FullName
+          Get-ChildItem sidecar/dist/transcribe-cuda-* | Format-Table Name, Length
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-cuda-windows
+          path: |
+            sidecar/dist/transcribe-cuda-*
+          if-no-files-found: error
+
   release:
-    needs: [build-cpu-windows, build-cpu-macos]
+    needs: [build-cpu-windows, build-cpu-macos, build-cuda-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -93,20 +160,10 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: "Transcription Engine ${{ steps.version.outputs.version }}"
           body: |
-            CPU variants for Windows x64 and macOS arm64.
-
-            To add the CUDA variant, build locally and upload:
-            ```
-            sidecar\.venv-cuda\Scripts\activate
-            python sidecar\build.py --release --cuda
-            ```
-            Then split if over 2GB, upload the parts, download all assets
-            locally, regenerate the manifest, and re-upload it:
-            ```
-            python sidecar/make_manifest.py --version ${{ steps.version.outputs.version }} --dir sidecar/dist
-            gh release upload sidecar-v${{ steps.version.outputs.version }} sidecar/dist/sidecar-manifest.json --clobber
-            ```
+            CPU variants for Windows x64 and macOS arm64, plus CUDA variant
+            for Windows x64. All variants built reproducibly in CI.
           draft: true
           files: |
             sidecar/dist/transcribe-cpu-*.zip
+            sidecar/dist/transcribe-cuda-*
             sidecar/dist/sidecar-manifest.json
