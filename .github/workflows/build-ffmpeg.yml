@@ -1,0 +1,119 @@
+name: Build ffmpeg
+
+# Builds minimal LGPL ffmpeg + ffprobe for all Codfish target platforms and
+# publishes them as a GitHub Release. The sidecar build then downloads from
+# this release instead of relying on Homebrew (GPL) or BtbN's prebuilts.
+#
+# Manually triggered. Pin the ffmpeg version via the input; the resulting
+# release tag is `ffmpeg-<version>-codfish.<n>` so multiple Codfish-side
+# revisions of the same upstream ffmpeg can coexist.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: "ffmpeg git tag (e.g. n7.1)"
+        required: true
+        default: "n7.1"
+      revision:
+        description: "Codfish revision suffix (bump if you change build flags)"
+        required: true
+        default: "1"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: native
+            artifact: macos-arm64
+          - os: macos-13
+            target: native
+            artifact: macos-x64
+          - os: ubuntu-latest
+            target: native
+            artifact: linux-x64
+          - os: ubuntu-latest
+            target: windows
+            artifact: windows-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install nasm pkg-config
+
+      - name: Install build deps (Linux native)
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'native'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm pkg-config
+
+      - name: Install build deps (Linux → Windows cross)
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'windows'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm pkg-config mingw-w64
+
+      - name: Build ffmpeg
+        env:
+          FFMPEG_VERSION: ${{ inputs.ffmpeg_version }}
+          TARGET: ${{ matrix.target }}
+        run: bash sidecar/build_ffmpeg.sh
+
+      - name: Verify LGPL configuration
+        shell: bash
+        run: |
+          # Native builds: run the binary. Cross-compiled Windows binary
+          # can't run on Linux, so grep the configure log instead.
+          if [ "${{ matrix.target }}" = "windows" ]; then
+            grep -- "--disable-gpl" sidecar/build/ffmpeg-src/ffmpeg-${{ inputs.ffmpeg_version }}-windows/ffbuild/config.log
+            ! grep -- "--enable-gpl" sidecar/build/ffmpeg-src/ffmpeg-${{ inputs.ffmpeg_version }}-windows/ffbuild/config.log
+          else
+            sidecar/ffmpeg/ffmpeg -version | tee /tmp/ffver
+            grep -- "--disable-gpl" /tmp/ffver
+            ! grep -- "--enable-gpl " /tmp/ffver
+          fi
+
+      - name: Package binaries
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cd sidecar/ffmpeg
+          if [ "${{ matrix.target }}" = "windows" ]; then
+            zip -9 ../../artifacts/ffmpeg-${{ matrix.artifact }}.zip ffmpeg.exe ffprobe.exe
+          else
+            tar -cJf ../../artifacts/ffmpeg-${{ matrix.artifact }}.tar.xz ffmpeg ffprobe
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ matrix.artifact }}
+          path: artifacts/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="ffmpeg-${{ inputs.ffmpeg_version }}-codfish.${{ inputs.revision }}"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ffmpeg ${{ inputs.ffmpeg_version }} (codfish.${{ inputs.revision }})" \
+            --notes "Minimal LGPL ffmpeg+ffprobe built from upstream tag ${{ inputs.ffmpeg_version }}. See sidecar/build_ffmpeg.sh for the exact configure flags." \
+            artifacts/*

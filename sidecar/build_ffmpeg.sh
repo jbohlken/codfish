@@ -12,29 +12,35 @@
 #     shrinks the binary from ~80 MB to ~10 MB.
 #
 # Usage:
-#   sidecar/build_ffmpeg.sh                   # uses default FFMPEG_VERSION
+#   sidecar/build_ffmpeg.sh                       # native build for current OS
 #   FFMPEG_VERSION=n7.1 sidecar/build_ffmpeg.sh
+#   TARGET=windows sidecar/build_ffmpeg.sh        # cross-compile to Windows x64
+#                                                 # (run on Linux only)
 #
 # Requirements (macOS):
 #   xcode-select --install
 #   brew install nasm pkg-config
 #
-# Requirements (Linux):
+# Requirements (Linux native):
 #   apt install build-essential nasm pkg-config
+#
+# Requirements (Linux → Windows cross-compile):
+#   apt install build-essential nasm pkg-config mingw-w64
 
 set -euo pipefail
 
 FFMPEG_VERSION="${FFMPEG_VERSION:-n7.1}"
+TARGET="${TARGET:-native}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_ROOT="${SCRIPT_DIR}/build/ffmpeg-src"
 OUT_DIR="${SCRIPT_DIR}/ffmpeg"
-SRC_DIR="${BUILD_ROOT}/ffmpeg-${FFMPEG_VERSION}"
+SRC_DIR="${BUILD_ROOT}/ffmpeg-${FFMPEG_VERSION}-${TARGET}"
 
 mkdir -p "${BUILD_ROOT}" "${OUT_DIR}"
 
 if [ ! -d "${SRC_DIR}" ]; then
-  echo "Cloning ffmpeg ${FFMPEG_VERSION}..."
+  echo "Cloning ffmpeg ${FFMPEG_VERSION} into ${SRC_DIR}..."
   git clone --depth 1 --branch "${FFMPEG_VERSION}" \
     https://git.ffmpeg.org/ffmpeg.git "${SRC_DIR}"
 else
@@ -46,10 +52,34 @@ cd "${SRC_DIR}"
 # Clean any prior build artifacts in the source tree.
 make distclean >/dev/null 2>&1 || true
 
-echo "Configuring ffmpeg (LGPL, audio-only, minimal)..."
+# Target-specific configure flags. Native builds add nothing; Windows cross
+# adds the mingw-w64 toolchain prefix and target-os hint. The audio/codec
+# flag set is identical across targets so we get matching feature parity.
+TARGET_FLAGS=()
+EXE_SUFFIX=""
+case "${TARGET}" in
+  native)
+    ;;
+  windows)
+    TARGET_FLAGS=(
+      --arch=x86_64
+      --target-os=mingw32
+      --cross-prefix=x86_64-w64-mingw32-
+      --pkg-config=pkg-config
+    )
+    EXE_SUFFIX=".exe"
+    ;;
+  *)
+    echo "Unknown TARGET=${TARGET} (expected 'native' or 'windows')" >&2
+    exit 1
+    ;;
+esac
+
+echo "Configuring ffmpeg (LGPL, audio-only, minimal, target=${TARGET})..."
 
 ./configure \
   --prefix="${SRC_DIR}/install" \
+  "${TARGET_FLAGS[@]}" \
   --disable-gpl \
   --disable-nonfree \
   --disable-doc \
@@ -87,14 +117,14 @@ echo "Installing into ${SRC_DIR}/install ..."
 make install
 
 echo "Copying binaries into ${OUT_DIR} ..."
-cp "${SRC_DIR}/install/bin/ffmpeg" "${OUT_DIR}/ffmpeg"
-cp "${SRC_DIR}/install/bin/ffprobe" "${OUT_DIR}/ffprobe"
-chmod +x "${OUT_DIR}/ffmpeg" "${OUT_DIR}/ffprobe"
+cp "${SRC_DIR}/install/bin/ffmpeg${EXE_SUFFIX}"  "${OUT_DIR}/ffmpeg${EXE_SUFFIX}"
+cp "${SRC_DIR}/install/bin/ffprobe${EXE_SUFFIX}" "${OUT_DIR}/ffprobe${EXE_SUFFIX}"
+chmod +x "${OUT_DIR}/ffmpeg${EXE_SUFFIX}" "${OUT_DIR}/ffprobe${EXE_SUFFIX}"
 
 echo
 echo "Done."
-echo "  ffmpeg:  $(ls -lh "${OUT_DIR}/ffmpeg"  | awk '{print $5}')"
-echo "  ffprobe: $(ls -lh "${OUT_DIR}/ffprobe" | awk '{print $5}')"
+echo "  ffmpeg${EXE_SUFFIX}:  $(ls -lh "${OUT_DIR}/ffmpeg${EXE_SUFFIX}"  | awk '{print $5}')"
+echo "  ffprobe${EXE_SUFFIX}: $(ls -lh "${OUT_DIR}/ffprobe${EXE_SUFFIX}" | awk '{print $5}')"
 echo
 echo "Verify license + config with:"
 echo "  ${OUT_DIR}/ffmpeg -version"
