@@ -38,11 +38,27 @@
       header img {
         width: 96px;
         height: 96px;
-        animation: swim 3s ease-in-out infinite;
+        animation: swim 3s linear infinite;
       }
+      /* translateY = -12 * sin(t),  rotate = -10 * cos(t)   (tilt leads the bob) */
       @keyframes swim {
-        0%, 100% { transform: translateY(0); }
-        50%      { transform: translateY(-10px); }
+        0%     { transform: translateY(0px)     rotate(-10deg); }
+        6.25%  { transform: translateY(-4.6px)  rotate(-9.2deg); }
+        12.5%  { transform: translateY(-8.5px)  rotate(-7.1deg); }
+        18.75% { transform: translateY(-11.1px) rotate(-3.8deg); }
+        25%    { transform: translateY(-12px)   rotate(0deg); }
+        31.25% { transform: translateY(-11.1px) rotate(3.8deg); }
+        37.5%  { transform: translateY(-8.5px)  rotate(7.1deg); }
+        43.75% { transform: translateY(-4.6px)  rotate(9.2deg); }
+        50%    { transform: translateY(0px)     rotate(10deg); }
+        56.25% { transform: translateY(4.6px)   rotate(9.2deg); }
+        62.5%  { transform: translateY(8.5px)   rotate(7.1deg); }
+        68.75% { transform: translateY(11.1px)  rotate(3.8deg); }
+        75%    { transform: translateY(12px)    rotate(0deg); }
+        81.25% { transform: translateY(11.1px)  rotate(-3.8deg); }
+        87.5%  { transform: translateY(8.5px)   rotate(-7.1deg); }
+        93.75% { transform: translateY(4.6px)   rotate(-9.2deg); }
+        100%   { transform: translateY(0px)     rotate(-10deg); }
       }
       @media (prefers-reduced-motion: reduce) {
         header img { animation: none; }
