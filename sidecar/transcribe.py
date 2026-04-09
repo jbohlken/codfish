@@ -27,6 +27,20 @@ import sys
 import os
 import io
 import json
+
+# ── macOS SSL certs ──────────────────────────────────────────────────────────
+# PyInstaller-bundled Python on macOS has no CA bundle wired up: Windows uses
+# the OS cert store via Schannel, Linux reads /etc/ssl/certs, but macOS Python
+# doesn't touch the Keychain. The python.org installer ships an
+# "Install Certificates.command" script that points Python at certifi — we
+# replicate that here so any HTTPS call from the sidecar (torchaudio model
+# downloads, huggingface, etc.) finds a trust store on first run.
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+except ImportError:
+    pass
 import time
 import contextlib
 import traceback
