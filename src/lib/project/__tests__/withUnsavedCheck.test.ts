@@ -25,7 +25,7 @@ vi.mock("../../recovery", () => ({
 }));
 
 // We need to assert against the real signals, so import AFTER mocks.
-import { withUnsavedCheck, saveCurrentProject } from "../index";
+import { withUnsavedCheck } from "../index";
 import { project, projectPath, isDirty } from "../../../store/app";
 import type { CodProject } from "../../../types/project";
 

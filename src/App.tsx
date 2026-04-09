@@ -7,8 +7,9 @@ import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
-import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, loadProjectFromPath } from "./lib/project";
+import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, loadProjectFromPath, openRecent } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
+import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -156,6 +157,7 @@ export function App() {
 
   useEffect(() => {
     loadProfiles().then((p) => { profiles.value = p; });
+    loadRecent();
   }, []);
 
   useEffect(() => {
@@ -188,6 +190,13 @@ export function App() {
     }
   });
 
+  // Push the recent-projects list into the native "Open Recent" submenu
+  // whenever it changes. The Rust side stores a parallel path mapping so
+  // on_menu_event can dispatch clicks back to the right file.
+  useSignalEffect(() => {
+    invoke("set_recent_menu", { entries: recentProjects.value }).catch(() => {});
+  });
+
   // Push enabled-state for File menu items into the native menu whenever
   // the underlying signals change. useSignalEffect (not useEffect) so we
   // subscribe directly to signal reads — App doesn't render project/isDirty
@@ -206,8 +215,10 @@ export function App() {
       invoke("set_menu_enabled", { id, enabled }).catch(() => {});
     set("new_project", ready);
     set("open_project", ready);
+    set("open_recent", ready);
     set("save_project_as", ready && hasProject);
     set("save_project", ready && hasProject && dirty);
+    set("close_project", ready && hasProject);
   });
 
   useEffect(() => {
@@ -223,7 +234,22 @@ export function App() {
         case "open_project": openProjectGuarded(); break;
         case "save_project": if (hasProject && isDirty.value) saveCurrentProject(); break;
         case "save_project_as": if (hasProject) saveCurrentProjectAs(); break;
+        case "close_project": if (hasProject) closeProjectGuarded(); break;
+        case "clear_recent": clearRecent(); break;
       }
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
+  // Native menu → Open Recent click. Rust looks the path up by index and
+  // emits this event with the path as payload. We route it through the same
+  // unsaved-changes gate as the manual Open flow.
+  useEffect(() => {
+    const unlisten = listen<string>("menu://open-recent", (e) => {
+      if (isUpdating()) return;
+      const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
+      if (!sidecarReady || daemonStatus.value !== "ready") return;
+      openRecent(e.payload);
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
@@ -278,6 +304,7 @@ export function App() {
         else if (k === "o") { e.preventDefault(); openProjectGuarded(); }
         else if (k === "s" && e.shiftKey && hasProject) { e.preventDefault(); saveCurrentProjectAs(); }
         else if (k === "s" && hasProject && isDirty.value) { e.preventDefault(); saveCurrentProject(); }
+        else if (k === "w" && hasProject) { e.preventDefault(); closeProjectGuarded(); }
       }
     };
 

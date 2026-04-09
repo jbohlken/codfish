@@ -21,6 +21,7 @@ interface RowsTooltip {
 type TooltipState = TextTooltip | RowsTooltip;
 
 const tooltipState = signal<TooltipState | null>(null);
+let pendingDelay: ReturnType<typeof setTimeout> | null = null;
 
 export function showWarningTooltip(
   rows: { label: string; detail: string; strict?: boolean }[],
@@ -42,19 +43,21 @@ export function showBlockTooltip(
 }
 
 export function hideTooltip() {
+  if (pendingDelay !== null) {
+    clearTimeout(pendingDelay);
+    pendingDelay = null;
+  }
   tooltipState.value = null;
 }
 
 export function Tooltip() {
   useEffect(() => {
-    let delayTimer: ReturnType<typeof setTimeout> | null = null;
-
     const onOver = (e: MouseEvent) => {
       const el = (e.target as HTMLElement).closest("[data-tooltip]") as HTMLElement | null;
       if (!el) return;
       const text = el.getAttribute("data-tooltip") ?? "";
       if (!text) return;
-      delayTimer = setTimeout(() => {
+      pendingDelay = setTimeout(() => {
         const rect = el.getBoundingClientRect();
         tooltipState.value = {
           type: "text",
@@ -69,11 +72,7 @@ export function Tooltip() {
     const onOut = (e: MouseEvent) => {
       const el = (e.target as HTMLElement).closest("[data-tooltip]");
       if (!el) return;
-      if (delayTimer !== null) {
-        clearTimeout(delayTimer);
-        delayTimer = null;
-      }
-      tooltipState.value = null;
+      hideTooltip();
     };
 
     document.addEventListener("mouseover", onOver);
@@ -81,7 +80,7 @@ export function Tooltip() {
     return () => {
       document.removeEventListener("mouseover", onOver);
       document.removeEventListener("mouseout", onOut);
-      if (delayTimer !== null) clearTimeout(delayTimer);
+      hideTooltip();
     };
   }, []);
 

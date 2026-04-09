@@ -5,11 +5,14 @@ import { project, selectedMediaId, pushHistory } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
+  openRecent,
   importMedia,
   relinkMediaItem,
   fileExists,
 } from "../../lib/project";
+import { recentProjects } from "../../lib/recent";
 import { showContextMenu } from "../ContextMenu";
+import { hideTooltip } from "../Tooltip";
 import { mediaSettingsId } from "../MediaSettings";
 import type { MediaItem } from "../../types/project";
 
@@ -48,6 +51,15 @@ export function ProjectPanel() {
     <div class="panel project-panel">
       <div class="panel-header">
         <span class="panel-header-title">Project</span>
+        {proj && (
+          <button
+            class="btn btn-ghost btn-icon"
+            data-tooltip="Import media"
+            onClick={importMedia}
+          >
+            <Plus size={14} />
+          </button>
+        )}
       </div>
 
       <div class="panel-body scrollable">
@@ -59,6 +71,24 @@ export function ProjectPanel() {
               <button class="btn btn-primary btn-sm" onClick={newProjectGuarded}><FilePlus size={13} /> New Project</button>
               <button class="btn btn-secondary btn-sm" onClick={openProjectGuarded}><FolderOpen size={13} /> Open…</button>
             </div>
+            {recentProjects.value.length > 0 && (
+              <div class="project-panel-recent">
+                <span class="project-panel-recent-title">Recent</span>
+                {recentProjects.value.slice(0, 5).map((r) => (
+                  <button
+                    key={r.path}
+                    class="project-panel-recent-item"
+                    data-tooltip={r.path}
+                    onClick={() => {
+                      hideTooltip();
+                      openRecent(r.path);
+                    }}
+                  >
+                    {r.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : proj.media.length === 0 ? (
           <div class="empty-state">
@@ -96,14 +126,6 @@ export function ProjectPanel() {
           </div>
         )}
       </div>
-
-      {proj && (
-        <div class="panel-footer">
-          <button class="btn btn-ghost btn-full" onClick={importMedia}>
-            <Plus size={12} /> Import Media
-          </button>
-        </div>
-      )}
     </div>
   );
 }

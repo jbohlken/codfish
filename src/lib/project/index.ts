@@ -4,6 +4,7 @@ import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, p
 import { showError } from "../../components/ErrorModal";
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
+import { addRecent, loadRecent } from "../recent";
 import type { CodProject, MediaItem } from "../../types/project";
 
 const PROJECT_VERSION = 1;
@@ -31,9 +32,20 @@ export async function withUnsavedCheck(action: () => Promise<boolean>): Promise<
     closeProject();
   } else if (project.value) {
     // Clean project — still close it so the action starts from a clean slate.
+    // Clear recovery too: a clean project has no unsaved work, so any leftover
+    // recovery blob is stale and would just confuse the next boot.
+    await clearRecovery();
     closeProject();
   }
   return action();
+}
+
+/** Run the unsaved-changes gate, then clear the current project. Returns
+ *  true if the project was closed (or was already absent). Thin wrapper
+ *  over withUnsavedCheck — the noop action just signals "nothing to do
+ *  after closing". */
+export function closeProjectGuarded(): Promise<boolean> {
+  return withUnsavedCheck(async () => true);
 }
 
 /** Clear the current project from the store. Does not touch disk. */
@@ -106,6 +118,21 @@ export async function loadProjectFromPath(filePath: string): Promise<boolean> {
 
   loadIntoStore(proj, filePath);
   return true;
+}
+
+/** Open a project from the recent list. If the file no longer exists,
+ *  refresh the recent list (which prunes missing entries) and surface an
+ *  error — without closing the currently open project. */
+export async function openRecent(filePath: string): Promise<boolean> {
+  if (!(await fileExists(filePath))) {
+    await loadRecent();
+    showError(`File not found:\n${filePath}`);
+    return false;
+  }
+  return withUnsavedCheck(async () => {
+    try { await loadProjectFromPath(filePath); return true; }
+    catch (err) { console.error(err); return false; }
+  });
 }
 
 export async function openProject(): Promise<boolean> {
@@ -261,6 +288,13 @@ function loadIntoStore(proj: CodProject, filePath: string): void {
   selectedCaptionIndex.value = null;
   playbackTime.value = 0;
   isPlaying.value = false;
+  // Fire-and-forget: every code path that loads a project (open, new, file
+  // association, open-recent, recovery restore) flows through here, so this
+  // is the single place to update the recent list.
+  // Use the filename including extension so menu/panel labels match the
+  // title bar (which shows e.g. "my project.cod").
+  const filename = filePath.replace(/\\/g, "/").split("/").pop() ?? filePath;
+  void addRecent(filePath, filename);
 }
 
 function flattenDialogResult(result: string | string[] | null): string | null {

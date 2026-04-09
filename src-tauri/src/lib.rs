@@ -5,7 +5,8 @@ mod transcription;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder};
+use std::sync::Mutex as StdMutex;
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State, Window, Wry};
 use tokio::sync::Mutex as AsyncMutex;
 use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
@@ -21,7 +22,15 @@ struct MenuItems {
     open_project: MenuItem<Wry>,
     save_project: MenuItem<Wry>,
     save_project_as: MenuItem<Wry>,
+    close_project: MenuItem<Wry>,
+    /// "Open Recent" submenu — its items are rebuilt whenever the recent
+    /// list changes via `set_recent_menu`.
+    recent_submenu: Submenu<Wry>,
 }
+
+/// Maps the index baked into a recent menu item id (`menu_recent_<i>`) back
+/// to its filesystem path. Replaced wholesale on every `set_recent_menu`.
+struct RecentPaths(StdMutex<Vec<String>>);
 
 // ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -56,11 +65,15 @@ fn frontend_log(app: AppHandle, message: String) {
 
 #[tauri::command]
 fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Result<(), String> {
+    if id == "open_recent" {
+        return items.recent_submenu.set_enabled(enabled).map_err(|e| e.to_string());
+    }
     let item = match id.as_str() {
         "new_project" => &items.new_project,
         "open_project" => &items.open_project,
         "save_project" => &items.save_project,
         "save_project_as" => &items.save_project_as,
+        "close_project" => &items.close_project,
         other => return Err(format!("unknown menu id: {other}")),
     };
     item.set_enabled(enabled).map_err(|e| e.to_string())
@@ -531,6 +544,133 @@ fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).is_file()
 }
 
+// ── Recent projects ──────────────────────────────────────────────────────────
+
+const RECENT_LIMIT: usize = 10;
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RecentProject {
+    path: String,
+    name: String,
+    opened_at: String,
+}
+
+fn recent_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|p| p.join("recent.json"))
+        .map_err(|e| format!("app data dir: {e}"))
+}
+
+fn read_recent(app: &AppHandle) -> Vec<RecentProject> {
+    let Ok(path) = recent_path(app) else { return vec![] };
+    if !path.exists() { return vec![] }
+    let Ok(raw) = std::fs::read_to_string(&path) else { return vec![] };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn write_recent(app: &AppHandle, entries: &[RecentProject]) -> Result<(), String> {
+    let path = recent_path(app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+    }
+    let serialized = serde_json::to_string_pretty(entries).map_err(|e| format!("serialize: {e}"))?;
+    std::fs::write(&path, serialized).map_err(|e| format!("write recent: {e}"))
+}
+
+/// Read the recent list, drop entries whose files no longer exist on disk,
+/// and persist the cleaned list back. Returns the cleaned list.
+#[tauri::command]
+fn get_recent_projects(app: AppHandle) -> Result<Vec<RecentProject>, String> {
+    let all = read_recent(&app);
+    let cleaned: Vec<RecentProject> = all
+        .into_iter()
+        .filter(|e| std::path::Path::new(&e.path).is_file())
+        .collect();
+    // Only rewrite if pruning actually changed the list, to avoid touching
+    // the file on every boot.
+    let original = read_recent(&app);
+    if cleaned.len() != original.len() {
+        let _ = write_recent(&app, &cleaned);
+    }
+    Ok(cleaned)
+}
+
+#[tauri::command]
+fn add_recent_project(app: AppHandle, path: String, name: String) -> Result<Vec<RecentProject>, String> {
+    let mut entries = read_recent(&app);
+    // Dedupe by path — moving an existing entry to the front instead of
+    // duplicating it.
+    entries.retain(|e| e.path != path);
+    entries.insert(0, RecentProject {
+        path,
+        name,
+        opened_at: chrono::Local::now().to_rfc3339(),
+    });
+    entries.truncate(RECENT_LIMIT);
+    write_recent(&app, &entries)?;
+    Ok(entries)
+}
+
+#[tauri::command]
+fn clear_recent_projects(app: AppHandle) -> Result<(), String> {
+    write_recent(&app, &[])
+}
+
+/// Rebuild the "Open Recent" submenu's items from the given list. Called
+/// from the frontend whenever the recent signal changes. Also updates the
+/// path-mapping state used by `on_menu_event` to dispatch clicks.
+#[tauri::command]
+fn set_recent_menu(
+    app: AppHandle,
+    items: State<MenuItems>,
+    paths: State<RecentPaths>,
+    entries: Vec<RecentProject>,
+) -> Result<(), String> {
+    let submenu = &items.recent_submenu;
+
+    // Clear existing children.
+    let existing = submenu.items().map_err(|e| e.to_string())?;
+    for child in existing {
+        if let Some(item) = child.as_menuitem() {
+            submenu.remove(item).map_err(|e| e.to_string())?;
+        } else if let Some(sep) = child.as_predefined_menuitem() {
+            submenu.remove(sep).map_err(|e| e.to_string())?;
+        }
+    }
+
+    if entries.is_empty() {
+        let empty = MenuItemBuilder::new("No recent projects")
+            .id("menu_recent_empty")
+            .enabled(false)
+            .build(&app)
+            .map_err(|e| e.to_string())?;
+        submenu.append(&empty).map_err(|e| e.to_string())?;
+    } else {
+        for (i, entry) in entries.iter().enumerate() {
+            let item = MenuItemBuilder::new(&entry.name)
+                .id(format!("menu_recent_{i}"))
+                .build(&app)
+                .map_err(|e| e.to_string())?;
+            submenu.append(&item).map_err(|e| e.to_string())?;
+        }
+        let sep = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
+        submenu.append(&sep).map_err(|e| e.to_string())?;
+        let clear = MenuItemBuilder::new("Clear Recent")
+            .id("menu_clear_recent")
+            .build(&app)
+            .map_err(|e| e.to_string())?;
+        submenu.append(&clear).map_err(|e| e.to_string())?;
+    }
+
+    // Replace the path mapping atomically with the new ordering.
+    let new_paths: Vec<String> = entries.into_iter().map(|e| e.path).collect();
+    *paths.0.lock().map_err(|e| e.to_string())? = new_paths;
+
+    Ok(())
+}
+
 // ── Recovery commands ────────────────────────────────────────────────────────
 // Autosave hook for update safety: before we tear down the app or sidecar for
 // an update, the frontend drops an in-memory snapshot here so nothing is lost
@@ -789,17 +929,35 @@ pub fn run() {
                 .id("menu_save_project_as")
                 .accelerator("CmdOrCtrl+Shift+S")
                 .build(handle)?;
+            let close_proj = MenuItemBuilder::new("Close Project")
+                .id("menu_close_project")
+                .accelerator("CmdOrCtrl+W")
+                .build(handle)?;
 
             let exit_item = MenuItemBuilder::new("Exit")
                 .id("menu_exit")
                 .build(handle)?;
 
+            // Open Recent starts with a single disabled placeholder. The
+            // frontend repopulates it via set_recent_menu once it's loaded
+            // the recent.json list.
+            let recent_placeholder = MenuItemBuilder::new("No recent projects")
+                .id("menu_recent_empty")
+                .enabled(false)
+                .build(handle)?;
+            let recent_submenu = SubmenuBuilder::new(handle, "Open Recent")
+                .item(&recent_placeholder)
+                .build()?;
+
             let file_menu = SubmenuBuilder::new(handle, "File")
                 .item(&new_proj)
                 .item(&open_proj)
+                .item(&recent_submenu)
                 .separator()
                 .item(&save_proj)
                 .item(&save_as)
+                .separator()
+                .item(&close_proj)
                 .separator()
                 .item(&exit_item)
                 .build()?;
@@ -835,10 +993,13 @@ pub fn run() {
                     .paste()
                     .select_all()
                     .build()?;
+                // Note: deliberately omitting .close_window() so Close Project
+                // (File menu, Cmd+W) owns the Cmd+W binding — matches Adobe and
+                // other document-centric Mac apps. Codfish is single-window so
+                // losing the explicit Close Window item costs nothing; the red
+                // traffic light and Cmd+Q still cover window/app teardown.
                 let window_menu = SubmenuBuilder::new(handle, "Window")
                     .minimize()
-                    .separator()
-                    .close_window()
                     .build()?;
                 menu_builder = menu_builder.item(&edit_menu).item(&window_menu);
             }
@@ -848,7 +1009,10 @@ pub fn run() {
                 open_project: open_proj.clone(),
                 save_project: save_proj.clone(),
                 save_project_as: save_as.clone(),
+                close_project: close_proj.clone(),
+                recent_submenu: recent_submenu.clone(),
             });
+            handle.manage(RecentPaths(StdMutex::new(Vec::new())));
 
             menu_builder.build()
         })
@@ -858,6 +1022,20 @@ pub fn run() {
                 // Route through ExitRequested so the unsaved-changes gate fires.
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.close();
+                }
+                return;
+            }
+            // Recent project click → look up the path by index and emit a
+            // dedicated event so the frontend can route through the unsaved
+            // changes gate before loading.
+            if let Some(idx_str) = id.strip_prefix("menu_recent_") {
+                if idx_str == "empty" { return; }
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    let paths = app.state::<RecentPaths>();
+                    let path = paths.0.lock().ok().and_then(|p| p.get(idx).cloned());
+                    if let (Some(path), Some(window)) = (path, app.get_webview_window("main")) {
+                        let _ = window.emit("menu://open-recent", path);
+                    }
                 }
                 return;
             }
@@ -909,6 +1087,10 @@ pub fn run() {
             get_log_path,
             frontend_log,
             set_menu_enabled,
+            get_recent_projects,
+            add_recent_project,
+            clear_recent_projects,
+            set_recent_menu,
             list_models,
             transcribe_media,
             start_daemon,
