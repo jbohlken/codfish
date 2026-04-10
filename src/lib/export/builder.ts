@@ -51,6 +51,15 @@ export const TOKEN_GROUPS: TokenGroup[] = [
     ],
   },
   {
+    group: "SMPTE",
+    tokens: [
+      { token: "{{smpte-start}}", label: "Start (NDF)", description: "00:00:01:05 — non-drop-frame" },
+      { token: "{{smpte-end}}", label: "End (NDF)", description: "00:00:03:14 — non-drop-frame" },
+      { token: "{{smpte-df-start}}", label: "Start (DF)", description: "00:00:01;05 — drop-frame (29.97/59.94)" },
+      { token: "{{smpte-df-end}}", label: "End (DF)", description: "00:00:03;14 — drop-frame (29.97/59.94)" },
+    ],
+  },
+  {
     group: "Global",
     tokens: [
       { token: "{{count}}", label: "Count", description: "Total number of captions" },
@@ -70,10 +79,13 @@ export const SAMPLE_CAPTIONS: SerializedCaption[] = [
   { index: 2, start: 6.0, end: 8.75, lines: ["Line one", "Line two"], speaker: "Bob" },
 ];
 
+/** Preview fps for SMPTE tokens. 29.97 so DF preview is meaningful. */
+export const SAMPLE_FPS = 29.97;
+
 // ── Template interpreter ────────────────────────────────────────────────────
 
 /** Execute a template against caption data. */
-export function executeTemplate(template: string, captions: SerializedCaption[]): string {
+export function executeTemplate(template: string, captions: SerializedCaption[], fps = SAMPLE_FPS): string {
   // Normalize line endings
   const t = template.replace(/\r\n/g, "\n");
 
@@ -82,7 +94,7 @@ export function executeTemplate(template: string, captions: SerializedCaption[])
 
   // No iteration block — render entire template in global context
   if (eachStart === -1 || eachEnd === -1) {
-    return resolveTokens(t, null, 0, captions.length, captions);
+    return resolveTokens(t, null, 0, captions.length, captions, fps);
   }
 
   const header = t.substring(0, eachStart);
@@ -92,13 +104,13 @@ export function executeTemplate(template: string, captions: SerializedCaption[])
   // Strip leading newline from body (the one right after {{#each}})
   if (body.startsWith("\n")) body = body.substring(1);
 
-  let result = resolveTokens(header, null, 0, captions.length, captions);
+  let result = resolveTokens(header, null, 0, captions.length, captions, fps);
 
   for (let i = 0; i < captions.length; i++) {
-    result += resolveTokens(body, captions[i], i, captions.length, captions);
+    result += resolveTokens(body, captions[i], i, captions.length, captions, fps);
   }
 
-  result += resolveTokens(footer, null, 0, captions.length, captions);
+  result += resolveTokens(footer, null, 0, captions.length, captions, fps);
   return result;
 }
 
@@ -120,9 +132,10 @@ function resolveTokens(
   index: number,
   total: number,
   allCaptions: SerializedCaption[],
+  fps: number,
 ): string {
   return text.replace(/\{\{([^}]+)\}\}/g, (_match, key: string) => {
-    return resolveToken(key, caption, index, total, allCaptions);
+    return resolveToken(key, caption, index, total, allCaptions, fps);
   });
 }
 
@@ -133,6 +146,7 @@ function resolveToken(
   index: number,
   total: number,
   allCaptions: SerializedCaption[],
+  fps: number,
 ): string {
   // ── Global tokens (work everywhere) ───────────────────────────────
   if (key === "count") return String(total);
@@ -163,6 +177,14 @@ function resolveToken(
     const [, field, fmt] = timeMatch;
     const val = field === "duration" ? (caption.end - caption.start) : caption[field as "start" | "end"];
     return formatTime(val, fmt);
+  }
+
+  // SMPTE timecode
+  const smpteMatch = key.match(/^smpte-(df-)?(start|end)$/);
+  if (smpteMatch) {
+    const dropFrame = smpteMatch[1] === "df-";
+    const field = smpteMatch[2] as "start" | "end";
+    return formatSmpte(caption[field], fps, dropFrame);
   }
 
   // Text
@@ -221,11 +243,80 @@ export function formatTime(t: number, fmt: string): string {
   return out;
 }
 
+// ── SMPTE timecode ─────────────────────────────────────────────────────────
+
+/** Whether a frame rate supports drop-frame counting (29.97 or 59.94). */
+function isDropFrameRate(fps: number): boolean {
+  return Math.abs(fps - 29.97) < 0.1 || Math.abs(fps - 59.94) < 0.1;
+}
+
+/**
+ * Format a time value as SMPTE timecode (HH:mm:ss:ff or HH:mm:ss;ff).
+ *
+ * Drop-frame (;) skips frame numbers 0–1 (for 29.97) or 0–3 (for 59.94)
+ * at the start of each minute, except every 10th minute. This keeps the
+ * timecode aligned with wall-clock time.
+ *
+ * If drop-frame is requested but fps is incompatible, falls back to NDF.
+ */
+export function formatSmpte(t: number, fps: number, dropFrame: boolean): string {
+  const roundFps = Math.round(fps);
+
+  // Fall back to NDF if fps doesn't support drop-frame
+  if (dropFrame && !isDropFrameRate(fps)) {
+    dropFrame = false;
+  }
+
+  const totalFrames = Math.floor(t * fps);
+
+  let h: number, m: number, s: number, f: number;
+
+  if (dropFrame) {
+    const dropCount = roundFps <= 30 ? 2 : 4;
+    const framesPerMin = roundFps * 60 - dropCount;         // 1798 for 29.97
+    const framesPer10Min = framesPerMin * 10 + dropCount;   // 17982 for 29.97
+
+    const blocks10 = Math.floor(totalFrames / framesPer10Min);
+    let remainder = totalFrames % framesPer10Min;
+
+    let minuteInBlock: number;
+    let frameInMinute: number;
+
+    // First minute of each 10-min block has no drops (full roundFps*60 frames)
+    const firstMinFrames = roundFps * 60; // 1800 for 29.97
+    if (remainder < firstMinFrames) {
+      minuteInBlock = 0;
+      frameInMinute = remainder;
+    } else {
+      remainder -= firstMinFrames;
+      minuteInBlock = 1 + Math.floor(remainder / framesPerMin);
+      frameInMinute = dropCount + (remainder % framesPerMin);
+    }
+
+    const totalMinutes = blocks10 * 10 + minuteInBlock;
+    h = Math.floor(totalMinutes / 60);
+    m = totalMinutes % 60;
+    s = Math.floor(frameInMinute / roundFps);
+    f = frameInMinute % roundFps;
+  } else {
+    h = Math.floor(t / 3600);
+    m = Math.floor((t % 3600) / 60);
+    s = Math.floor(t % 60);
+    const fr = Math.round((t - Math.floor(t)) * 1e9) / 1e9;
+    f = Math.floor(fr * fps);
+  }
+
+  const sep = dropFrame ? ";" : ":";
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}${sep}${String(f).padStart(2, "0")}`;
+}
+
 // ── Token validation ────────────────────────────────────────────────────────
 
 const VALID_TOKEN_KEYS = new Set([
   "index", "start", "end", "duration",
   "text", "text:space",
+  "smpte-start", "smpte-end",
+  "smpte-df-start", "smpte-df-end",
   "count", "json",
   "#each", "/each",
 ]);
@@ -250,6 +341,7 @@ export function findInvalidTokens(template: string): string[] {
 /** Per-caption token keys (only meaningful inside {{#each}}). */
 const PER_CAPTION_KEYS = new Set([
   "index", "start", "end", "duration", "text", "text:space",
+  "smpte-start", "smpte-end", "smpte-df-start", "smpte-df-end",
 ]);
 
 export function isPerCaptionToken(key: string): boolean {
@@ -291,6 +383,11 @@ export function validateTemplate(template: string): TemplateWarning[] {
       warnings.push({ message: `{{${key}}} is a per-caption token and won't work outside {{#each}}.` });
       break; // one warning is enough
     }
+  }
+
+  // Drop-frame advisory
+  if (/\{\{smpte-df-/.test(t)) {
+    warnings.push({ message: "Drop-frame timecode only applies to 29.97 and 59.94 fps. Other rates will use non-drop-frame." });
   }
 
   // Invalid tokens

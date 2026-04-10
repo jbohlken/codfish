@@ -699,8 +699,10 @@ async function handleExport(baseName: string) {
   const format = exportFormats.value.find((f) => f.id === formatId);
   if (!format) return;
 
+  const fps = media.fps ?? activeProfile.value.timing.defaultFps;
+
   try {
-    await exportCaptions(format, media.captions, baseName);
+    await exportCaptions(format, media.captions, baseName, fps);
   } catch (e) {
     showError(String(e));
   }

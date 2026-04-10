@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import {
   executeTemplate,
   formatTime,
+  formatSmpte,
   parseCff,
   serializeCff,
   isBuiltinFormat,
   findInvalidTokens,
   previewTemplate,
   SAMPLE_CAPTIONS,
+  SAMPLE_FPS,
   type FormatConfig,
 } from "../builder";
 
@@ -311,6 +313,7 @@ describe("isBuiltinFormat", () => {
 describe("findInvalidTokens", () => {
   it("valid base tokens", () => {
     const valid = ["{{start}}", "{{end}}", "{{duration}}", "{{text}}", "{{text:space}}",
+      "{{smpte-start}}", "{{smpte-end}}", "{{smpte-df-start}}", "{{smpte-df-end}}",
       "{{count}}", "{{json}}",
       "{{index}}", "{{#each}}", "{{/each}}"];
     for (const token of valid) {
@@ -344,6 +347,100 @@ describe("findInvalidTokens", () => {
   it("unknown tokens", () => {
     expect(findInvalidTokens("{{foo}}")).toEqual(["{{foo}}"]);
     expect(findInvalidTokens("{{bar:baz}}")).toEqual(["{{bar:baz}}"]);
+  });
+});
+
+// ── SMPTE timecode ──────────────────────────────────────────────────────────
+
+describe("formatSmpte", () => {
+  // NDF tests
+  it("NDF at 29.97fps", () => {
+    expect(formatSmpte(1.2, 29.97, false)).toBe("00:00:01:05");
+  });
+
+  it("NDF at 24fps", () => {
+    expect(formatSmpte(1.2, 24, false)).toBe("00:00:01:04");
+  });
+
+  it("NDF at 25fps", () => {
+    expect(formatSmpte(0, 25, false)).toBe("00:00:00:00");
+  });
+
+  it("NDF rolls over seconds", () => {
+    // 61.5 seconds at 24fps → 00:01:01:12
+    expect(formatSmpte(61.5, 24, false)).toBe("00:01:01:12");
+  });
+
+  it("NDF rolls over hours", () => {
+    expect(formatSmpte(3661.0, 24, false)).toBe("01:01:01:00");
+  });
+
+  // DF tests — 29.97fps
+  it("DF at 29.97fps — zero", () => {
+    expect(formatSmpte(0, 29.97, true)).toBe("00:00:00;00");
+  });
+
+  it("DF at 29.97fps — basic", () => {
+    expect(formatSmpte(1.2, 29.97, true)).toBe("00:00:01;05");
+  });
+
+  it("DF skips frames 0-1 at minute boundary", () => {
+    // Frame 1800 at 29.97fps = first frame of minute 1
+    // In DF, minute 1 starts at display frame 2 (0 and 1 are skipped)
+    const t = 1800 / 29.97; // exactly frame 1800
+    const result = formatSmpte(t, 29.97, true);
+    expect(result).toBe("00:01:00;02");
+  });
+
+  it("DF does NOT skip at 10-minute boundaries", () => {
+    // Frame 17982 = first frame of the next 10-min block
+    // At 10-min boundaries, frames 0 and 1 are NOT skipped
+    const t = 17982 / 29.97;
+    const result = formatSmpte(t, 29.97, true);
+    expect(result).toBe("00:10:00;00");
+  });
+
+  it("DF falls back to NDF for 24fps", () => {
+    const ndf = formatSmpte(1.2, 24, false);
+    const dfFallback = formatSmpte(1.2, 24, true);
+    expect(dfFallback).toBe(ndf);
+    expect(dfFallback).not.toContain(";"); // should use : not ;
+  });
+
+  it("DF falls back to NDF for 25fps", () => {
+    expect(formatSmpte(1.2, 25, true)).toBe(formatSmpte(1.2, 25, false));
+  });
+
+  it("DF at 59.94fps", () => {
+    const result = formatSmpte(1.2, 59.94, true);
+    expect(result).toContain(";");
+    // 1.2s * 59.94 ≈ 71 frames → 00:00:01;11
+    expect(result).toBe("00:00:01;11");
+  });
+});
+
+describe("SMPTE tokens in template", () => {
+  const run = (tmpl: string, fps = SAMPLE_FPS) =>
+    executeTemplate(tmpl, SAMPLE_CAPTIONS, fps);
+
+  it("smpte-start and smpte-end (NDF)", () => {
+    const output = run("{{#each}}{{smpte-start}} {{smpte-end}},{{/each}}");
+    expect(output).toContain("00:00:01:05 00:00:03:14");
+  });
+
+  it("smpte-df-start (DF at 29.97)", () => {
+    const output = run("{{#each}}{{smpte-df-start}},{{/each}}", 29.97);
+    expect(output).toContain(";"); // DF uses semicolon
+  });
+
+  it("smpte-df falls back to NDF at 24fps", () => {
+    const output = run("{{#each}}{{smpte-df-start}},{{/each}}", 24);
+    expect(output).not.toContain(";"); // NDF uses colon
+  });
+
+  it("smpte tokens are per-caption (empty outside #each)", () => {
+    const output = run("before:{{smpte-start}}:after");
+    expect(output).toBe("before::after");
   });
 });
 
