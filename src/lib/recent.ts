@@ -25,8 +25,10 @@ export async function loadRecent(): Promise<void> {
 
 /** Record a project as the most-recently-opened. Called from loadIntoStore
  *  so every code path that loads a project (open, new, file association,
- *  open-recent itself, recovery restore) updates the list automatically. */
-export async function addRecent(path: string, name: string): Promise<void> {
+ *  open-recent itself, recovery restore) updates the list automatically.
+ *  The display name is the filename with extension — matches the title bar. */
+export async function addRecent(path: string): Promise<void> {
+  const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
   try {
     const list = await invoke<RecentProject[]>("add_recent_project", { path, name });
     recentProjects.value = list;

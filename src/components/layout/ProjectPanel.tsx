@@ -111,7 +111,7 @@ export function ProjectPanel() {
                       onClick: () => { mediaSettingsId.value = item.id; },
                     },
                     {
-                      label: missingIds.value.has(item.id) ? "Re-link file…" : "Re-link file…",
+                      label: "Re-link file…",
                       onClick: () => relinkMediaItem(item.id),
                     },
                     {

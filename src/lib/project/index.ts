@@ -77,7 +77,7 @@ export async function newProject(): Promise<boolean> {
   });
   if (!savePath) return false;
 
-  const name = pathToName(savePath);
+  const name = pathToBasename(savePath);
   const now = new Date().toISOString();
   const proj: CodProject = {
     version: PROJECT_VERSION,
@@ -99,23 +99,6 @@ export async function newProject(): Promise<boolean> {
 export async function loadProjectFromPath(filePath: string): Promise<boolean> {
   const json = await invoke<string>("load_project", { path: filePath });
   const proj = JSON.parse(json) as CodProject;
-
-  // Migrate old project files
-  if (!(proj as any).transcriptionModel) {
-    proj.transcriptionModel = (proj.media[0] as any)?.transcriptionModel ?? "base";
-  }
-  if (!(proj as any).language) {
-    proj.language = (proj.media[0] as any)?.language ?? "";
-  }
-  proj.media = proj.media.map((m) => {
-    const { language: _l, transcriptionModel: _t, fps, captions, ...rest } = m as any;
-    return {
-      ...rest,
-      fps: fps ?? null,
-      captions: captions.map(({ words: _w, ...c }: any) => c),
-    };
-  });
-
   loadIntoStore(proj, filePath);
   return true;
 }
@@ -135,7 +118,7 @@ export async function openRecent(filePath: string): Promise<boolean> {
   });
 }
 
-export async function openProject(): Promise<boolean> {
+async function openProject(): Promise<boolean> {
   const result = await open({
     title: "Open Project",
     filters: [{ name: "Codfish Project", extensions: ["cod"] }],
@@ -172,7 +155,7 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   });
   if (!savePath) return false;
 
-  const name = pathToName(savePath);
+  const name = pathToBasename(savePath);
   const updated: CodProject = { ...proj, name };
   await writeToDisk(savePath, updated);
   project.value = updated;
@@ -182,8 +165,7 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   // Save As switches the working file to the new path, so treat it like
   // any other load for recents purposes — otherwise the new file wouldn't
   // show up in File ▸ Open Recent until the user closes and reopens it.
-  const filename = savePath.replace(/\\/g, "/").split("/").pop() ?? savePath;
-  void addRecent(savePath, filename);
+  void addRecent(savePath);
   return true;
 }
 
@@ -296,10 +278,7 @@ function loadIntoStore(proj: CodProject, filePath: string): void {
   // Fire-and-forget: every code path that loads a project (open, new, file
   // association, open-recent, recovery restore) flows through here, so this
   // is the single place to update the recent list.
-  // Use the filename including extension so menu/panel labels match the
-  // title bar (which shows e.g. "my project.cod").
-  const filename = filePath.replace(/\\/g, "/").split("/").pop() ?? filePath;
-  void addRecent(filePath, filename);
+  void addRecent(filePath);
 }
 
 function flattenDialogResult(result: string | string[] | null): string | null {
@@ -318,8 +297,3 @@ function pathToBasename(filePath: string): string {
   return base.replace(/\.[^.]+$/, "");
 }
 
-function pathToName(filePath: string): string {
-  const normalized = normalizePath(filePath);
-  const base = normalized.split("/").pop() ?? "Untitled";
-  return base.endsWith(".cod") ? base.slice(0, -4) : base;
-}
