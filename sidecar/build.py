@@ -179,6 +179,15 @@ def main():
     if not onedir_out.is_dir():
         sys.exit(f"ERROR: expected PyInstaller output at {onedir_out}, not found")
 
+    # Collect third-party license texts into the bundle
+    license_file = onedir_out / "THIRD_PARTY_LICENSES.txt"
+    print("\nCollecting third-party licenses...")
+    lic_result = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "collect_licenses.py"), "--out", str(license_file)],
+    )
+    if lic_result.returncode != 0:
+        print("WARNING: license collection failed — bundle will not contain license texts")
+
     # Compute the size of the unpacked folder
     total_bytes = sum(f.stat().st_size for f in onedir_out.rglob("*") if f.is_file())
     print(f"\nBuilt onedir folder: {onedir_out}")

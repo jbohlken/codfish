@@ -45,6 +45,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "resources/THIRD_PARTY_LICENSES_RUST.txt",
+      "resources/THIRD_PARTY_LICENSES_NPM.txt"
+    ],
     "externalBin": [],
     "fileAssociations": [
       {
