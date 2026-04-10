@@ -104,6 +104,22 @@ with contextlib.redirect_stdout(sys.stderr):
     import warnings
     warnings.filterwarnings("ignore")
     import subprocess  # noqa: E402
+
+    # Windows: suppress console window flashes from any child process the
+    # sidecar (or its libraries — whisperx shells out to ffmpeg on every
+    # transcribe) launches. The Rust daemon already starts the sidecar with
+    # CREATE_NO_WINDOW, but that flag does not inherit to grandchildren.
+    # Patch Popen so every subsequent spawn gets the flag by default.
+    if sys.platform == "win32":
+        _CREATE_NO_WINDOW = 0x08000000
+        _orig_popen_init = subprocess.Popen.__init__
+
+        def _patched_popen_init(self, *args, **kwargs):  # type: ignore[no-redef]
+            kwargs["creationflags"] = kwargs.get("creationflags", 0) | _CREATE_NO_WINDOW
+            _orig_popen_init(self, *args, **kwargs)
+
+        subprocess.Popen.__init__ = _patched_popen_init  # type: ignore[method-assign]
+
     import torch  # noqa: E402
     import whisperx  # noqa: E402
 
