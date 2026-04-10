@@ -87,10 +87,10 @@ fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Resul
 
 // ── Default resources (embedded at compile time) ────────────────────────────
 
-const SRT_JS:  &str = include_str!("../resources/export_formats/srt.js");
-const VTT_JS:  &str = include_str!("../resources/export_formats/vtt.js");
-const JSON_JS: &str = include_str!("../resources/export_formats/json.js");
-const TXT_JS:  &str = include_str!("../resources/export_formats/txt.js");
+const SRT_CFF:  &str = include_str!("../resources/export_formats/srt.cff");
+const VTT_CFF:  &str = include_str!("../resources/export_formats/vtt.cff");
+const JSON_CFF: &str = include_str!("../resources/export_formats/json.cff");
+const TXT_CFF:  &str = include_str!("../resources/export_formats/txt.cff");
 
 const PROFILE_DEFAULT: &str = include_str!("../resources/profiles/default.cfp");
 const PROFILE_NETFLIX: &str = include_str!("../resources/profiles/netflix.cfp");
@@ -103,16 +103,28 @@ fn export_formats_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("could not resolve app data dir: {e}"))
 }
 
-/// Write the default format scripts into export_formats/ if they aren't there yet.
+/// Seed .cff format files and clean up legacy .js formats.
 fn seed_format_files(app: &AppHandle) -> Result<(), String> {
     let dir = export_formats_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
-    for (name, content) in [("srt.js", SRT_JS), ("vtt.js", VTT_JS), ("json.js", JSON_JS), ("txt.js", TXT_JS)] {
+
+    // 1. Write .cff seeds if they don't exist
+    for (name, content) in [("srt.cff", SRT_CFF), ("vtt.cff", VTT_CFF), ("json.cff", JSON_CFF), ("txt.cff", TXT_CFF)] {
         let dest = dir.join(name);
         if !dest.exists() {
             std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
         }
     }
+
+    // 2. Delete all .js files — JS execution is no longer supported
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().and_then(|x| x.to_str()) == Some("js") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -123,6 +135,8 @@ struct UserFormatMeta {
     name: String,
     extension: String,
     path: String,
+    /// "builtin" for seeded formats, "custom" for user-created .cff.
+    source: String,
 }
 
 #[tauri::command]
@@ -142,7 +156,9 @@ fn list_user_formats(app: AppHandle) -> Result<Vec<UserFormatMeta>, String> {
     let mut formats: Vec<UserFormatMeta> = std::fs::read_dir(&dir)
         .map_err(|e| format!("read_dir error: {e}"))?
         .flatten()
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("js"))
+        .filter(|e| {
+            e.path().extension().and_then(|x| x.to_str()) == Some("cff")
+        })
         .map(|entry| {
             let path = entry.path();
             let stem = path
@@ -150,26 +166,71 @@ fn list_user_formats(app: AppHandle) -> Result<Vec<UserFormatMeta>, String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
                 .to_string();
-
             let content = std::fs::read_to_string(&path).unwrap_or_default();
             let mut name = stem.clone();
             let mut extension = "txt".to_string();
+            let mut source = "custom".to_string();
 
-            for line in content.lines().take(10) {
-                let line = line.trim();
-                if let Some(val) = line.strip_prefix("// @name ") {
+            // Parse .cff metadata (key: value lines before first blank line)
+            for line in content.lines() {
+                if line.trim().is_empty() { break; }
+                if let Some(val) = line.strip_prefix("name: ") {
                     name = val.trim().to_string();
-                } else if let Some(val) = line.strip_prefix("// @ext ") {
+                } else if let Some(val) = line.strip_prefix("ext: ") {
                     extension = val.trim().to_string();
+                } else if line.trim() == "source: builtin" {
+                    source = "builtin".to_string();
                 }
             }
 
-            UserFormatMeta { name, extension, path: path.to_string_lossy().into_owned() }
+            UserFormatMeta { name, extension, path: path.to_string_lossy().into_owned(), source }
         })
         .collect();
 
     formats.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(formats)
+}
+
+/// Save a .cff format file. `filename` is the bare name (e.g. "my-format.cff").
+/// Refuses to overwrite builtin formats.
+#[tauri::command]
+fn save_user_format(app: AppHandle, filename: String, content: String) -> Result<String, String> {
+    let dir = export_formats_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let dest = dir.join(&filename);
+
+    // Safety: refuse to overwrite a builtin format.
+    if dest.exists() {
+        let existing = std::fs::read_to_string(&dest).unwrap_or_default();
+        let is_builtin = existing.lines()
+            .take_while(|l| !l.trim().is_empty())
+            .any(|l| l.trim() == "source: builtin");
+        if is_builtin {
+            return Err(format!("Cannot overwrite built-in format \"{filename}\". Duplicate it instead."));
+        }
+    }
+
+    std::fs::write(&dest, &content).map_err(|e| format!("write error: {e}"))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// Delete a user-created .cff format. Refuses to delete builtin formats.
+#[tauri::command]
+fn delete_user_format(app: AppHandle, filename: String) -> Result<(), String> {
+    let dir = export_formats_dir(&app)?;
+    let dest = dir.join(&filename);
+    if !dest.exists() {
+        return Ok(());
+    }
+    let existing = std::fs::read_to_string(&dest).unwrap_or_default();
+    let is_builtin = existing.lines()
+        .take_while(|l| !l.trim().is_empty())
+        .any(|l| l.trim() == "source: builtin");
+    if is_builtin {
+        return Err(format!("Cannot delete built-in format \"{filename}\"."));
+    }
+    std::fs::remove_file(&dest).map_err(|e| format!("delete error: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1143,6 +1204,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_export_formats_dir,
             list_user_formats,
+            save_user_format,
+            delete_user_format,
             open_in_explorer,
             save_project,
             load_project,

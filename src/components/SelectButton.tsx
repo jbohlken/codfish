@@ -13,7 +13,7 @@ export function SelectButton<T extends string>({
 }: {
   icon: Icon;
   tooltip: string;
-  options: { value: T; label: string; menuLabel?: string; meta?: string; badge?: boolean }[];
+  options: ({ value: T; label: string; menuLabel?: string; meta?: string; badge?: boolean } | { separator: true; label?: string })[];
   value: T;
   onChange: (value: T) => void;
   direction?: "up" | "down";
@@ -22,7 +22,7 @@ export function SelectButton<T extends string>({
   const [open, setOpen] = useState(false);
   const [fixedPos, setFixedPos] = useState<{ bottom: number; left: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  const current = options.find((o) => o.value === value);
+  const current = options.find((o): o is { value: T; label: string } => !("separator" in o) && o.value === value);
 
   const handleOpen = () => {
     if (!open && direction === "up" && ref.current) {
@@ -46,21 +46,28 @@ export function SelectButton<T extends string>({
       class="titlebar-select-menu"
       style={fixedPos ? `position:fixed;bottom:${fixedPos.bottom}px;left:${fixedPos.left}px;top:auto;right:auto;width:max-content;min-width:0` : undefined}
     >
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          class={`titlebar-select-option${opt.value === value ? " titlebar-select-option--active" : ""}`}
-          onClick={() => { onChange(opt.value); setOpen(false); }}
-        >
-          <span class="titlebar-select-option-name">{opt.menuLabel ?? opt.label}</span>
-          {(opt.meta || opt.badge) && (
-            <span class="titlebar-select-option-meta">
-              {opt.meta}
-              {opt.badge && <DownloadSimple size={11} />}
-            </span>
-          )}
-        </button>
-      ))}
+      {options.map((opt, i) =>
+        "separator" in opt ? (
+          <div key={`sep-${i}`}>
+            <div class="titlebar-select-divider" />
+            {opt.label && <div class="titlebar-select-group-label">{opt.label}</div>}
+          </div>
+        ) : (
+          <button
+            key={opt.value}
+            class={`titlebar-select-option${opt.value === value ? " titlebar-select-option--active" : ""}`}
+            onClick={() => { onChange(opt.value); setOpen(false); }}
+          >
+            <span class="titlebar-select-option-name">{opt.menuLabel ?? opt.label}</span>
+            {(opt.meta || opt.badge) && (
+              <span class="titlebar-select-option-meta">
+                {opt.meta}
+                {opt.badge && <DownloadSimple size={11} />}
+              </span>
+            )}
+          </button>
+        )
+      )}
       {footer && (
         <>
           <div class="titlebar-select-divider" />

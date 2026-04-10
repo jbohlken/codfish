@@ -1,17 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { CaptionBlock } from "../../types/project";
+import { executeTemplate, parseCff } from "./builder";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ExportFormat {
-  id: string;        // absolute path to the .js file
+  id: string;
   name: string;
   extension: string;
-  scriptPath: string;
+  /** Absolute path to the .cff file. */
+  formatPath: string;
+  /** "builtin" for seeded formats, "custom" for user-created .cff. */
+  source: "builtin" | "custom";
 }
 
-/** The shape passed into every transform(captions) call. */
+/** The shape passed into template execution. */
 export interface SerializedCaption {
   index: number;
   start: number;    // seconds
@@ -22,24 +26,25 @@ export interface SerializedCaption {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** Return all .js files from the user's export_formats directory. */
+/** Return all format files from the user's export_formats directory. */
 export async function listFormats(): Promise<ExportFormat[]> {
   try {
-    const meta = await invoke<Array<{ name: string; extension: string; path: string }>>(
+    const meta = await invoke<Array<{ name: string; extension: string; path: string; source: string }>>(
       "list_user_formats",
     );
     return meta.map((f) => ({
       id: f.name,
       name: f.name,
       extension: f.extension,
-      scriptPath: f.path,
+      formatPath: f.path,
+      source: (f.source === "builtin" ? "builtin" : "custom") as ExportFormat["source"],
     }));
   } catch {
     return [];
   }
 }
 
-/** Run the format's transform script and prompt the user for a save path. */
+/** Execute a format's template and prompt the user for a save path. */
 export async function exportCaptions(
   format: ExportFormat,
   captions: CaptionBlock[],
@@ -53,7 +58,7 @@ export async function exportCaptions(
     speaker: c.speaker ?? null,
   }));
 
-  const content = await runScript(format.scriptPath, serialized);
+  const content = await runFormat(format.formatPath, serialized);
 
   const savePath = await save({
     title: "Export Captions",
@@ -76,17 +81,28 @@ export async function openFormatsDir(): Promise<void> {
   await invoke<void>("open_in_explorer", { path: dir });
 }
 
-// ── Script runner ─────────────────────────────────────────────────────────────
+// ── Format file operations ──────────────────────────────────────────────────
 
-async function runScript(scriptPath: string, captions: SerializedCaption[]): Promise<string> {
-  const source = await invoke<string>("load_project", { path: scriptPath });
-  try {
-    // eslint-disable-next-line no-new-func
-    const transform = new Function(`${source}\nreturn transform;`)() as (
-      c: SerializedCaption[],
-    ) => string;
-    return transform(captions);
-  } catch (e) {
-    throw new Error(`Export script error in "${scriptPath}": ${e}`);
-  }
+/** Save a .cff format file. Returns the absolute path of the written file. */
+export async function saveFormat(filename: string, content: string): Promise<string> {
+  return invoke<string>("save_user_format", { filename, content });
+}
+
+/** Delete a .cff format file. */
+export async function deleteFormat(filename: string): Promise<void> {
+  await invoke<void>("delete_user_format", { filename });
+}
+
+/** Load the raw source of a format file. */
+export async function loadFormatSource(formatPath: string): Promise<string> {
+  return invoke<string>("load_project", { path: formatPath });
+}
+
+// ── Format execution ────────────────────────────────────────────────────────
+
+async function runFormat(formatPath: string, captions: SerializedCaption[]): Promise<string> {
+  const source = await invoke<string>("load_project", { path: formatPath });
+  const config = parseCff(source);
+  if (!config) throw new Error(`Invalid .cff format file: "${formatPath}"`);
+  return executeTemplate(config.template, captions);
 }

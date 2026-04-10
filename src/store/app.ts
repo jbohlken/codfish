@@ -1,6 +1,7 @@
 import { signal, computed } from "@preact/signals";
 import type { CodProject, MediaItem, CaptionBlock } from "../types/project";
 import type { CaptionProfile } from "../types/profile";
+import type { ExportFormat } from "../lib/export";
 
 // ── Project ────────────────────────────────────────────────────────────────
 export const project = signal<CodProject | null>(null);
@@ -18,6 +19,9 @@ export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 
 // ── Profiles ───────────────────────────────────────────────────────────────
 export const profiles = signal<CaptionProfile[]>([]);
+
+// ── Export formats ────────────────────────────────────────────────────────
+export const exportFormats = signal<ExportFormat[]>([]);
 
 // ── Sidecar ──────────��────────────────────────────────────────────────────
 export type SidecarState = "checking" | "not_installed" | "downloading" | "ready" | "update_available";

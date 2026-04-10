@@ -35,6 +35,7 @@ import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery
 import { ensureGpuDetected } from "./lib/gpu";
 import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
+import { FormatBuilder } from "./components/FormatBuilder";
 
 export function App() {
   useUpdateChecker();
@@ -376,6 +377,7 @@ export function App() {
         <ProfileEditor />
         <ContextMenu />
         <MediaSettings />
+        <FormatBuilder />
         <UnsavedChanges />
         <HelpModal />
         <BugReportModal />

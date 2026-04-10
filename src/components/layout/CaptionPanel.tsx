@@ -9,16 +9,18 @@ import {
   pushHistory,
   mediaDuration,
   isPlaying,
+  exportFormats,
 } from "../../store/app";
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
 import { makePhrase } from "../../lib/pipeline/types";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
 import { transcribeMedia, type TranscriptionProgress, type TranscriptionResult } from "../../lib/transcription";
-import { listFormats, exportCaptions, openFormatsDir, type ExportFormat } from "../../lib/export";
+import { listFormats, exportCaptions, openFormatsDir } from "../../lib/export";
+import { openFormatBuilderNew, openFormatBuilderEdit } from "../FormatBuilder";
 import { showError } from "../ErrorModal";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
 
@@ -28,8 +30,6 @@ const generateProgress = signal<TranscriptionProgress | null>(null);
 const confirmingRegenerate = signal(false);
 const editingIndex = signal<number | null>(null);
 const editText = signal("");
-const exportFormats = signal<ExportFormat[]>([]);
-
 export { editingIndex, editText };
 
 // Flag to suppress onBlur commit when Escape is pressed in the textarea
@@ -40,6 +40,25 @@ let _editCancelled = false;
 
 async function loadFormats() {
   exportFormats.value = await listFormats();
+}
+
+function buildFormatOptions() {
+  const formats = exportFormats.value;
+  const builtins = formats.filter((f) => f.source === "builtin");
+  const custom = formats.filter((f) => f.source === "custom");
+
+  const options: ({ value: string; label: string } | { separator: true; label?: string })[] = [];
+
+  if (builtins.length > 0) {
+    options.push({ separator: true, label: "Formats" });
+    for (const f of builtins) options.push({ value: f.id, label: f.name });
+  }
+  if (custom.length > 0) {
+    options.push({ separator: true, label: "Custom" });
+    for (const f of custom) options.push({ value: f.id, label: f.name });
+  }
+
+  return options;
 }
 
 // ── Caption operations ────────────────────────────────────────────────────────
@@ -400,11 +419,31 @@ export function CaptionPanel() {
           >
             <FolderOpen size={14} />
           </button>
+          <button
+            class="btn btn-ghost btn-icon"
+            data-tooltip="New export format"
+            onClick={openFormatBuilderNew}
+          >
+            <Plus size={14} />
+          </button>
+          {(() => {
+            const fmtId = project.value?.exportFormatId ?? exportFormats.value[0]?.id ?? "";
+            const fmt = exportFormats.value.find((f) => f.id === fmtId);
+            return fmt?.source === "custom" || fmt?.source === "builtin" ? (
+              <button
+                class="btn btn-ghost btn-icon"
+                data-tooltip={fmt.source === "builtin" ? "View format" : "Edit format"}
+                onClick={() => openFormatBuilderEdit(fmt.formatPath, fmt.source === "builtin")}
+              >
+                <Wrench size={14} />
+              </button>
+            ) : null;
+          })()}
           <SelectButton
             icon={FileText}
             tooltip="Export format"
             direction="up"
-            options={exportFormats.value.map((f) => ({ value: f.id, label: f.name }))}
+            options={buildFormatOptions()}
             value={project.value?.exportFormatId ?? exportFormats.value[0]?.id ?? ""}
             onChange={(v) => { if (project.value) pushHistory({ ...project.value, exportFormatId: v }, "Change export format"); }}
           />
