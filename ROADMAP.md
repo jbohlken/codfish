@@ -1,13 +1,15 @@
 # Codfish Roadmap
 
-## 0.5.0 candidates
+## 0.6.0 candidates
 
 Features shortlisted for the next feature release. Current priority is bugfixes and stabilization.
 
-- **SRT/VTT import** — attach imported captions to a selected media item. Parse in TS, no pipeline pass, replace existing with confirmation (undoable). Requires media.
-- **Cancel transcription** — kill sidecar process mid-generation
-- **Recent projects list** — show recent .cod files on startup
+- **Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export.
+- **Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid
 - **Merge captions** — combine adjacent captions (inverse of split)
+- **UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface
+- **Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling
+- **Notarize apps** — get Windows and Mac apps signed
 
 ---
 
