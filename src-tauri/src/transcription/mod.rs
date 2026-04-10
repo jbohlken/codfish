@@ -18,6 +18,13 @@ pub struct TranscribedWord {
 pub struct TranscriptionResult {
     pub words: Vec<TranscribedWord>,
     pub language: String,
+    /// True when word-level forced alignment failed and the sidecar fell
+    /// back to segment-level timing. Captions are still produced but their
+    /// timing granularity is much coarser — the UI should surface this so
+    /// the user knows regeneration might be worthwhile (e.g. after a
+    /// sidecar update that fixes the underlying issue).
+    #[serde(default)]
+    pub alignment_degraded: bool,
 }
 
 /// Payload emitted on the `transcription://progress` event.

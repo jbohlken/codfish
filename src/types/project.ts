@@ -32,6 +32,10 @@ export interface MediaItem {
   generatedWithModel?: TranscriptionModel;
   generatedWithLanguage?: string; // the user's selection; absent means auto-detect was used
   detectedLanguage?: string;      // set when auto-detect was used
+  /// True when word-level forced alignment failed on the last generation
+  /// and captions are using segment-level timing. Surfaced as a warning
+  /// badge so users know to consider regenerating.
+  alignmentDegraded?: boolean;
   exports: ExportRecord[];
 }
 

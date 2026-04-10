@@ -179,6 +179,11 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   projectPath.value = savePath;
   isDirty.value = false;
   await clearRecovery();
+  // Save As switches the working file to the new path, so treat it like
+  // any other load for recents purposes — otherwise the new file wouldn't
+  // show up in File ▸ Open Recent until the user closes and reopens it.
+  const filename = savePath.replace(/\\/g, "/").split("/").pop() ?? savePath;
+  void addRecent(savePath, filename);
   return true;
 }
 

@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "preact/hooks";
-import { useSignalEffect } from "@preact/signals";
+import { signal, useSignalEffect } from "@preact/signals";
+
+// Module-scope: "there are paths waiting in Rust's LaunchPaths queue that
+// haven't been drained yet." Set on boot and on every launch-paths-added
+// event; the signal-effect inside App flips it off once it actually drains.
+const launchPathsPending = signal(false);
 import "./styles/components.css";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ProjectPanel } from "./components/layout/ProjectPanel";
@@ -7,7 +12,7 @@ import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
-import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, loadProjectFromPath, openRecent } from "./lib/project";
+import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, openRecent } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
 import { invoke } from "@tauri-apps/api/core";
@@ -160,12 +165,45 @@ export function App() {
     loadRecent();
   }, []);
 
+  // File association launch. Rust stashes .cod paths handed to us by the OS
+  // (argv on Windows/Linux, RunEvent::Opened on macOS) into LaunchPaths, and
+  // we drain them here once the app is actually ready to load a project.
+  // Routing through openRecent gives us the fileExists check, unsaved-changes
+  // gate, and add-to-recents hook for free.
+  //
+  // Correctness: a `launchPathsPending` signal + a signal-effect that also
+  // reads the readiness signals means a drain scheduled while the app is
+  // busy (e.g. Finder double-click mid-update on macOS) will automatically
+  // re-fire when readiness flips, instead of being silently swallowed.
+  // Pending is seeded true so the initial argv batch gets drained on boot.
+  const drainingLaunchPaths = useRef(false);
   useEffect(() => {
-    const unlisten = listen<string>("open-file", (e) => {
-      loadProjectFromPath(e.payload).catch(console.error);
+    launchPathsPending.value = true;
+    const unlisten = listen("launch-paths-added", () => {
+      launchPathsPending.value = true;
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
+  useSignalEffect(() => {
+    if (!launchPathsPending.value) return;
+    const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
+    if (!sidecarReady || daemonStatus.value !== "ready" || isUpdating()) return;
+    if (drainingLaunchPaths.current) return;
+    drainingLaunchPaths.current = true;
+    launchPathsPending.value = false;
+    (async () => {
+      try {
+        const paths = await invoke<string[]>("take_launch_paths");
+        for (const p of paths) {
+          await openRecent(p);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        drainingLaunchPaths.current = false;
+      }
+    })();
+  });
 
   // Sync the OS window title to the current project + dirty state.
   // Format follows the Adobe convention: "Codfish - filename.cod *".

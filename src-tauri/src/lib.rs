@@ -32,6 +32,12 @@ struct MenuItems {
 /// to its filesystem path. Replaced wholesale on every `set_recent_menu`.
 struct RecentPaths(StdMutex<Vec<String>>);
 
+/// Paths the OS handed us at launch via file association — argv[1] on
+/// Windows/Linux, `RunEvent::Opened` on macOS. The frontend drains this
+/// once on startup (after sidecar + daemon are ready) via
+/// `take_launch_paths`.
+struct LaunchPaths(StdMutex<Vec<String>>);
+
 // ── Logging ─────────────────────────────────────────────────────────────────
 
 pub(crate) fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -618,6 +624,15 @@ fn clear_recent_projects(app: AppHandle) -> Result<(), String> {
     write_recent(&app, &[])
 }
 
+/// Drain any paths the OS handed us at launch via file association.
+/// Called once from the frontend after sidecar + daemon are ready, so
+/// the project load routes through the normal unsaved-changes and
+/// fileExists gates. Returns an empty vec if nothing was queued.
+#[tauri::command]
+fn take_launch_paths(paths: State<LaunchPaths>) -> Vec<String> {
+    paths.0.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default()
+}
+
 /// Rebuild the "Open Recent" submenu's items from the given list. Called
 /// from the frontend whenever the recent signal changes. Also updates the
 /// path-mapping state used by `on_menu_event` to dispatch clicks.
@@ -887,9 +902,12 @@ async fn transcribe_media(
     };
 
     #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct R {
         words: Vec<TranscribedWord>,
         language: String,
+        #[serde(default)]
+        alignment_degraded: bool,
     }
 
     let r: R = daemon
@@ -898,6 +916,7 @@ async fn transcribe_media(
     Ok(TranscriptionResult {
         words: r.words,
         language: r.language,
+        alignment_degraded: r.alignment_degraded,
     })
 }
 
@@ -905,7 +924,42 @@ async fn transcribe_media(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance guard: if another Codfish is already running, the OS
+    // hands the second process's argv to the first one through this
+    // callback (instead of letting it boot a duplicate). We forward any
+    // .cod paths into LaunchPaths and raise the existing window, which
+    // matches how native apps behave when you double-click a document.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let paths: Vec<String> = argv
+                .iter()
+                .skip(1)
+                .filter(|p| p.ends_with(".cod"))
+                .cloned()
+                .collect();
+            if !paths.is_empty() {
+                if let Some(state) = app.try_state::<LaunchPaths>() {
+                    if let Ok(mut guard) = state.0.lock() {
+                        for p in &paths {
+                            guard.push(p.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                if !paths.is_empty() {
+                    let _ = window.emit("launch-paths-added", ());
+                }
+            }
+        }));
+    }
+
+    builder
         .manage::<DaemonState>(AsyncMutex::new(None))
         .menu(|handle| {
             // ── Native app menu ─────────────────────────────────────────────
@@ -934,6 +988,11 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+W")
                 .build(handle)?;
 
+            // Exit lives in the File menu on Windows/Linux per platform
+            // convention. On macOS, Quit lives in the application menu
+            // (Codfish ▸ Quit Codfish, Cmd+Q) so a File ▸ Exit is
+            // redundant and non-idiomatic — omit it there.
+            #[cfg(not(target_os = "macos"))]
             let exit_item = MenuItemBuilder::new("Exit")
                 .id("menu_exit")
                 .build(handle)?;
@@ -949,7 +1008,7 @@ pub fn run() {
                 .item(&recent_placeholder)
                 .build()?;
 
-            let file_menu = SubmenuBuilder::new(handle, "File")
+            let file_menu_builder = SubmenuBuilder::new(handle, "File")
                 .item(&new_proj)
                 .item(&open_proj)
                 .item(&recent_submenu)
@@ -957,10 +1016,12 @@ pub fn run() {
                 .item(&save_proj)
                 .item(&save_as)
                 .separator()
-                .item(&close_proj)
-                .separator()
-                .item(&exit_item)
-                .build()?;
+                .item(&close_proj);
+
+            #[cfg(not(target_os = "macos"))]
+            let file_menu_builder = file_menu_builder.separator().item(&exit_item);
+
+            let file_menu = file_menu_builder.build()?;
 
             let mut menu_builder = MenuBuilder::new(handle);
 
@@ -1013,6 +1074,7 @@ pub fn run() {
                 recent_submenu: recent_submenu.clone(),
             });
             handle.manage(RecentPaths(StdMutex::new(Vec::new())));
+            handle.manage(LaunchPaths(StdMutex::new(Vec::new())));
 
             menu_builder.build()
         })
@@ -1056,13 +1118,18 @@ pub fn run() {
                 let _ = window.set_icon(tauri::include_image!("icons/icon.png"));
             }
 
-            // If launched via file association, emit the path to the frontend
+            // File association launch (Windows/Linux): stash any .cod path
+            // handed to us via argv into LaunchPaths so the frontend can
+            // drain it once it's actually ready to load a project. Emitting
+            // straight to a webview event here would race the frontend's
+            // listener, which doesn't attach until App.tsx mounts.
+            // (macOS delivers this via RunEvent::Opened in the run loop
+            // below, not via argv.)
             let args: Vec<String> = std::env::args().collect();
             if let Some(path) = args.get(1) {
                 if path.ends_with(".cod") {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let path = path.clone();
-                        let _ = window.emit("open-file", path);
+                    if let Ok(mut guard) = app.state::<LaunchPaths>().0.lock() {
+                        guard.push(path.clone());
                     }
                 }
             }
@@ -1090,6 +1157,7 @@ pub fn run() {
             get_recent_projects,
             add_recent_project,
             clear_recent_projects,
+            take_launch_paths,
             set_recent_menu,
             list_models,
             transcribe_media,
@@ -1116,11 +1184,38 @@ pub fn run() {
             // unsaved-changes + update gate as the window close button.
             // Once the frontend has cleared the gate it calls `force_quit`,
             // which sets ALLOW_EXIT and exits cleanly.
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 if !ALLOW_EXIT.load(std::sync::atomic::Ordering::SeqCst) {
                     api.prevent_exit();
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.emit("app://quit-requested", ());
+                    }
+                }
+            }
+
+            // macOS file association: Finder delivers .cod double-clicks as
+            // an Apple event which Tauri surfaces here, NOT via argv. Stash
+            // the paths into LaunchPaths; if the frontend has already
+            // drained an earlier batch, also emit a live event so an
+            // already-running app reacts to the second file.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                let paths: Vec<String> = urls
+                    .iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("cod"))
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                if !paths.is_empty() {
+                    if let Some(state) = app_handle.try_state::<LaunchPaths>() {
+                        if let Ok(mut guard) = state.0.lock() {
+                            for p in &paths {
+                                guard.push(p.clone());
+                            }
+                        }
+                    }
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.emit("launch-paths-added", ());
                     }
                 }
             }

@@ -311,6 +311,7 @@ def handle_transcribe(rid: str, params: dict) -> dict:
     )
 
     words = []
+    alignment_degraded = False
     try:
         progress(rid, 65, "Aligning word timestamps…")
         t0 = time.monotonic()
@@ -360,6 +361,7 @@ def handle_transcribe(rid: str, params: dict) -> dict:
             70,
             "Word-level alignment unavailable — captions will use sentence-level timing.",
         )
+        alignment_degraded = True
         for seg in result.get("segments", []):
             text = seg.get("text", "").strip()
             if not text:
@@ -377,7 +379,11 @@ def handle_transcribe(rid: str, params: dict) -> dict:
         f"end rid={rid} words={len(words)} total={time.monotonic() - t_total:.2f}s",
         tag="transcribe",
     )
-    return {"words": words, "language": detected_language}
+    return {
+        "words": words,
+        "language": detected_language,
+        "alignmentDegraded": alignment_degraded,
+    }
 
 
 # ── request loop ──────────────────────────────────────────────────────────────

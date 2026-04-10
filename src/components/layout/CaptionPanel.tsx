@@ -12,7 +12,7 @@ import {
 } from "../../store/app";
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
 import { makePhrase } from "../../lib/pipeline/types";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info } from "@phosphor-icons/react";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
@@ -286,6 +286,15 @@ export function CaptionPanel() {
         <span class="panel-header-title">Captions</span>
         {media && !generating && (
           <div style="position:relative;display:flex;align-items:center;gap:2px">
+            {media.alignmentDegraded && hasCaptions && (
+              <button
+                class="btn btn-ghost btn-icon"
+                data-tooltip={"Word-level alignment failed for this media.\nCaptions are using sentence-level timing — try regenerating."}
+                style="color:var(--warning, #d97706)"
+              >
+                <Warning size={14} />
+              </button>
+            )}
             {media.generatedAt && hasCaptions && (
               <button
                 class="btn btn-ghost btn-icon"
@@ -607,7 +616,7 @@ async function handleGenerate() {
   generateProgress.value = { stage: "transcribing", percent: 0, message: "Starting up…" };
 
   try {
-    const { words, detectedLanguage }: TranscriptionResult = await transcribeMedia(
+    const { words, detectedLanguage, alignmentDegraded }: TranscriptionResult = await transcribeMedia(
       media.path,
       proj.transcriptionModel,
       proj.language || null,
@@ -629,6 +638,7 @@ async function handleGenerate() {
               generatedWithModel: proj.transcriptionModel,
               generatedWithLanguage: autoDetect ? undefined : proj.language,
               detectedLanguage: autoDetect ? detectedLanguage : undefined,
+              alignmentDegraded,
             }
           : m,
       ),

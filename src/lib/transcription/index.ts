@@ -26,6 +26,7 @@ export async function listModels(): Promise<ModelInfo[]> {
 export interface TranscriptionResult {
   words: Word[];
   detectedLanguage: string;
+  alignmentDegraded: boolean;
 }
 
 /**
@@ -58,6 +59,7 @@ export async function transcribeMedia(
         speaker: string | null;
       }>;
       language: string;
+      alignmentDegraded: boolean;
     }>("transcribe_media", { mediaPath, modelId, language });
 
     return {
@@ -69,6 +71,7 @@ export async function transcribeMedia(
         speaker: w.speaker ?? undefined,
       })),
       detectedLanguage: raw.language,
+      alignmentDegraded: raw.alignmentDegraded ?? false,
     };
   } finally {
     unlisten?.();
