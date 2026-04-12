@@ -129,6 +129,16 @@ export function HelpModal() {
             <p class="help-about-desc">Caption editor for video and audio files.</p>
             <p class="help-about-desc">Made by Jared Bohlken.</p>
           </section>
+
+          <section class="help-section">
+            <h3 class="help-section-title">Acknowledgements</h3>
+            <p class="help-about-desc">
+              Bundles <a href="https://vercel.com/font" target="_blank" rel="noreferrer">Geist Sans and Geist Mono</a>,
+              {" "}Copyright 2024 The Geist Project Authors,
+              {" "}licensed under the{" "}
+              <a href="https://openfontlicense.org" target="_blank" rel="noreferrer">SIL Open Font License 1.1</a>.
+            </p>
+          </section>
         </div>
       </div>
     </div>

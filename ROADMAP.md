@@ -4,12 +4,18 @@
 
 Features shortlisted for the next feature release. Current priority is bugfixes and stabilization.
 
-- **Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export.
+- **Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export
 - **Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid
 - **Merge captions** — combine adjacent captions (inverse of split)
 - **UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface
 - **Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling
+- **Audit undo/redo functionality** — make sure it's solid
+- **Comprehensive test coverage** — make sure the app has reasonable and comprehensive test coverage (unit, component, integration)
 - **Notarize apps** — get Windows and Mac apps signed
+
+## 0.7.0 candidates
+
+- **Caption styling** — preview, define, and export styling for captions, based on CSS under the hood; users should be able to load custom CSS rules to preview how they want for further flexibility. Must support currently offered export formats.
 
 ---
 

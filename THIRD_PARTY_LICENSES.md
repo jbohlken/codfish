@@ -58,6 +58,21 @@ permissive (MIT, ISC, Apache-2.0, BSD).
 A complete machine-generated inventory of Rust crate licenses can be
 produced with `cargo about` (recommended for releases).
 
+## Fonts
+
+### Geist Sans and Geist Mono — SIL Open Font License 1.1
+
+Codfish bundles Geist Sans as its primary UI font and Geist Mono for
+monospace UI contexts (timecodes, code-like labels, etc.). The font
+files live in [src/assets/fonts/geist/](src/assets/fonts/geist/) and
+[src/assets/fonts/geist-mono/](src/assets/fonts/geist-mono/), each
+alongside a copy of `OFL.txt`.
+
+Copyright 2024 The Geist Project Authors
+(https://github.com/vercel/geist-font).
+
+Font source and license: https://vercel.com/font
+
 ## Artwork
 
 The Codfish app icon is based on a fish illustration from

@@ -32,6 +32,19 @@ export function showWarningTooltip(
   tooltipState.value = { type: "rows", rows, x, y, anchorBottom };
 }
 
+/**
+ * Imperatively show a plain-text tooltip at the given coordinates.
+ * Used by components that can't put `data-tooltip` on the actual hovered
+ * element (e.g. tokens behind a textarea overlay).
+ */
+export function showTextTooltip(text: string, x: number, y: number, anchorBottom: number) {
+  if (pendingDelay !== null) {
+    clearTimeout(pendingDelay);
+    pendingDelay = null;
+  }
+  tooltipState.value = { type: "text", text, x, y, anchorBottom };
+}
+
 export function showBlockTooltip(
   lines: string[],
   rows: { label: string; detail: string; strict?: boolean }[],

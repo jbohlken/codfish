@@ -47,7 +47,6 @@ export interface CodProject {
   profileId: string;
   transcriptionModel: TranscriptionModel;
   language: string;
-  exportFormatId?: string;
   createdAt: string;
   updatedAt: string;
   media: MediaItem[];

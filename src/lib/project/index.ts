@@ -85,7 +85,6 @@ export async function newProject(): Promise<boolean> {
     profileId: "default",
     transcriptionModel: "base",
     language: "",
-    exportFormatId: "SRT",
     createdAt: now,
     updatedAt: now,
     media: [],

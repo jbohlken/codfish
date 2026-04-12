@@ -7,6 +7,14 @@ export async function startDaemon() {
   daemonError.value = null;
   try {
     await invoke("start_daemon");
+    // If the daemon was already running, start_daemon returns immediately
+    // without re-emitting a status event. Poll the actual status so the
+    // frontend catches up (fixes F5 reload getting stuck on splash).
+    const status = await invoke<{ state: string; reason?: string }>("get_daemon_status");
+    if (status.state === "ready") {
+      daemonStatus.value = "ready";
+      daemonError.value = null;
+    }
   } catch (e: any) {
     daemonStatus.value = "crashed";
     daemonError.value = typeof e === "string" ? e : e?.message ?? "Failed to start engine";

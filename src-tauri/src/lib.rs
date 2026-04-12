@@ -108,12 +108,10 @@ fn seed_format_files(app: &AppHandle) -> Result<(), String> {
     let dir = export_formats_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
 
-    // 1. Write .cff seeds if they don't exist
+    // 1. Write .cff seeds — always overwrite builtins so updates (renames etc.) take effect
     for (name, content) in [("srt.cff", SRT_CFF), ("vtt.cff", VTT_CFF), ("json.cff", JSON_CFF), ("txt.cff", TXT_CFF)] {
         let dest = dir.join(name);
-        if !dest.exists() {
-            std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
-        }
+        std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
     }
 
     // 2. Delete all .js files — JS execution is no longer supported

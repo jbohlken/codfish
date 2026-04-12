@@ -20,8 +20,13 @@ export interface FormatConfig {
 
 export interface TokenDef {
   token: string;
-  label: string;
   description: string;
+  /** Optional display string for the autocomplete popup (overrides `token` visually only). */
+  display?: string;
+  /** True for tokens that need a caption context (only meaningful inside `{{#each}}`). */
+  perCaption?: boolean;
+  /** True to omit from the autocomplete popup while keeping the token valid in templates. */
+  hidden?: boolean;
 }
 
 export interface TokenGroup {
@@ -33,42 +38,61 @@ export const TOKEN_GROUPS: TokenGroup[] = [
   {
     group: "Caption",
     tokens: [
-      { token: "{{index}}", label: "Index", description: "0-based. {{index:1}} for 1-based, {{index:N:W}} to pad to W digits" },
-      { token: "{{text}}", label: "Text", description: "All lines joined with newlines" },
-      { token: "{{text:space}}", label: "Text (spaces)", description: "All lines joined with spaces" },
+      { token: "{{index}}", description: "0-based. {{index:1}} for 1-based, {{index:N:W}} to pad to W digits", perCaption: true },
+      { token: "{{index:1}}", description: "1-based (offset by 1)", perCaption: true },
+      { token: "{{index:0:3}}", description: "0-based, zero-padded to 3 digits", perCaption: true },
+      { token: "{{index:1:3}}", description: "1-based, zero-padded to 3 digits", perCaption: true },
+      { token: "{{index:1:4}}", description: "1-based, zero-padded to 4 digits", perCaption: true },
+      { token: "{{text}}", description: "All lines joined with newlines", perCaption: true },
+      { token: "{{text:space}}", description: "All lines joined with spaces", perCaption: true },
     ],
   },
   {
     group: "Timing",
     tokens: [
-      { token: "{{start}}", label: "Start", description: "Raw seconds, e.g. 1.2" },
-      { token: "{{end}}", label: "End", description: "Raw seconds" },
-      { token: "{{duration}}", label: "Duration", description: "end \u2212 start as raw seconds" },
-      { token: "{{start:HH:mm:ss.SSS}}", label: "Timecode (VTT)", description: "00:00:01.200" },
-      { token: "{{start:HH:mm:ss,SSS}}", label: "Timecode (SRT)", description: "00:00:01,200" },
-      { token: "{{start:HH:mm:ss}}", label: "Timecode (whole)", description: "00:00:01" },
-      { token: "{{start:X.SSS}}", label: "Total seconds", description: "1.200" },
+      { token: "{{start}}", description: "Raw seconds, e.g. 1.2", perCaption: true },
+      { token: "{{start:HH:mm:ss.SSS}}", description: "00:00:01.200", perCaption: true },
+      { token: "{{start:HH:mm:ss,SSS}}", description: "00:00:01,200", perCaption: true },
+      { token: "{{start:HH:mm:ss}}", description: "00:00:01", perCaption: true },
+      { token: "{{start:X.SSS}}", description: "1.200", perCaption: true },
+      { token: "{{end}}", description: "Raw seconds", perCaption: true },
+      { token: "{{end:HH:mm:ss.SSS}}", description: "00:00:03.500", perCaption: true },
+      { token: "{{end:HH:mm:ss,SSS}}", description: "00:00:03,500", perCaption: true },
+      { token: "{{end:HH:mm:ss}}", description: "00:00:03", perCaption: true },
+      { token: "{{end:X.SSS}}", description: "3.500", perCaption: true },
+      { token: "{{duration}}", description: "end \u2212 start as raw seconds", perCaption: true },
+      { token: "{{duration:HH:mm:ss.SSS}}", description: "00:00:02.300", perCaption: true },
+      { token: "{{duration:HH:mm:ss,SSS}}", description: "00:00:02,300", perCaption: true },
+      { token: "{{duration:HH:mm:ss}}", description: "00:00:02", perCaption: true },
+      { token: "{{duration:X.SSS}}", description: "2.300", perCaption: true },
     ],
   },
   {
     group: "SMPTE",
     tokens: [
-      { token: "{{smpte-start}}", label: "Start (NDF)", description: "00:00:01:05 — non-drop-frame" },
-      { token: "{{smpte-end}}", label: "End (NDF)", description: "00:00:03:14 — non-drop-frame" },
-      { token: "{{smpte-df-start}}", label: "Start (DF)", description: "00:00:01;05 — drop-frame (29.97/59.94)" },
-      { token: "{{smpte-df-end}}", label: "End (DF)", description: "00:00:03;14 — drop-frame (29.97/59.94)" },
+      { token: "{{start-smpte}}", description: "00:00:01:05 — non-drop-frame", perCaption: true },
+      { token: "{{end-smpte}}", description: "00:00:03:14 — non-drop-frame", perCaption: true },
+      { token: "{{start-smpte-df}}", description: "00:00:01;05 — drop-frame (29.97/59.94)", perCaption: true },
+      { token: "{{end-smpte-df}}", description: "00:00:03;14 — drop-frame (29.97/59.94)", perCaption: true },
     ],
   },
   {
     group: "Global",
     tokens: [
-      { token: "{{count}}", label: "Count", description: "Total number of captions" },
-      { token: "{{json}}", label: "JSON", description: "Full caption data as formatted JSON" },
+      { token: "{{count}}", description: "Total number of captions" },
+      { token: "{{json}}", description: "Full caption data as formatted JSON" },
+    ],
+  },
+  {
+    group: "Block",
+    tokens: [
+      { token: "{{#each}}", display: "{{#each}}...{{/each}}", description: "Iterate over captions; auto-pairs with {{/each}}" },
+      { token: "{{/each}}", description: "End per-caption iteration block", hidden: true },
     ],
   },
 ];
 
-/** Flat list of all tokens (for validation / backward compat). */
+/** Flat list of all tokens. Single source of truth for validation and autocomplete. */
 export const TOKENS: TokenDef[] = TOKEN_GROUPS.flatMap((g) => g.tokens);
 
 // ── Sample captions for live preview ────────────────────────────────────────
@@ -84,33 +108,72 @@ export const SAMPLE_FPS = 29.97;
 
 // ── Template interpreter ────────────────────────────────────────────────────
 
+/**
+ * Scan a template for top-level `{{#each}}...{{/each}}` blocks in document
+ * order. Nested blocks aren't supported — the inner `{{#each}}` is treated as
+ * literal content of the outer block. Unclosed or stray directives are
+ * skipped (validateTemplate surfaces them as warnings).
+ */
+export function findEachBlocks(template: string): Array<{ open: number; close: number }> {
+  const blocks: Array<{ open: number; close: number }> = [];
+  let cursor = 0;
+  while (cursor < template.length) {
+    const open = template.indexOf("{{#each}}", cursor);
+    if (open === -1) break;
+    const close = template.indexOf("{{/each}}", open + "{{#each}}".length);
+    if (close === -1) break;
+    blocks.push({ open, close });
+    cursor = close + "{{/each}}".length;
+  }
+  return blocks;
+}
+
+/**
+ * Find offsets of `{{#each}}` / `{{/each}}` directives that don't belong to a
+ * valid top-level block — i.e., unclosed openers, stray closers, or nested
+ * openers. The highlighter uses this to flag broken iteration structure.
+ */
+export function findInvalidEachOffsets(template: string): Set<number> {
+  const valid = new Set<number>();
+  for (const b of findEachBlocks(template)) {
+    valid.add(b.open);
+    valid.add(b.close);
+  }
+  const bad = new Set<number>();
+  for (const m of template.matchAll(/\{\{(?:#|\/)each\}\}/g)) {
+    const offset = m.index ?? 0;
+    if (!valid.has(offset)) bad.add(offset);
+  }
+  return bad;
+}
+
 /** Execute a template against caption data. */
 export function executeTemplate(template: string, captions: SerializedCaption[], fps = SAMPLE_FPS): string {
   // Normalize line endings
   const t = template.replace(/\r\n/g, "\n");
+  const blocks = findEachBlocks(t);
 
-  const eachStart = t.indexOf("{{#each}}");
-  const eachEnd = t.indexOf("{{/each}}");
-
-  // No iteration block — render entire template in global context
-  if (eachStart === -1 || eachEnd === -1) {
+  if (blocks.length === 0) {
     return resolveTokens(t, null, 0, captions.length, captions, fps);
   }
 
-  const header = t.substring(0, eachStart);
-  let body = t.substring(eachStart + "{{#each}}".length, eachEnd);
-  const footer = t.substring(eachEnd + "{{/each}}".length);
+  let result = "";
+  let cursor = 0;
+  for (const { open, close } of blocks) {
+    // Segment before this block — global context
+    result += resolveTokens(t.substring(cursor, open), null, 0, captions.length, captions, fps);
 
-  // Strip leading newline from body (the one right after {{#each}})
-  if (body.startsWith("\n")) body = body.substring(1);
+    // Block body — strip the leading newline right after `{{#each}}`
+    let body = t.substring(open + "{{#each}}".length, close);
+    if (body.startsWith("\n")) body = body.substring(1);
+    for (let i = 0; i < captions.length; i++) {
+      result += resolveTokens(body, captions[i], i, captions.length, captions, fps);
+    }
 
-  let result = resolveTokens(header, null, 0, captions.length, captions, fps);
-
-  for (let i = 0; i < captions.length; i++) {
-    result += resolveTokens(body, captions[i], i, captions.length, captions, fps);
+    cursor = close + "{{/each}}".length;
   }
-
-  result += resolveTokens(footer, null, 0, captions.length, captions, fps);
+  // Trailing segment after the last block
+  result += resolveTokens(t.substring(cursor), null, 0, captions.length, captions, fps);
   return result;
 }
 
@@ -180,10 +243,10 @@ function resolveToken(
   }
 
   // SMPTE timecode
-  const smpteMatch = key.match(/^smpte-(df-)?(start|end)$/);
+  const smpteMatch = key.match(/^(start|end)-smpte(-df)?$/);
   if (smpteMatch) {
-    const dropFrame = smpteMatch[1] === "df-";
-    const field = smpteMatch[2] as "start" | "end";
+    const field = smpteMatch[1] as "start" | "end";
+    const dropFrame = smpteMatch[2] === "-df";
     return formatSmpte(caption[field], fps, dropFrame);
   }
 
@@ -312,14 +375,10 @@ export function formatSmpte(t: number, fps: number, dropFrame: boolean): string 
 
 // ── Token validation ────────────────────────────────────────────────────────
 
-const VALID_TOKEN_KEYS = new Set([
-  "index", "start", "end", "duration",
-  "text", "text:space",
-  "smpte-start", "smpte-end",
-  "smpte-df-start", "smpte-df-end",
-  "count", "json",
-  "#each", "/each",
-]);
+/** Strip the surrounding `{{ }}` from a token to get its key. */
+const tokenKey = (token: string) => token.slice(2, -2);
+
+const VALID_TOKEN_KEYS = new Set(TOKENS.map((t) => tokenKey(t.token)));
 
 /** Check whether a token key is recognized. */
 export function isValidToken(key: string): boolean {
@@ -339,13 +398,13 @@ export function findInvalidTokens(template: string): string[] {
 }
 
 /** Per-caption token keys (only meaningful inside {{#each}}). */
-const PER_CAPTION_KEYS = new Set([
-  "index", "start", "end", "duration", "text", "text:space",
-  "smpte-start", "smpte-end", "smpte-df-start", "smpte-df-end",
-]);
+const PER_CAPTION_KEYS = new Set(
+  TOKENS.filter((t) => t.perCaption).map((t) => tokenKey(t.token)),
+);
 
 export function isPerCaptionToken(key: string): boolean {
   if (PER_CAPTION_KEYS.has(key)) return true;
+  // Catch user-supplied parameter values that aren't in the preset catalog.
   if (key.startsWith("index:")) return true;
   if (/^(?:start|end|duration):/.test(key)) return true;
   return false;
@@ -360,33 +419,45 @@ export function validateTemplate(template: string): TemplateWarning[] {
   const warnings: TemplateWarning[] = [];
   const t = template.replace(/\r\n/g, "\n");
 
-  // Count {{#each}} and {{/each}}
-  const eachOpens = (t.match(/\{\{#each\}\}/g) || []).length;
-  const eachCloses = (t.match(/\{\{\/each\}\}/g) || []).length;
+  // Walk #each / /each directives tracking depth: catches stray closes,
+  // unclosed opens, and nested blocks (which the interpreter can't handle).
+  let depth = 0;
+  let nestedReported = false;
+  let strayCloseReported = false;
+  for (const m of t.matchAll(/\{\{(#each|\/each)\}\}/g)) {
+    if (m[1] === "#each") {
+      depth++;
+      if (depth > 1 && !nestedReported) {
+        warnings.push({ message: "Nested {{#each}} blocks aren't supported." });
+        nestedReported = true;
+      }
+    } else {
+      depth--;
+      if (depth < 0 && !strayCloseReported) {
+        warnings.push({ message: "{{/each}} without a matching {{#each}}." });
+        strayCloseReported = true;
+        depth = 0; // recover so a later opener doesn't get double-counted
+      }
+    }
+  }
+  if (depth > 0) {
+    warnings.push({ message: "{{#each}} without a matching {{/each}}." });
+  }
 
-  if (eachOpens > 1) warnings.push({ message: "Multiple {{#each}} blocks found. Only one is supported." });
-  if (eachCloses > 1) warnings.push({ message: "Multiple {{/each}} found. Only one is supported." });
-  if (eachOpens !== eachCloses) warnings.push({ message: "Mismatched {{#each}} / {{/each}}." });
-
-  // Check for per-caption tokens outside {{#each}}
-  const eachStart = t.indexOf("{{#each}}");
-  const eachEnd = t.indexOf("{{/each}}");
-  const hasBlock = eachStart !== -1 && eachEnd !== -1 && eachStart < eachEnd;
-
-  const outsideText = hasBlock
-    ? t.substring(0, eachStart) + t.substring(eachEnd + "{{/each}}".length)
-    : (eachOpens === 0 && eachCloses === 0 ? "" : t); // no block at all = skip this check
-
-  for (const match of outsideText.matchAll(/\{\{([^}]+)\}\}/g)) {
+  // Per-caption tokens used outside any {{#each}} block.
+  const blocks = findEachBlocks(t);
+  for (const match of t.matchAll(/\{\{([^}]+)\}\}/g)) {
     const key = match[1];
-    if (isValidToken(key) && isPerCaptionToken(key)) {
+    const offset = match.index ?? 0;
+    const inside = blocks.some((b) => offset > b.open && offset < b.close);
+    if (!inside && isValidToken(key) && isPerCaptionToken(key)) {
       warnings.push({ message: `{{${key}}} is a per-caption token and won't work outside {{#each}}.` });
       break; // one warning is enough
     }
   }
 
   // Drop-frame advisory
-  if (/\{\{smpte-df-/.test(t)) {
+  if (/\{\{(?:start|end)-smpte-df\}\}/.test(t)) {
     warnings.push({ message: "Drop-frame timecode only applies to 29.97 and 59.94 fps. Other rates will use non-drop-frame." });
   }
 
@@ -471,13 +542,4 @@ export function serializeCff(config: FormatConfig, source?: "builtin" | "custom"
   let header = `name: ${config.name}\next: ${config.extension}`;
   if (source) header += `\nsource: ${source}`;
   return header + "\n\n" + config.template;
-}
-
-/** Check whether a .cff file source is a builtin format. */
-export function isBuiltinFormat(source: string): boolean {
-  const normalized = source.replace(/\r\n/g, "\n");
-  const blankIdx = normalized.indexOf("\n\n");
-  if (blankIdx === -1) return false;
-  const metaSection = normalized.substring(0, blankIdx);
-  return /^source:\s*builtin$/m.test(metaSection);
 }

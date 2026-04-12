@@ -22,6 +22,12 @@ export const profiles = signal<CaptionProfile[]>([]);
 
 // ── Export formats ────────────────────────────────────────────────────────
 export const exportFormats = signal<ExportFormat[]>([]);
+export const selectedExportFormat = signal<string>(
+  typeof localStorage !== "undefined" ? localStorage.getItem("codfish:exportFormat") ?? "SRT" : "SRT",
+);
+if (typeof localStorage !== "undefined") {
+  selectedExportFormat.subscribe((v) => localStorage.setItem("codfish:exportFormat", v));
+}
 
 // ── Sidecar ──────────��────────────────────────────────────────────────────
 export type SidecarState = "checking" | "not_installed" | "downloading" | "ready" | "update_available";

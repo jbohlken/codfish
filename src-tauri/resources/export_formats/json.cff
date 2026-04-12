@@ -1,4 +1,4 @@
-name: JSON (Raw)
+name: JSON
 ext: json
 source: builtin
 

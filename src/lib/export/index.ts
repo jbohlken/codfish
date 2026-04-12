@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save, open } from "@tauri-apps/plugin-dialog";
 import type { CaptionBlock } from "../../types/project";
-import { executeTemplate, parseCff } from "./builder";
+import { executeTemplate, parseCff, serializeCff } from "./builder";
+import { uniqueFormatName, randomFormatFilename } from "./validation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -71,17 +72,6 @@ export async function exportCaptions(
   await invoke<void>("save_project", { path: savePath, json: content });
 }
 
-/** Return (and create) the user's export_formats directory path. */
-export async function getFormatsDir(): Promise<string> {
-  return invoke<string>("get_export_formats_dir");
-}
-
-/** Open the export_formats directory in the system file manager. */
-export async function openFormatsDir(): Promise<void> {
-  const dir = await getFormatsDir();
-  await invoke<void>("open_in_explorer", { path: dir });
-}
-
 // ── Format file operations ──────────────────────────────────────────────────
 
 /** Save a .cff format file. Returns the absolute path of the written file. */
@@ -97,6 +87,47 @@ export async function deleteFormat(filename: string): Promise<void> {
 /** Load the raw source of a format file. */
 export async function loadFormatSource(formatPath: string): Promise<string> {
   return invoke<string>("load_project", { path: formatPath });
+}
+
+// ── Import / export format files ────────────────────────────────────────────
+
+/**
+ * Import a .cff format file from disk.
+ * Deduplicates name and filename against existing formats.
+ * Returns the new format name, or null if cancelled.
+ */
+export async function importFormatFile(): Promise<string | null> {
+  const result = await open({
+    filters: [{ name: "Codfish Export Format", extensions: ["cff"] }],
+    multiple: false,
+  });
+  if (!result) return null;
+
+  const content = await invoke<string>("load_project", { path: result });
+  const config = parseCff(content);
+  if (!config) throw new Error("Invalid .cff format file.");
+
+  const existing = await listFormats();
+  const name = uniqueFormatName(config.name, existing);
+  const filename = randomFormatFilename(existing);
+  const cff = serializeCff({ ...config, name });
+  await saveFormat(filename, cff);
+  return name;
+}
+
+/** Export a .cff format file to a user-chosen location. */
+export async function exportFormatFile(formatPath: string): Promise<void> {
+  const source = await invoke<string>("load_project", { path: formatPath });
+  const config = parseCff(source);
+  if (!config) throw new Error("Invalid .cff format file.");
+
+  const savePath = await save({
+    defaultPath: `${config.name}.cff`,
+    filters: [{ name: "Codfish Export Format", extensions: ["cff"] }],
+  });
+  if (!savePath) return;
+
+  await invoke<void>("save_project", { path: savePath, json: source });
 }
 
 // ── Format execution ────────────────────────────────────────────────────────

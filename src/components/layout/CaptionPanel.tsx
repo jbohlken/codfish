@@ -10,17 +10,18 @@ import {
   mediaDuration,
   isPlaying,
   exportFormats,
+  selectedExportFormat,
 } from "../../store/app";
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
 import { makePhrase } from "../../lib/pipeline/types";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
 import { transcribeMedia, type TranscriptionProgress, type TranscriptionResult } from "../../lib/transcription";
-import { listFormats, exportCaptions, openFormatsDir } from "../../lib/export";
-import { openFormatBuilderNew, openFormatBuilderEdit } from "../FormatBuilder";
+import { listFormats, exportCaptions } from "../../lib/export";
+import { openFormatManager } from "../FormatManager";
 import { showError } from "../ErrorModal";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
 
@@ -39,7 +40,11 @@ let _editCancelled = false;
 
 
 async function loadFormats() {
-  exportFormats.value = await listFormats();
+  const fmts = await listFormats();
+  exportFormats.value = fmts;
+  if (fmts.length > 0 && !fmts.some((f) => f.id === selectedExportFormat.value)) {
+    selectedExportFormat.value = fmts[0].id;
+  }
 }
 
 function buildFormatOptions() {
@@ -49,14 +54,11 @@ function buildFormatOptions() {
 
   const options: ({ value: string; label: string } | { separator: true; label?: string })[] = [];
 
-  if (builtins.length > 0) {
-    options.push({ separator: true, label: "Formats" });
-    for (const f of builtins) options.push({ value: f.id, label: f.name });
+  for (const f of builtins) options.push({ value: f.id, label: f.name });
+  if (builtins.length > 0 && custom.length > 0) {
+    options.push({ separator: true });
   }
-  if (custom.length > 0) {
-    options.push({ separator: true, label: "Custom" });
-    for (const f of custom) options.push({ value: f.id, label: f.name });
-  }
+  for (const f of custom) options.push({ value: f.id, label: f.name });
 
   return options;
 }
@@ -414,38 +416,18 @@ export function CaptionPanel() {
         <div class="caption-panel-footer">
           <button
             class="btn btn-ghost btn-icon"
-            data-tooltip="Open export formats folder"
-            onClick={openFormatsDir}
+            data-tooltip="Manage formats"
+            onClick={() => openFormatManager()}
           >
-            <FolderOpen size={14} />
+            <Wrench size={14} />
           </button>
-          <button
-            class="btn btn-ghost btn-icon"
-            data-tooltip="New export format"
-            onClick={openFormatBuilderNew}
-          >
-            <Plus size={14} />
-          </button>
-          {(() => {
-            const fmtId = project.value?.exportFormatId ?? exportFormats.value[0]?.id ?? "";
-            const fmt = exportFormats.value.find((f) => f.id === fmtId);
-            return fmt?.source === "custom" || fmt?.source === "builtin" ? (
-              <button
-                class="btn btn-ghost btn-icon"
-                data-tooltip={fmt.source === "builtin" ? "View format" : "Edit format"}
-                onClick={() => openFormatBuilderEdit(fmt.formatPath, fmt.source === "builtin")}
-              >
-                <Wrench size={14} />
-              </button>
-            ) : null;
-          })()}
           <SelectButton
             icon={FileText}
             tooltip="Export format"
             direction="up"
             options={buildFormatOptions()}
-            value={project.value?.exportFormatId ?? exportFormats.value[0]?.id ?? ""}
-            onChange={(v) => { if (project.value) pushHistory({ ...project.value, exportFormatId: v }, "Change export format"); }}
+            value={selectedExportFormat.value}
+            onChange={(v) => { selectedExportFormat.value = v; }}
           />
           <div style="flex:1" />
           <button class="btn btn-primary btn-sm" onClick={() => handleExport(media.name)}>
@@ -692,11 +674,9 @@ async function handleGenerate() {
 
 async function handleExport(baseName: string) {
   const media = selectedMedia.value;
-  const proj = project.value;
-  if (!media || media.captions.length === 0 || !proj) return;
+  if (!media || media.captions.length === 0) return;
 
-  const formatId = proj.exportFormatId ?? exportFormats.value[0]?.id;
-  const format = exportFormats.value.find((f) => f.id === formatId);
+  const format = exportFormats.value.find((f) => f.id === selectedExportFormat.value);
   if (!format) return;
 
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
