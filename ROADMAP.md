@@ -10,6 +10,8 @@ Features shortlisted for the next feature release. Current priority is bugfixes 
 - **UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface
 - **Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling
 - **Audit undo/redo functionality** — make sure it's solid
+  - Decide redo accelerator per platform: `Ctrl+Y` vs `Ctrl+Shift+Z` on Windows (currently menu shows `Ctrl+Shift+Z` on both; `Ctrl+Y` works via keydown fallback)
+  - Decide whether the silent `Ctrl+Shift+Z` fallback on Windows should stay or be removed
 - **Comprehensive test coverage** — make sure the app has reasonable and comprehensive test coverage (unit, component, integration)
 - **Notarize apps** — get Windows and Mac apps signed
 
