@@ -59,8 +59,8 @@ function cffSource(name: string, ext: string, template: string, isBuiltin = fals
   return `name: ${name}\next: ${ext}${isBuiltin ? "\nsource: builtin" : ""}\n\n${template}`;
 }
 
-const BASIC_TEMPLATE = "{{#each}}{{text}}{{/each}}";
-const DEFAULT_TEMPLATE = "{{#each}}\n\n{{/each}}";
+const BASIC_TEMPLATE = "{{each}}{{text}}{{/each}}";
+const DEFAULT_TEMPLATE = "{{each}}\n\n{{/each}}";
 
 /**
  * Install a loadFormatSource implementation that reads from whatever is
@@ -281,7 +281,7 @@ describe("FormatManager: dirty tracking", () => {
   it("treats editing the template as dirty", async () => {
     const { container } = await openWith([makeFormat("Custom")], "Custom");
     const templateArea = container.querySelector(".fb-editor-textarea") as HTMLTextAreaElement;
-    fireEvent.input(templateArea, { target: { value: "{{#each}}new{{/each}}" } });
+    fireEvent.input(templateArea, { target: { value: "{{each}}new{{/each}}" } });
     await waitFor(() =>
       expect(container.querySelector(".fmt-list-item-dot")).not.toBeNull(),
     );
@@ -495,7 +495,7 @@ describe("FormatManager: save", () => {
     listFormatsMock.mockResolvedValue([makeFormat("Custom")]);
     const { container } = await openWith([makeFormat("Custom")], "Custom");
     const templateArea = container.querySelector(".fb-editor-textarea") as HTMLTextAreaElement;
-    const wonky = "  \n{{#each}}\n  {{text}}\n{{/each}}\n  ";
+    const wonky = "  \n{{each}}\n  {{text}}\n{{/each}}\n  ";
     fireEvent.input(templateArea, { target: { value: wonky } });
     fireEvent.click(screen.getByText("Save").closest("button") as HTMLButtonElement);
     await waitFor(() => expect(saveFormatMock).toHaveBeenCalled());
@@ -856,7 +856,7 @@ describe("FormatManager: preview", () => {
   it("updates preview as the template changes", async () => {
     const { container } = await openWith([makeFormat("Custom")], "Custom");
     const templateArea = container.querySelector(".fb-editor-textarea") as HTMLTextAreaElement;
-    fireEvent.input(templateArea, { target: { value: "HEADER\n{{#each}}{{text}}|{{/each}}" } });
+    fireEvent.input(templateArea, { target: { value: "HEADER\n{{each}}{{text}}|{{/each}}" } });
     await waitFor(() => {
       const preview = container.querySelector(".fmt-preview-output");
       expect(preview?.textContent).toMatch(/^HEADER/);

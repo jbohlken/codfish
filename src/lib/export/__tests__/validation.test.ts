@@ -16,7 +16,7 @@ function fmt(name: string, formatPath = `/fake/${name}.cff`): ExportFormat {
 const validConfig = {
   name: "My Format",
   extension: "txt",
-  template: "{{#each}}{{text}}{{/each}}",
+  template: "{{each}}{{text}}{{/each}}",
 };
 
 // ── validateFormatConfig ─────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ describe("normalizeFormatConfig", () => {
   });
 
   it("preserves template whitespace verbatim", () => {
-    const template = "  \n{{#each}}\n  {{text}}\n{{/each}}\n  ";
+    const template = "  \n{{each}}\n  {{text}}\n{{/each}}\n  ";
     const result = normalizeFormatConfig({ name: "X", extension: "x", template });
     expect(result.template).toBe(template);
   });

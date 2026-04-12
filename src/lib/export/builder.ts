@@ -3,7 +3,7 @@
  *
  * Parses `.cff` (Codfish Format) files and executes templates against caption
  * data. No code generation, no `new Function()` — the app interprets templates
- * directly using token substitution and `{{#each}}` iteration.
+ * directly using token substitution and `{{each}}` iteration.
  */
 
 import type { SerializedCaption } from "./index";
@@ -23,7 +23,7 @@ export interface TokenDef {
   description: string;
   /** Optional display string for the autocomplete popup (overrides `token` visually only). */
   display?: string;
-  /** True for tokens that need a caption context (only meaningful inside `{{#each}}`). */
+  /** True for tokens that need a caption context (only meaningful inside `{{each}}`). */
   perCaption?: boolean;
   /** True to omit from the autocomplete popup while keeping the token valid in templates. */
   hidden?: boolean;
@@ -86,7 +86,7 @@ export const TOKEN_GROUPS: TokenGroup[] = [
   {
     group: "Block",
     tokens: [
-      { token: "{{#each}}", display: "{{#each}}...{{/each}}", description: "Iterate over captions; auto-pairs with {{/each}}" },
+      { token: "{{each}}", display: "{{each}}...{{/each}}", description: "Iterate over captions; auto-pairs with {{/each}}" },
       { token: "{{/each}}", description: "End per-caption iteration block", hidden: true },
     ],
   },
@@ -109,8 +109,8 @@ export const SAMPLE_FPS = 29.97;
 // ── Template interpreter ────────────────────────────────────────────────────
 
 /**
- * Scan a template for top-level `{{#each}}...{{/each}}` blocks in document
- * order. Nested blocks aren't supported — the inner `{{#each}}` is treated as
+ * Scan a template for top-level `{{each}}...{{/each}}` blocks in document
+ * order. Nested blocks aren't supported — the inner `{{each}}` is treated as
  * literal content of the outer block. Unclosed or stray directives are
  * skipped (validateTemplate surfaces them as warnings).
  */
@@ -118,9 +118,9 @@ export function findEachBlocks(template: string): Array<{ open: number; close: n
   const blocks: Array<{ open: number; close: number }> = [];
   let cursor = 0;
   while (cursor < template.length) {
-    const open = template.indexOf("{{#each}}", cursor);
+    const open = template.indexOf("{{each}}", cursor);
     if (open === -1) break;
-    const close = template.indexOf("{{/each}}", open + "{{#each}}".length);
+    const close = template.indexOf("{{/each}}", open + "{{each}}".length);
     if (close === -1) break;
     blocks.push({ open, close });
     cursor = close + "{{/each}}".length;
@@ -129,7 +129,7 @@ export function findEachBlocks(template: string): Array<{ open: number; close: n
 }
 
 /**
- * Find offsets of `{{#each}}` / `{{/each}}` directives that don't belong to a
+ * Find offsets of `{{each}}` / `{{/each}}` directives that don't belong to a
  * valid top-level block — i.e., unclosed openers, stray closers, or nested
  * openers. The highlighter uses this to flag broken iteration structure.
  */
@@ -140,7 +140,7 @@ export function findInvalidEachOffsets(template: string): Set<number> {
     valid.add(b.close);
   }
   const bad = new Set<number>();
-  for (const m of template.matchAll(/\{\{(?:#|\/)each\}\}/g)) {
+  for (const m of template.matchAll(/\{\{\/?each\}\}/g)) {
     const offset = m.index ?? 0;
     if (!valid.has(offset)) bad.add(offset);
   }
@@ -163,8 +163,8 @@ export function executeTemplate(template: string, captions: SerializedCaption[],
     // Segment before this block — global context
     result += resolveTokens(t.substring(cursor, open), null, 0, captions.length, captions, fps);
 
-    // Block body — strip the leading newline right after `{{#each}}`
-    let body = t.substring(open + "{{#each}}".length, close);
+    // Block body — strip the leading newline right after `{{each}}`
+    let body = t.substring(open + "{{each}}".length, close);
     if (body.startsWith("\n")) body = body.substring(1);
     for (let i = 0; i < captions.length; i++) {
       result += resolveTokens(body, captions[i], i, captions.length, captions, fps);
@@ -397,7 +397,7 @@ export function findInvalidTokens(template: string): string[] {
   return invalid;
 }
 
-/** Per-caption token keys (only meaningful inside {{#each}}). */
+/** Per-caption token keys (only meaningful inside {{each}}). */
 const PER_CAPTION_KEYS = new Set(
   TOKENS.filter((t) => t.perCaption).map((t) => tokenKey(t.token)),
 );
@@ -419,39 +419,39 @@ export function validateTemplate(template: string): TemplateWarning[] {
   const warnings: TemplateWarning[] = [];
   const t = template.replace(/\r\n/g, "\n");
 
-  // Walk #each / /each directives tracking depth: catches stray closes,
+  // Walk each / /each directives tracking depth: catches stray closes,
   // unclosed opens, and nested blocks (which the interpreter can't handle).
   let depth = 0;
   let nestedReported = false;
   let strayCloseReported = false;
-  for (const m of t.matchAll(/\{\{(#each|\/each)\}\}/g)) {
-    if (m[1] === "#each") {
+  for (const m of t.matchAll(/\{\{(\/?each)\}\}/g)) {
+    if (m[1] === "each") {
       depth++;
       if (depth > 1 && !nestedReported) {
-        warnings.push({ message: "Nested {{#each}} blocks aren't supported." });
+        warnings.push({ message: "Nested {{each}} blocks aren't supported." });
         nestedReported = true;
       }
     } else {
       depth--;
       if (depth < 0 && !strayCloseReported) {
-        warnings.push({ message: "{{/each}} without a matching {{#each}}." });
+        warnings.push({ message: "{{/each}} without a matching {{each}}." });
         strayCloseReported = true;
         depth = 0; // recover so a later opener doesn't get double-counted
       }
     }
   }
   if (depth > 0) {
-    warnings.push({ message: "{{#each}} without a matching {{/each}}." });
+    warnings.push({ message: "{{each}} without a matching {{/each}}." });
   }
 
-  // Per-caption tokens used outside any {{#each}} block.
+  // Per-caption tokens used outside any {{each}} block.
   const blocks = findEachBlocks(t);
   for (const match of t.matchAll(/\{\{([^}]+)\}\}/g)) {
     const key = match[1];
     const offset = match.index ?? 0;
     const inside = blocks.some((b) => offset > b.open && offset < b.close);
     if (!inside && isValidToken(key) && isPerCaptionToken(key)) {
-      warnings.push({ message: `{{${key}}} is a per-caption token and won't work outside {{#each}}.` });
+      warnings.push({ message: `{{${key}}} is a per-caption token and won't work outside {{each}}.` });
       break; // one warning is enough
     }
   }

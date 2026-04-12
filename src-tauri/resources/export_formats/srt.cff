@@ -2,7 +2,7 @@ name: SRT
 ext: srt
 source: builtin
 
-{{#each}}
+{{each}}
 {{index:1}}
 {{start:HH:mm:ss,SSS}} --> {{end:HH:mm:ss,SSS}}
 {{text}}

@@ -90,7 +90,7 @@ describe("checkFormatCompatibility", () => {
     listFormatsMock.mockResolvedValue([
       { name: "SRT", formatPath: "/path/srt.cff", source: "builtin" },
     ]);
-    loadFormatSourceMock.mockResolvedValue("name: SRT\next: srt\n\n{{#each}}...");
+    loadFormatSourceMock.mockResolvedValue("name: SRT\next: srt\n\n{{each}}...");
     hashContentMock.mockResolvedValue("different_hash");
 
     await checkFormatCompatibility(makeProject({

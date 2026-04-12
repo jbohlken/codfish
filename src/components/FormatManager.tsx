@@ -70,7 +70,7 @@ export async function requestCloseFormatManager(): Promise<boolean> {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-const DEFAULT_TEMPLATE = "{{#each}}\n\n{{/each}}";
+const DEFAULT_TEMPLATE = "{{each}}\n\n{{/each}}";
 
 interface AutocompleteState {
   matches: AutocompleteSuggestion[];
@@ -555,7 +555,7 @@ export function FormatManager() {
                         ref={templateRef}
                         class="fb-editor-textarea fb-textarea fb-textarea--lg"
                         value={editor.config.template}
-                        placeholder={"{{#each}}\n{{index:1}}\n{{start:HH:mm:ss,SSS}} --> {{end:HH:mm:ss,SSS}}\n{{text}}\n\n{{/each}}"}
+                        placeholder={"{{each}}\n{{index:1}}\n{{start:HH:mm:ss,SSS}} --> {{end:HH:mm:ss,SSS}}\n{{text}}\n\n{{/each}}"}
                         disabled={editor.readonly}
                         spellcheck={false}
                         onInput={(e) => {
@@ -706,9 +706,9 @@ function TokenWarnings({ value }: { value: string }) {
 }
 
 /**
- * When inserting `{{#each}}` at a top-level position, expand to a paired block
+ * When inserting `{{each}}` at a top-level position, expand to a paired block
  * with a blank line in between and land the caret on that blank line. If the
- * insertion point is already inside an existing `{{#each}}...{{/each}}` block,
+ * insertion point is already inside an existing `{{each}}...{{/each}}` block,
  * insert verbatim — pairing would create unsupported nesting.
  */
 function expandEachInsertion(
@@ -716,7 +716,7 @@ function expandEachInsertion(
   template: string,
   range: { start: number; end: number },
 ): { text: string; caretOffset: number } {
-  if (token !== "{{#each}}") {
+  if (token !== "{{each}}") {
     return { text: token, caretOffset: token.length };
   }
   const remaining = template.slice(0, range.start) + template.slice(range.end);
@@ -726,7 +726,7 @@ function expandEachInsertion(
   if (insideBlock) {
     return { text: token, caretOffset: token.length };
   }
-  return { text: "{{#each}}\n\n{{/each}}", caretOffset: "{{#each}}\n".length };
+  return { text: "{{each}}\n\n{{/each}}", caretOffset: "{{each}}\n".length };
 }
 
 /**
@@ -786,16 +786,16 @@ function highlightTokens(template: string): string {
     if (!isValidToken(key)) {
       return `<span class="fb-hl-invalid">{{${safeKey}}}</span>`;
     }
-    if ((key === "#each" || key === "/each") && badEach.has(offset)) {
-      const title = key === "#each"
-        ? "{{#each}} must have a matching {{/each}} and can't be nested"
-        : "{{/each}} must close a matching {{#each}}";
+    if ((key === "each" || key === "/each") && badEach.has(offset)) {
+      const title = key === "each"
+        ? "{{each}} must have a matching {{/each}} and can't be nested"
+        : "{{/each}} must close a matching {{each}}";
       return `<span class="fb-hl-invalid" title="${title}">{{${safeKey}}}</span>`;
     }
     if (isPerCaptionToken(key)) {
       const insideBlock = blocks.some((b) => offset > b.open && offset < b.close);
       if (!insideBlock) {
-        return `<span class="fb-hl-invalid" title="Per-caption token must appear inside {{#each}}...{{/each}}">{{${safeKey}}}</span>`;
+        return `<span class="fb-hl-invalid" title="Per-caption token must appear inside {{each}}...{{/each}}">{{${safeKey}}}</span>`;
       }
     }
     const desc = lookupTokenDescription(key);

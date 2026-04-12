@@ -2,4 +2,4 @@ name: Plain Text
 ext: txt
 source: builtin
 
-{{#each}}{{text:space}} {{/each}}
+{{each}}{{text:space}} {{/each}}

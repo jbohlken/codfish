@@ -8,7 +8,7 @@
 import { TOKENS, type TokenDef } from "./builder";
 
 /** Characters that may appear inside a token body (between `{{` and `}}`). */
-const TOKEN_CHAR = /^[a-zA-Z0-9_#/:.,\-]*$/;
+const TOKEN_CHAR = /^[a-zA-Z0-9_/:.,\-]*$/;
 
 export interface TokenEditRange {
   /** Index of the first `{` of the opening `{{`. */

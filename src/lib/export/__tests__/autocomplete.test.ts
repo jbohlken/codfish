@@ -72,9 +72,9 @@ describe("extractTokenPrefix", () => {
     expect(extractTokenPrefix(text, text.length)?.prefix).toBe("/ea");
   });
 
-  it("allows the {{#each}} prefix with leading hash", () => {
-    const text = "{{#ea";
-    expect(extractTokenPrefix(text, text.length)?.prefix).toBe("#ea");
+  it("allows the {{each}} prefix", () => {
+    const text = "{{ea";
+    expect(extractTokenPrefix(text, text.length)?.prefix).toBe("ea");
   });
 });
 
@@ -150,9 +150,9 @@ describe("filterAutocomplete", () => {
     expect(filterAutocomplete("zzz_no_such_token")).toEqual([]);
   });
 
-  it("matches {{#each}} via the hash prefix", () => {
-    const matches = tokens(filterAutocomplete("#"));
-    expect(matches).toContain("{{#each}}");
+  it("matches {{each}} via the 'ea' prefix", () => {
+    const matches = tokens(filterAutocomplete("ea"));
+    expect(matches).toContain("{{each}}");
   });
 
   it("flags bases that have variants with hasVariants=true", () => {

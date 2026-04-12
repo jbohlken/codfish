@@ -19,7 +19,7 @@ import {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const SRT_TEMPLATE = `{{#each}}
+const SRT_TEMPLATE = `{{each}}
 {{index:1}}
 {{start:HH:mm:ss,SSS}} --> {{end:HH:mm:ss,SSS}}
 {{text}}
@@ -28,7 +28,7 @@ const SRT_TEMPLATE = `{{#each}}
 
 const VTT_TEMPLATE = `WEBVTT
 
-{{#each}}
+{{each}}
 {{index:1}}
 {{start:HH:mm:ss.SSS}} --> {{end:HH:mm:ss.SSS}}
 {{text}}
@@ -36,7 +36,7 @@ const VTT_TEMPLATE = `WEBVTT
 {{/each}}
 `;
 
-const TXT_TEMPLATE = `{{#each}}{{text:space}} {{/each}}`;
+const TXT_TEMPLATE = `{{each}}{{text:space}} {{/each}}`;
 
 const JSON_TEMPLATE = `{{json}}`;
 
@@ -60,14 +60,14 @@ describe("executeTemplate", () => {
     expect(output).toContain("00:00:01.200 --> 00:00:03.500");
   });
 
-  it("plain text (inline #each)", () => {
+  it("plain text (inline each)", () => {
     const output = run(TXT_TEMPLATE);
     expect(output).toContain("Hello world");
     expect(output).toContain("From the builder");
     expect(output).toContain("Line one Line two");
   });
 
-  it("JSON format (no #each)", () => {
+  it("JSON format (no each)", () => {
     const output = run(JSON_TEMPLATE);
     const parsed = JSON.parse(output);
     expect(parsed).toHaveLength(3);
@@ -75,31 +75,31 @@ describe("executeTemplate", () => {
   });
 
   it("header and footer with global tokens", () => {
-    const template = `Total: {{count}}\n{{#each}}\n{{text}}\n{{/each}}\nDone`;
+    const template = `Total: {{count}}\n{{each}}\n{{text}}\n{{/each}}\nDone`;
     const output = run(template);
     expect(output).toMatch(/^Total: 3\n/);
     expect(output).toMatch(/\nDone$/);
   });
 
   it("empty captions produces header + footer only", () => {
-    const template = `START\n{{#each}}\n{{text}}\n{{/each}}\nEND`;
+    const template = `START\n{{each}}\n{{text}}\n{{/each}}\nEND`;
     const output = executeTemplate(template, []);
     expect(output).toBe("START\n\nEND");
   });
 
-  it("no #each — renders entire template as global", () => {
+  it("no each — renders entire template as global", () => {
     const output = executeTemplate("Count: {{count}}", SAMPLE_CAPTIONS);
     expect(output).toBe("Count: 3");
   });
 
   it("normalizes Windows line endings", () => {
-    const template = "{{#each}}\r\n{{text}}\r\n{{/each}}";
+    const template = "{{each}}\r\n{{text}}\r\n{{/each}}";
     const output = executeTemplate(template, SAMPLE_CAPTIONS);
     expect(output).toContain("Hello world");
   });
 
   it("unknown tokens pass through literally", () => {
-    const output = run("{{#each}}{{unknown_thing}}{{/each}}");
+    const output = run("{{each}}{{unknown_thing}}{{/each}}");
     expect(output).toContain("{{unknown_thing}}");
   });
 });
@@ -119,19 +119,19 @@ describe("token resolution", () => {
       ["{{index:100:5}}", "00100,00101,00102"],
     ];
     for (const [token, expected] of cases) {
-      const output = run(`{{#each}}${token},{{/each}}`);
+      const output = run(`{{each}}${token},{{/each}}`);
       // Trim trailing comma from last iteration
       expect(output.replace(/,$/, ""), `token ${token}`).toBe(expected);
     }
   });
 
   it("raw start/end/duration", () => {
-    const output = run("{{#each}}{{start}}-{{end}}={{duration}},{{/each}}");
+    const output = run("{{each}}{{start}}-{{end}}={{duration}},{{/each}}");
     expect(output).toContain("1.2-3.5=");
   });
 
   it("text and text:space", () => {
-    const output = run("{{#each}}{{text:space}}|{{/each}}");
+    const output = run("{{each}}{{text:space}}|{{/each}}");
     expect(output).toContain("Line one Line two|");
   });
 
@@ -307,7 +307,7 @@ describe("findInvalidTokens", () => {
     const valid = ["{{start}}", "{{end}}", "{{duration}}", "{{text}}", "{{text:space}}",
       "{{start-smpte}}", "{{end-smpte}}", "{{start-smpte-df}}", "{{end-smpte-df}}",
       "{{count}}", "{{json}}",
-      "{{index}}", "{{#each}}", "{{/each}}"];
+      "{{index}}", "{{each}}", "{{/each}}"];
     for (const token of valid) {
       expect(findInvalidTokens(token), `${token} should be valid`).toEqual([]);
     }
@@ -416,21 +416,21 @@ describe("SMPTE tokens in template", () => {
     executeTemplate(tmpl, SAMPLE_CAPTIONS, fps);
 
   it("start-smpte and end-smpte (NDF)", () => {
-    const output = run("{{#each}}{{start-smpte}} {{end-smpte}},{{/each}}");
+    const output = run("{{each}}{{start-smpte}} {{end-smpte}},{{/each}}");
     expect(output).toContain("00:00:01:05 00:00:03:14");
   });
 
   it("start-smpte-df (DF at 29.97)", () => {
-    const output = run("{{#each}}{{start-smpte-df}},{{/each}}", 29.97);
+    const output = run("{{each}}{{start-smpte-df}},{{/each}}", 29.97);
     expect(output).toContain(";"); // DF uses semicolon
   });
 
   it("start-smpte-df falls back to NDF at 24fps", () => {
-    const output = run("{{#each}}{{start-smpte-df}},{{/each}}", 24);
+    const output = run("{{each}}{{start-smpte-df}},{{/each}}", 24);
     expect(output).not.toContain(";"); // NDF uses colon
   });
 
-  it("smpte tokens are per-caption (empty outside #each)", () => {
+  it("smpte tokens are per-caption (empty outside each)", () => {
     const output = run("before:{{start-smpte}}:after");
     expect(output).toBe("before::after");
   });
@@ -459,7 +459,7 @@ describe("isValidToken", () => {
     const keys = [
       "start", "end", "duration", "text", "text:space",
       "start-smpte", "end-smpte", "start-smpte-df", "end-smpte-df",
-      "count", "json", "index", "#each", "/each",
+      "count", "json", "index", "each", "/each",
     ];
     for (const k of keys) expect(isValidToken(k), k).toBe(true);
   });
@@ -518,7 +518,7 @@ describe("isPerCaptionToken", () => {
   it("returns false for global tokens", () => {
     expect(isPerCaptionToken("count")).toBe(false);
     expect(isPerCaptionToken("json")).toBe(false);
-    expect(isPerCaptionToken("#each")).toBe(false);
+    expect(isPerCaptionToken("each")).toBe(false);
     expect(isPerCaptionToken("/each")).toBe(false);
   });
 });
@@ -531,61 +531,61 @@ describe("validateTemplate", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("does not warn on multiple sibling {{#each}} blocks", () => {
-    const t = "{{#each}}{{text}}{{/each}}\n{{#each}}{{text}}{{/each}}";
+  it("does not warn on multiple sibling {{each}} blocks", () => {
+    const t = "{{each}}{{text}}{{/each}}\n{{each}}{{text}}{{/each}}";
     expect(validateTemplate(t)).toEqual([]);
   });
 
   it("warns on a stray {{/each}} with no opener", () => {
-    const t = "{{#each}}{{text}}{{/each}}{{/each}}";
+    const t = "{{each}}{{text}}{{/each}}{{/each}}";
     const warnings = validateTemplate(t);
     expect(warnings.some((w) => /\{\{\/each\}\} without a matching/.test(w.message))).toBe(true);
   });
 
-  it("warns on an unclosed {{#each}}", () => {
-    const t = "{{#each}}{{text}}";
+  it("warns on an unclosed {{each}}", () => {
+    const t = "{{each}}{{text}}";
     const warnings = validateTemplate(t);
-    expect(warnings.some((w) => /\{\{#each\}\} without a matching/.test(w.message))).toBe(true);
+    expect(warnings.some((w) => /\{\{each\}\} without a matching/.test(w.message))).toBe(true);
   });
 
-  it("warns on nested {{#each}} blocks", () => {
-    const t = "{{#each}}{{#each}}{{text}}{{/each}}{{/each}}";
+  it("warns on nested {{each}} blocks", () => {
+    const t = "{{each}}{{each}}{{text}}{{/each}}{{/each}}";
     const warnings = validateTemplate(t);
-    expect(warnings.some((w) => /Nested \{\{#each\}\}/.test(w.message))).toBe(true);
+    expect(warnings.some((w) => /Nested \{\{each\}\}/.test(w.message))).toBe(true);
   });
 
-  it("warns when a per-caption token appears outside {{#each}}", () => {
-    const t = "Header: {{text}}\n{{#each}}{{text}}{{/each}}";
+  it("warns when a per-caption token appears outside {{each}}", () => {
+    const t = "Header: {{text}}\n{{each}}{{text}}{{/each}}";
     const warnings = validateTemplate(t);
     expect(warnings.some((w) => /per-caption token/.test(w.message))).toBe(true);
   });
 
-  it("does not warn when per-caption tokens are inside {{#each}}", () => {
-    const t = "Header\n{{#each}}{{text}}\n{{/each}}\nFooter";
+  it("does not warn when per-caption tokens are inside {{each}}", () => {
+    const t = "Header\n{{each}}{{text}}\n{{/each}}\nFooter";
     const warnings = validateTemplate(t);
     expect(warnings).toEqual([]);
   });
 
-  it("does not warn on global tokens outside {{#each}}", () => {
-    const t = "Count: {{count}}\n{{#each}}{{text}}{{/each}}";
+  it("does not warn on global tokens outside {{each}}", () => {
+    const t = "Count: {{count}}\n{{each}}{{text}}{{/each}}";
     const warnings = validateTemplate(t);
     expect(warnings).toEqual([]);
   });
 
   it("adds a drop-frame advisory when *-smpte-df tokens are used", () => {
-    const t = "{{#each}}{{start-smpte-df}}{{/each}}";
+    const t = "{{each}}{{start-smpte-df}}{{/each}}";
     const warnings = validateTemplate(t);
     expect(warnings.some((w) => /[Dd]rop-frame/.test(w.message))).toBe(true);
   });
 
   it("does not add a drop-frame advisory for regular smpte tokens", () => {
-    const t = "{{#each}}{{start-smpte}}{{/each}}";
+    const t = "{{each}}{{start-smpte}}{{/each}}";
     const warnings = validateTemplate(t);
     expect(warnings).toEqual([]);
   });
 
   it("warns about each unrecognized token", () => {
-    const t = "{{#each}}{{foo}}{{bar}}{{/each}}";
+    const t = "{{each}}{{foo}}{{bar}}{{/each}}";
     const warnings = validateTemplate(t);
     const invalidWarns = warnings.filter((w) => /Unrecognized token/.test(w.message));
     expect(invalidWarns).toHaveLength(2);
@@ -594,7 +594,7 @@ describe("validateTemplate", () => {
   });
 
   it("normalizes Windows line endings before checking", () => {
-    const t = "{{#each}}\r\n{{text}}\r\n{{/each}}";
+    const t = "{{each}}\r\n{{text}}\r\n{{/each}}";
     expect(validateTemplate(t)).toEqual([]);
   });
 });
@@ -604,7 +604,7 @@ describe("validateTemplate", () => {
 describe("executeTemplate edge cases", () => {
   it("handles nested-looking but single block", () => {
     const output = executeTemplate(
-      "{{#each}}[{{text}}]{{/each}}",
+      "{{each}}[{{text}}]{{/each}}",
       SAMPLE_CAPTIONS,
     );
     expect(output).toBe("[Hello world][From the builder][Line one\nLine two]");
@@ -612,7 +612,7 @@ describe("executeTemplate edge cases", () => {
 
   it("preserves body content between each", () => {
     const output = executeTemplate(
-      "{{#each}}>>{{index}}<<{{/each}}",
+      "{{each}}>>{{index}}<<{{/each}}",
       SAMPLE_CAPTIONS,
     );
     expect(output).toBe(">>0<<>>1<<>>2<<");
@@ -620,7 +620,7 @@ describe("executeTemplate edge cases", () => {
 
   it("handles single caption", () => {
     const output = executeTemplate(
-      "{{#each}}{{index:1}}: {{text}}{{/each}}",
+      "{{each}}{{index:1}}: {{text}}{{/each}}",
       [SAMPLE_CAPTIONS[0]],
     );
     expect(output).toBe("1: Hello world");
@@ -628,23 +628,23 @@ describe("executeTemplate edge cases", () => {
 
   it("passes through unknown parameterized tokens", () => {
     const output = executeTemplate(
-      "{{#each}}{{foo:bar}}{{/each}}",
+      "{{each}}{{foo:bar}}{{/each}}",
       SAMPLE_CAPTIONS,
     );
     // Should pass through literally (one copy per caption)
     expect(output).toBe("{{foo:bar}}{{foo:bar}}{{foo:bar}}");
   });
 
-  it("count works both inside and outside #each", () => {
+  it("count works both inside and outside each", () => {
     const outside = executeTemplate("{{count}}", SAMPLE_CAPTIONS);
-    const inside = executeTemplate("{{#each}}{{count}},{{/each}}", SAMPLE_CAPTIONS);
+    const inside = executeTemplate("{{each}}{{count}},{{/each}}", SAMPLE_CAPTIONS);
     expect(outside).toBe("3");
     expect(inside).toBe("3,3,3,");
   });
 
-  it("renders multiple sibling #each blocks in document order", () => {
+  it("renders multiple sibling each blocks in document order", () => {
     const template =
-      "Times:\n{{#each}}{{start}}\n{{/each}}---\nTexts:\n{{#each}}{{text}}\n{{/each}}";
+      "Times:\n{{each}}{{start}}\n{{/each}}---\nTexts:\n{{each}}{{text}}\n{{/each}}";
     const output = executeTemplate(template, SAMPLE_CAPTIONS);
     expect(output).toBe(
       "Times:\n1.2\n3.8\n6\n---\nTexts:\nHello world\nFrom the builder\nLine one\nLine two\n",
@@ -652,7 +652,7 @@ describe("executeTemplate edge cases", () => {
   });
 
   it("preserves global content between sibling blocks", () => {
-    const template = "{{#each}}{{text}},{{/each}}|{{count}}|{{#each}}{{index}},{{/each}}";
+    const template = "{{each}}{{text}},{{/each}}|{{count}}|{{each}}{{index}},{{/each}}";
     const output = executeTemplate(template, SAMPLE_CAPTIONS);
     expect(output).toBe("Hello world,From the builder,Line one\nLine two,|3|0,1,2,");
   });
@@ -666,18 +666,18 @@ describe("findEachBlocks", () => {
   });
 
   it("finds a single block", () => {
-    const blocks = findEachBlocks("a{{#each}}b{{/each}}c");
+    const blocks = findEachBlocks("a{{each}}b{{/each}}c");
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]).toEqual({ open: 1, close: 11 });
+    expect(blocks[0]).toEqual({ open: 1, close: 10 });
   });
 
   it("finds multiple sibling blocks", () => {
-    const blocks = findEachBlocks("{{#each}}a{{/each}}{{#each}}b{{/each}}");
+    const blocks = findEachBlocks("{{each}}a{{/each}}{{each}}b{{/each}}");
     expect(blocks).toHaveLength(2);
   });
 
   it("ignores an unclosed final block", () => {
-    const blocks = findEachBlocks("{{#each}}a{{/each}}{{#each}}b");
+    const blocks = findEachBlocks("{{each}}a{{/each}}{{each}}b");
     expect(blocks).toHaveLength(1);
   });
 });
@@ -686,27 +686,27 @@ describe("findEachBlocks", () => {
 
 describe("findInvalidEachOffsets", () => {
   it("returns empty for a balanced single block", () => {
-    expect(findInvalidEachOffsets("{{#each}}{{text}}{{/each}}").size).toBe(0);
+    expect(findInvalidEachOffsets("{{each}}{{text}}{{/each}}").size).toBe(0);
   });
 
   it("returns empty for balanced sibling blocks", () => {
-    const t = "{{#each}}a{{/each}}{{#each}}b{{/each}}";
+    const t = "{{each}}a{{/each}}{{each}}b{{/each}}";
     expect(findInvalidEachOffsets(t).size).toBe(0);
   });
 
-  it("flags an unclosed {{#each}}", () => {
-    const t = "{{#each}}{{text}}";
+  it("flags an unclosed {{each}}", () => {
+    const t = "{{each}}{{text}}";
     expect(findInvalidEachOffsets(t)).toEqual(new Set([0]));
   });
 
   it("flags a stray {{/each}}", () => {
-    const t = "{{#each}}{{/each}}{{/each}}";
-    expect(findInvalidEachOffsets(t)).toEqual(new Set([18]));
+    const t = "{{each}}{{/each}}{{/each}}";
+    expect(findInvalidEachOffsets(t)).toEqual(new Set([17]));
   });
 
-  it("flags the inner #each in a nested block", () => {
-    const t = "{{#each}}{{#each}}{{/each}}{{/each}}";
-    // Outer pair binds to (0, 18); inner #each at 9 and trailing /each at 27 are bad.
-    expect(findInvalidEachOffsets(t)).toEqual(new Set([9, 27]));
+  it("flags the inner each in a nested block", () => {
+    const t = "{{each}}{{each}}{{/each}}{{/each}}";
+    // Outer pair binds to (0, 16); inner each at 8 and trailing /each at 25 are bad.
+    expect(findInvalidEachOffsets(t)).toEqual(new Set([8, 25]));
   });
 });
