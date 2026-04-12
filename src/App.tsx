@@ -35,7 +35,7 @@ import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery
 import { ensureGpuDetected } from "./lib/gpu";
 import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
-import { FormatManager } from "./components/FormatManager";
+import { FormatManager, openFormatManager } from "./components/FormatManager";
 
 export function App() {
   useUpdateChecker();
@@ -275,6 +275,7 @@ export function App() {
         case "save_project_as": if (hasProject) saveCurrentProjectAs(); break;
         case "close_project": if (hasProject) closeProjectGuarded(); break;
         case "clear_recent": clearRecent(); break;
+        case "export_formats": openFormatManager(); break;
       }
     });
     return () => { unlisten.then((f) => f()); };

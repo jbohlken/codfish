@@ -5,6 +5,9 @@ import { showError } from "../../components/ErrorModal";
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
 import { addRecent, loadRecent } from "../recent";
+import { hashContent } from "../hash";
+import { selectedExportFormat, exportFormats } from "../../store/app";
+import { loadFormatSource, listFormats } from "../export";
 import type { CodProject, MediaItem } from "../../types/project";
 
 const PROJECT_VERSION = 1;
@@ -252,17 +255,66 @@ export function makeMediaItem(filePath: string): MediaItem {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+async function getFormatReference(): Promise<{ name: string; hash: string } | null> {
+  try {
+    const name = selectedExportFormat.value;
+    const format = exportFormats.value.find((f) => f.name === name);
+    if (!format) return null;
+    const source = await loadFormatSource(format.formatPath);
+    const hash = await hashContent(source);
+    return { name: format.name, hash };
+  } catch {
+    return null;
+  }
+}
+
 async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
+  const formatRef = await getFormatReference();
   const toSave: CodProject = {
     ...proj,
     updatedAt: new Date().toISOString(),
+    exportFormatName: formatRef?.name,
+    exportFormatHash: formatRef?.hash,
     // Strip `words` arrays — they are runtime-only
     media: proj.media.map((m) => ({
       ...m,
       captions: m.captions.map(({ words: _w, ...c }) => c),
     })),
   };
+  // Remove format fields entirely if no valid reference, so we never
+  // serialize null into the JSON (which would persist as a bogus value).
+  if (!toSave.exportFormatName) {
+    delete toSave.exportFormatName;
+    delete toSave.exportFormatHash;
+  }
   await invoke<void>("save_project", { path: filePath, json: JSON.stringify(toSave, null, 2) });
+}
+
+export async function checkFormatCompatibility(proj: CodProject): Promise<void> {
+  try {
+    const formats = await listFormats();
+    if (!proj.exportFormatName) {
+      // Old project with no format reference — default to SRT or first available.
+      selectedExportFormat.value = formats.find((f) => f.name === "SRT")?.name ?? formats[0]?.name ?? "SRT";
+      return;
+    }
+    const match = formats.find((f) => f.name === proj.exportFormatName);
+    if (!match) {
+      selectedExportFormat.value = formats.find((f) => f.name === "SRT")?.name ?? formats[0]?.name ?? "SRT";
+      showError(`This project uses export format "${proj.exportFormatName}", which isn't installed.`);
+      return;
+    }
+    // Format exists — select it.
+    selectedExportFormat.value = match.name;
+    if (!proj.exportFormatHash) return;
+    const source = await loadFormatSource(match.formatPath);
+    const hash = await hashContent(source);
+    if (hash !== proj.exportFormatHash) {
+      showError(`This project uses export format "${proj.exportFormatName}", but your local version differs.`);
+    }
+  } catch {
+    // Format check is best-effort — never block project loading.
+  }
 }
 
 function loadIntoStore(proj: CodProject, filePath: string): void {
@@ -278,6 +330,7 @@ function loadIntoStore(proj: CodProject, filePath: string): void {
   // association, open-recent, recovery restore) flows through here, so this
   // is the single place to update the recent list.
   void addRecent(filePath);
+  void checkFormatCompatibility(proj);
 }
 
 function flattenDialogResult(result: string | string[] | null): string | null {

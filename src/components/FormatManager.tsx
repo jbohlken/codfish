@@ -101,7 +101,7 @@ export function FormatManager() {
   const focusNameOnNext = useRef(false);
   const autocompleteScheduled = useRef(false);
 
-  // When modal opens, select the format that's active in the project selector
+  // Reset editor state when modal opens — no format pre-selected
   useEffect(() => {
     if (!isOpen) return;
     setError(null);
@@ -109,10 +109,6 @@ export function FormatManager() {
     setAutocomplete(null);
     setEditor(null);
     setSelectedId(null);
-    const activeId = selectedExportFormat.value;
-    const active = activeId ? formats.find((f) => f.id === activeId) : null;
-    const initial = active ?? formats[0];
-    if (initial) selectFormat(initial);
   }, [isOpen]);
 
   // Dismiss autocomplete when the edited format changes.
@@ -198,12 +194,17 @@ export function FormatManager() {
     const normalized = normalizeFormatConfig(editor.config);
 
     const cff = serializeCff(normalized);
+    const oldName = editor.savedConfig.name;
     try {
       await saveFormat(filename, cff);
       const fmts = await listFormats();
       exportFormats.value = fmts;
       const saved = fmts.find((f) => f.name === normalized.name);
       if (saved) {
+        // If the renamed format was the selected export format, follow it.
+        if (selectedExportFormat.value === oldName) {
+          selectedExportFormat.value = saved.name;
+        }
         setEditor({
           editingFilename: filename,
           formatPath: saved.formatPath,

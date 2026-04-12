@@ -75,14 +75,14 @@ function installDynamicLoadSource() {
   });
 }
 
-/** Open the modal with the given formats, pre-selecting one by name. */
+/** Open the modal with the given formats, optionally clicking one by name. */
 async function openWith(formats: ExportFormat[], activeName?: string) {
   exportFormats.value = formats;
-  if (activeName) selectedExportFormat.value = activeName;
   installDynamicLoadSource();
   formatManagerOpen.value = true;
   const result = render(<FormatManager />);
   if (activeName) {
+    fireEvent.click(screen.getByText(activeName));
     await waitFor(() => expect(screen.getByDisplayValue(activeName)).toBeTruthy());
   }
   return result;
@@ -118,18 +118,18 @@ describe("FormatManager: render + selection", () => {
     expect(screen.getByText("Custom")).toBeTruthy();
   });
 
-  it("auto-selects the active format on open", async () => {
-    await openWith([makeFormat("Other"), makeFormat("Custom")], "Custom");
-    expect(screen.getByDisplayValue("Custom")).toBeTruthy();
+  it("opens with no format selected", async () => {
+    const { container } = await openWith([makeFormat("Other"), makeFormat("Custom")]);
+    expect(container.querySelector(".fmt-editor-empty")).toBeTruthy();
+    expect(container.querySelector(".fmt-list-item--active")).toBeNull();
   });
 
-  it("falls back to the first format when the active id is missing", async () => {
+  it("opens with empty editor when no format is clicked", async () => {
     exportFormats.value = [makeFormat("First"), makeFormat("Second")];
-    selectedExportFormat.value = "Nonexistent";
     installDynamicLoadSource();
     formatManagerOpen.value = true;
-    render(<FormatManager />);
-    await waitFor(() => expect(screen.getByDisplayValue("First")).toBeTruthy());
+    const { container } = render(<FormatManager />);
+    expect(container.querySelector(".fmt-editor-empty")).toBeTruthy();
   });
 
   it("shows empty editor when there are no formats", async () => {
@@ -150,32 +150,34 @@ describe("FormatManager: render + selection", () => {
     expect(container.querySelector(".fmt-list-divider")).toBeNull();
   });
 
-  it("marks the selected format as active", async () => {
+  it("marks a format as active after clicking it", async () => {
     const { container } = await openWith(
       [makeFormat("One"), makeFormat("Two")],
-      "Two",
     );
-    const active = container.querySelectorAll(".fmt-list-item--active");
-    expect(active).toHaveLength(1);
-    expect(active[0].textContent).toContain("Two");
+    fireEvent.click(screen.getByText("Two"));
+    await waitFor(() => {
+      const active = container.querySelectorAll(".fmt-list-item--active");
+      expect(active).toHaveLength(1);
+      expect(active[0].textContent).toContain("Two");
+    });
   });
 
   it("surfaces a parse failure via showError and leaves editor empty", async () => {
     exportFormats.value = [makeFormat("Broken")];
-    selectedExportFormat.value = "Broken";
     loadFormatSourceMock.mockResolvedValue("garbage without blank line");
     formatManagerOpen.value = true;
     render(<FormatManager />);
+    fireEvent.click(screen.getByText("Broken"));
     await waitFor(() => expect(showErrorMock).toHaveBeenCalled());
     expect(showErrorMock.mock.calls[0][0]).toMatch(/cannot be opened/);
   });
 
   it("surfaces a load failure via showError", async () => {
     exportFormats.value = [makeFormat("BadIO")];
-    selectedExportFormat.value = "BadIO";
     loadFormatSourceMock.mockRejectedValue(new Error("ENOENT"));
     formatManagerOpen.value = true;
     render(<FormatManager />);
+    fireEvent.click(screen.getByText("BadIO"));
     await waitFor(() => expect(showErrorMock).toHaveBeenCalled());
     expect(showErrorMock.mock.calls[0][0]).toMatch(/Failed to load/);
   });

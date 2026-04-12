@@ -1100,6 +1100,10 @@ pub fn run() {
                 menu_builder = menu_builder.item(&app_menu);
             }
 
+            let export_formats = MenuItemBuilder::new("Export Formats…")
+                .id("menu_export_formats")
+                .build(handle)?;
+
             menu_builder = menu_builder.item(&file_menu);
 
             #[cfg(target_os = "macos")]
@@ -1112,6 +1116,8 @@ pub fn run() {
                     .copy()
                     .paste()
                     .select_all()
+                    .separator()
+                    .item(&export_formats)
                     .build()?;
                 // Note: deliberately omitting .close_window() so Close Project
                 // (File menu, Cmd+W) owns the Cmd+W binding — matches Adobe and
@@ -1122,6 +1128,14 @@ pub fn run() {
                     .minimize()
                     .build()?;
                 menu_builder = menu_builder.item(&edit_menu).item(&window_menu);
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let edit_menu = SubmenuBuilder::new(handle, "Edit")
+                    .item(&export_formats)
+                    .build()?;
+                menu_builder = menu_builder.item(&edit_menu);
             }
 
             handle.manage(MenuItems {

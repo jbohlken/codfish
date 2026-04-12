@@ -11,17 +11,17 @@ import {
   isPlaying,
   exportFormats,
   selectedExportFormat,
+  isDirty,
 } from "../../store/app";
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
 import { makePhrase } from "../../lib/pipeline/types";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
 import { transcribeMedia, type TranscriptionProgress, type TranscriptionResult } from "../../lib/transcription";
 import { listFormats, exportCaptions } from "../../lib/export";
-import { openFormatManager } from "../FormatManager";
 import { showError } from "../ErrorModal";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
 
@@ -42,9 +42,6 @@ let _editCancelled = false;
 async function loadFormats() {
   const fmts = await listFormats();
   exportFormats.value = fmts;
-  if (fmts.length > 0 && !fmts.some((f) => f.id === selectedExportFormat.value)) {
-    selectedExportFormat.value = fmts[0].id;
-  }
 }
 
 function buildFormatOptions() {
@@ -414,20 +411,13 @@ export function CaptionPanel() {
 
       {media && !generating && hasCaptions && (
         <div class="caption-panel-footer">
-          <button
-            class="btn btn-ghost btn-icon"
-            data-tooltip="Manage formats"
-            onClick={() => openFormatManager()}
-          >
-            <Wrench size={14} />
-          </button>
           <SelectButton
             icon={FileText}
             tooltip="Export format"
             direction="up"
             options={buildFormatOptions()}
             value={selectedExportFormat.value}
-            onChange={(v) => { selectedExportFormat.value = v; }}
+            onChange={(v) => { selectedExportFormat.value = v; isDirty.value = true; }}
           />
           <div style="flex:1" />
           <button class="btn btn-primary btn-sm" onClick={() => handleExport(media.name)}>

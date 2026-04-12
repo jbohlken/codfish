@@ -50,4 +50,6 @@ export interface CodProject {
   createdAt: string;
   updatedAt: string;
   media: MediaItem[];
+  exportFormatName?: string;
+  exportFormatHash?: string;
 }
