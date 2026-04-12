@@ -6,8 +6,9 @@ import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
 import { addRecent, loadRecent } from "../recent";
 import { hashContent } from "../hash";
-import { selectedExportFormat, exportFormats } from "../../store/app";
+import { selectedExportFormat, exportFormats, selectedProfile, profiles } from "../../store/app";
 import { loadFormatSource, listFormats } from "../export";
+import { loadProfiles, loadProfileSource } from "../profiles";
 import type { CodProject, MediaItem } from "../../types/project";
 
 const PROJECT_VERSION = 1;
@@ -85,7 +86,6 @@ export async function newProject(): Promise<boolean> {
   const proj: CodProject = {
     version: PROJECT_VERSION,
     name,
-    profileId: "default",
     transcriptionModel: "base",
     language: "",
     createdAt: now,
@@ -268,24 +268,44 @@ async function getFormatReference(): Promise<{ name: string; hash: string } | nu
   }
 }
 
+async function getProfileReference(): Promise<{ name: string; hash: string } | null> {
+  try {
+    const name = selectedProfile.value;
+    const profile = profiles.value.find((p) => p.name === name);
+    if (!profile) return null;
+    const source = await loadProfileSource(profile.id);
+    const hash = await hashContent(source);
+    return { name: profile.name, hash };
+  } catch {
+    return null;
+  }
+}
+
 async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
   const formatRef = await getFormatReference();
+  const profileRef = await getProfileReference();
   const toSave: CodProject = {
     ...proj,
     updatedAt: new Date().toISOString(),
     exportFormatName: formatRef?.name,
     exportFormatHash: formatRef?.hash,
+    profileName: profileRef?.name,
+    profileHash: profileRef?.hash,
     // Strip `words` arrays — they are runtime-only
     media: proj.media.map((m) => ({
       ...m,
       captions: m.captions.map(({ words: _w, ...c }) => c),
     })),
   };
-  // Remove format fields entirely if no valid reference, so we never
+  // Remove ref fields entirely if no valid reference, so we never
   // serialize null into the JSON (which would persist as a bogus value).
   if (!toSave.exportFormatName) {
     delete toSave.exportFormatName;
     delete toSave.exportFormatHash;
+  }
+  if (!toSave.profileName) {
+    delete toSave.profileName;
+    delete toSave.profileHash;
   }
   await invoke<void>("save_project", { path: filePath, json: JSON.stringify(toSave, null, 2) });
 }
@@ -317,6 +337,32 @@ export async function checkFormatCompatibility(proj: CodProject): Promise<void> 
   }
 }
 
+export async function checkProfileCompatibility(proj: CodProject): Promise<void> {
+  try {
+    const loaded = await loadProfiles();
+    profiles.value = loaded;
+    if (!proj.profileName) {
+      selectedProfile.value = loaded.find((p) => p.name === "Codfish")?.name ?? loaded[0]?.name ?? "Codfish";
+      return;
+    }
+    const match = loaded.find((p) => p.name === proj.profileName);
+    if (!match) {
+      selectedProfile.value = loaded.find((p) => p.name === "Codfish")?.name ?? loaded[0]?.name ?? "Codfish";
+      showError(`This project uses profile "${proj.profileName}", which isn't installed.`);
+      return;
+    }
+    selectedProfile.value = match.name;
+    if (!proj.profileHash) return;
+    const source = await loadProfileSource(match.id);
+    const hash = await hashContent(source);
+    if (hash !== proj.profileHash) {
+      showError(`This project uses profile "${proj.profileName}", but your local version differs.`);
+    }
+  } catch {
+    // Best-effort — never block project loading.
+  }
+}
+
 function loadIntoStore(proj: CodProject, filePath: string): void {
   resetHistory(proj);
   project.value = proj;
@@ -331,6 +377,7 @@ function loadIntoStore(proj: CodProject, filePath: string): void {
   // is the single place to update the recent list.
   void addRecent(filePath);
   void checkFormatCompatibility(proj);
+  void checkProfileCompatibility(proj);
 }
 
 function flattenDialogResult(result: string | string[] | null): string | null {

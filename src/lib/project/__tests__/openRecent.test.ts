@@ -28,7 +28,6 @@ function makeProject(): CodProject {
   return {
     version: 1,
     name: "current",
-    profileId: "default",
     transcriptionModel: "base",
     language: "",
     createdAt: "2026-01-01T00:00:00Z",

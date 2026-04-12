@@ -15,8 +15,9 @@ import {
 } from "../../store/app";
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
 import { makePhrase } from "../../lib/pipeline/types";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
+import { openFormatManager } from "../FormatManager";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
@@ -418,6 +419,11 @@ export function CaptionPanel() {
             options={buildFormatOptions()}
             value={selectedExportFormat.value}
             onChange={(v) => { selectedExportFormat.value = v; isDirty.value = true; }}
+            footer={(close) => (
+              <button class="titlebar-select-option" onClick={() => { close(); openFormatManager(); }}>
+                <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage formats…</span>
+              </button>
+            )}
           />
           <div style="flex:1" />
           <button class="btn btn-primary btn-sm" onClick={() => handleExport(media.name)}>

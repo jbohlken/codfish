@@ -710,7 +710,7 @@ describe("FormatManager: delete", () => {
     expect(deleteFormatMock.mock.calls[0][0]).toBe("Custom.cff");
   });
 
-  it("after delete, falls back to the first remaining format", async () => {
+  it("after delete, clears editor to empty state", async () => {
     listFormatsMock.mockResolvedValue([makeFormat("Other")]);
     const { container } = await openWith(
       [makeFormat("Custom"), makeFormat("Other")],
@@ -718,7 +718,9 @@ describe("FormatManager: delete", () => {
     );
     openDeletePopover(container);
     fireEvent.click(screen.getByText("Delete"));
-    await waitFor(() => expect(screen.getByDisplayValue("Other")).toBeTruthy());
+    await waitFor(() =>
+      expect(container.querySelector(".fmt-editor-empty")).toBeTruthy(),
+    );
   });
 
   it("after deleting the last format, editor becomes empty", async () => {

@@ -532,6 +532,13 @@ fn get_profiles_dir(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn load_profile_source(app: AppHandle, id: String) -> Result<String, String> {
+    let dir = profiles_dir(&app)?;
+    let path = dir.join(format!("{id}.cfp"));
+    std::fs::read_to_string(&path).map_err(|e| format!("read error: {e}"))
+}
+
+#[tauri::command]
 fn export_profile(app: AppHandle, id: String) -> Result<String, String> {
     let dir = profiles_dir(&app)?;
     let src = dir.join(format!("{id}.cfp"));
@@ -1103,6 +1110,9 @@ pub fn run() {
             let export_formats = MenuItemBuilder::new("Export Formats…")
                 .id("menu_export_formats")
                 .build(handle)?;
+            let profiles_item = MenuItemBuilder::new("Profiles…")
+                .id("menu_profiles")
+                .build(handle)?;
 
             menu_builder = menu_builder.item(&file_menu);
 
@@ -1118,6 +1128,7 @@ pub fn run() {
                     .select_all()
                     .separator()
                     .item(&export_formats)
+                    .item(&profiles_item)
                     .build()?;
                 // Note: deliberately omitting .close_window() so Close Project
                 // (File menu, Cmd+W) owns the Cmd+W binding — matches Adobe and
@@ -1134,6 +1145,7 @@ pub fn run() {
             {
                 let edit_menu = SubmenuBuilder::new(handle, "Edit")
                     .item(&export_formats)
+                    .item(&profiles_item)
                     .build()?;
                 menu_builder = menu_builder.item(&edit_menu);
             }
@@ -1245,6 +1257,7 @@ pub fn run() {
             get_profiles_dir,
             export_profile,
             import_profile,
+            load_profile_source,
             sidecar::get_sidecar_status,
             sidecar::detect_gpu,
             sidecar::check_sidecar_update,

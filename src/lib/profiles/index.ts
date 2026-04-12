@@ -11,6 +11,11 @@ export async function loadProfiles(): Promise<CaptionProfile[]> {
   }
 }
 
+/** Load the raw .cfp source for a profile (for hashing). */
+export async function loadProfileSource(id: string): Promise<string> {
+  return invoke<string>("load_profile_source", { id });
+}
+
 /** Save a profile to disk (creates or overwrites). */
 export async function saveProfile(profile: CaptionProfile): Promise<void> {
   await invoke<void>("save_profile", { profile });

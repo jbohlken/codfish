@@ -20,7 +20,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { confirmUnsavedChanges } from "./components/UnsavedChanges";
 import { ErrorModal } from "./components/ErrorModal";
-import { ProfileEditor } from "./components/ProfileEditor";
+import { ProfileManager, openProfileManager, requestCloseProfileManager } from "./components/ProfileManager";
 import { ContextMenu } from "./components/ContextMenu";
 import { MediaSettings } from "./components/MediaSettings";
 import { UnsavedChanges } from "./components/UnsavedChanges";
@@ -35,7 +35,8 @@ import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery
 import { ensureGpuDetected } from "./lib/gpu";
 import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
-import { FormatManager, openFormatManager } from "./components/FormatManager";
+import { FormatManager, openFormatManager, requestCloseFormatManager } from "./components/FormatManager";
+
 
 export function App() {
   useUpdateChecker();
@@ -45,10 +46,13 @@ export function App() {
   // On boot, check for a recovery snapshot and offer to restore it.
   // Gated on sidecar + daemon + profiles being ready so the prompt doesn't
   // queue up behind the Splash/SidecarSetup screens.
+  const recoveryChecked = useRef(false);
   useEffect(() => {
+    if (recoveryChecked.current) return;
     if (sidecarStatus.value !== "ready" && sidecarStatus.value !== "update_available") return;
     if (daemonStatus.value !== "ready") return;
     if (profiles.value.length === 0) return;
+    recoveryChecked.current = true;
     let cancelled = false;
     (async () => {
       const blob = await loadRecovery();
@@ -275,7 +279,8 @@ export function App() {
         case "save_project_as": if (hasProject) saveCurrentProjectAs(); break;
         case "close_project": if (hasProject) closeProjectGuarded(); break;
         case "clear_recent": clearRecent(); break;
-        case "export_formats": openFormatManager(); break;
+        case "export_formats": requestCloseProfileManager().then((ok) => { if (ok) openFormatManager(); }); break;
+        case "profiles": requestCloseFormatManager().then((ok) => { if (ok) openProfileManager(); }); break;
       }
     });
     return () => { unlisten.then((f) => f()); };
@@ -375,7 +380,7 @@ export function App() {
         </div>
         <Timeline />
         <ErrorModal />
-        <ProfileEditor />
+        <ProfileManager />
         <ContextMenu />
         <MediaSettings />
         <FormatManager />

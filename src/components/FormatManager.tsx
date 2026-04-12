@@ -53,8 +53,19 @@ import { confirmUnsavedChanges } from "./UnsavedChanges";
 
 export const formatManagerOpen = signal(false);
 
+let _guardLeave: (() => Promise<boolean>) | null = null;
+
 export function openFormatManager() {
   formatManagerOpen.value = true;
+}
+
+/** Ask the format manager to close, respecting unsaved-changes guard.
+ *  Returns true if it closed, false if the user cancelled. */
+export async function requestCloseFormatManager(): Promise<boolean> {
+  if (!formatManagerOpen.value) return true;
+  if (_guardLeave && !(await _guardLeave())) return false;
+  formatManagerOpen.value = false;
+  return true;
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -173,6 +184,12 @@ export function FormatManager() {
     if (choice === "discard") return true;
     return await performSave();
   };
+
+  // Expose guard to the module-level requestClose function.
+  useEffect(() => {
+    _guardLeave = guardLeave;
+    return () => { _guardLeave = null; };
+  });
 
   /**
    * Validate + persist the current editor state. Updates `savedConfig` in place
@@ -315,12 +332,11 @@ export function FormatManager() {
       await deleteFormat(editor.editingFilename);
       const fmts = await listFormats();
       exportFormats.value = fmts;
-      if (selectedExportFormat.value === selectedId) {
-        selectedExportFormat.value = fmts[0]?.id ?? "";
+      if (selectedExportFormat.value === editor.savedConfig.name) {
+        selectedExportFormat.value = fmts[0]?.name ?? "";
       }
       setEditor(null);
       setSelectedId(null);
-      if (fmts.length > 0) selectFormat(fmts[0]);
     } catch (e) {
       setError(String(e));
     }
@@ -641,11 +657,10 @@ export function FormatManager() {
                     </button>
                   )}
                   <div style="flex:1" />
-                  {editor.readonly ? (
-                    <button class="btn btn-primary btn-sm" onClick={handleDuplicate}>
-                      <Copy size={12} /> Duplicate
-                    </button>
-                  ) : (
+                  <button class="btn btn-ghost btn-sm" onClick={handleDuplicate}>
+                    <Copy size={12} /> Duplicate
+                  </button>
+                  {!editor.readonly && (
                     <button class="btn btn-primary btn-sm" onClick={handleSave} disabled={!dirty || !isValid}>
                       Save
                     </button>

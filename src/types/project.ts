@@ -44,7 +44,6 @@ export type TranscriptionModel = "tiny" | "base" | "small" | "medium" | "large-v
 export interface CodProject {
   version: number;
   name: string;
-  profileId: string;
   transcriptionModel: TranscriptionModel;
   language: string;
   createdAt: string;
@@ -52,4 +51,6 @@ export interface CodProject {
   media: MediaItem[];
   exportFormatName?: string;
   exportFormatHash?: string;
+  profileName?: string;
+  profileHash?: string;
 }

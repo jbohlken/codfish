@@ -19,6 +19,7 @@ export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 
 // ── Profiles ───────────────────────────────────────────────────────────────
 export const profiles = signal<CaptionProfile[]>([]);
+export const selectedProfile = signal<string>("Codfish");
 
 // ── Export formats ────────────────────────────────────────────────────────
 export const exportFormats = signal<ExportFormat[]>([]);
@@ -102,6 +103,6 @@ export const selectedCaption = computed((): CaptionBlock | null => {
 });
 
 export const activeProfile = computed((): CaptionProfile => {
-  const id = project.value?.profileId ?? "default";
-  return profiles.value.find((p) => p.id === id) ?? profiles.value[0];
+  const name = selectedProfile.value;
+  return profiles.value.find((p) => p.name === name) ?? profiles.value[0];
 });
