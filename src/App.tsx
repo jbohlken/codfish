@@ -11,7 +11,7 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
-import { isPlaying, undo, redo, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
+import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
 import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, openRecent } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
@@ -262,6 +262,14 @@ export function App() {
     set("save_project_as", ready && hasProject);
     set("save_project", ready && hasProject && dirty);
     set("close_project", ready && hasProject);
+    const undoEnabled = ready && hasProject && canUndo.value;
+    const redoEnabled = ready && hasProject && canRedo.value;
+    set("undo", undoEnabled);
+    set("redo", redoEnabled);
+    const setText = (id: string, text: string) =>
+      invoke("set_menu_text", { id, text }).catch(() => {});
+    setText("undo", undoDescription.value ? `Undo ${undoDescription.value}` : "Undo");
+    setText("redo", redoDescription.value ? `Redo ${redoDescription.value}` : "Redo");
   });
 
   useEffect(() => {
@@ -278,6 +286,8 @@ export function App() {
         case "save_project": if (hasProject && isDirty.value) saveCurrentProject(); break;
         case "save_project_as": if (hasProject) saveCurrentProjectAs(); break;
         case "close_project": if (hasProject) closeProjectGuarded(); break;
+        case "undo": if (hasProject) undo(); break;
+        case "redo": if (hasProject) redo(); break;
         case "clear_recent": clearRecent(); break;
         case "export_formats": requestCloseProfileManager().then((ok) => { if (ok) openFormatManager(); }); break;
         case "profiles": requestCloseFormatManager().then((ok) => { if (ok) openProfileManager(); }); break;
@@ -325,15 +335,7 @@ export function App() {
         e.preventDefault();
         isPlaying.value = !isPlaying.peek();
       }
-      if (e.ctrlKey && !e.shiftKey && e.key === "z") {
-        e.preventDefault();
-        undo();
-      }
-      if (e.ctrlKey && (e.key === "y" || (e.shiftKey && e.key === "Z"))) {
-        e.preventDefault();
-        redo();
-      }
-      // Windows-only fallback for File menu accelerators. WebView2 swallows
+      // Windows-only fallback for menu accelerators. WebView2 swallows
       // muda's accelerator table on Windows, so menu shortcuts never reach
       // the native handler. On macOS the system menu fires these natively
       // and we'd double-trigger if we also handled them here.
@@ -345,7 +347,9 @@ export function App() {
       const hasProject = !!project.value;
       if (!isMac && e.ctrlKey && ready) {
         const k = e.key.toLowerCase();
-        if (k === "n") { e.preventDefault(); newProjectGuarded(); }
+        if (k === "z" && !e.shiftKey && hasProject) { e.preventDefault(); undo(); }
+        else if ((k === "y" || (e.shiftKey && k === "z")) && hasProject) { e.preventDefault(); redo(); }
+        else if (k === "n") { e.preventDefault(); newProjectGuarded(); }
         else if (k === "o") { e.preventDefault(); openProjectGuarded(); }
         else if (k === "s" && e.shiftKey && hasProject) { e.preventDefault(); saveCurrentProjectAs(); }
         else if (k === "s" && hasProject && isDirty.value) { e.preventDefault(); saveCurrentProject(); }

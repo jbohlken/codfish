@@ -1,9 +1,9 @@
 import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
-import { project, isDirty, profiles, selectedProfile, pushHistory, canUndo, canRedo, undo, redo, undoDescription, redoDescription } from "../../store/app";
+import { project, isDirty, profiles, selectedProfile, pushHistory } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, BugIcon as Bug, WrenchIcon as Wrench } from "@phosphor-icons/react";
+import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, BugIcon as Bug, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { openProfileManager } from "../ProfileManager";
 import { helpOpen } from "../HelpModal";
 import { bugReportOpen } from "../BugReportModal";
@@ -117,25 +117,6 @@ export function TitleBar() {
 
         {proj && (
           <>
-            <div class="titlebar-divider" />
-
-            <button
-              class="btn btn-ghost btn-icon"
-              onClick={undo}
-              disabled={!canUndo.value}
-              data-tooltip={undoDescription.value ? `Undo: ${undoDescription.value} (Ctrl+Z)` : "Nothing to undo"}
-            >
-              <ArrowCounterClockwise size={14} />
-            </button>
-            <button
-              class="btn btn-ghost btn-icon"
-              onClick={redo}
-              disabled={!canRedo.value}
-              data-tooltip={redoDescription.value ? `Redo: ${redoDescription.value} (Ctrl+Y)` : "Nothing to redo"}
-            >
-              <ArrowClockwise size={14} />
-            </button>
-
             <div class="titlebar-divider" />
 
             <SelectButton

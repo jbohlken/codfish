@@ -23,6 +23,8 @@ struct MenuItems {
     save_project: MenuItem<Wry>,
     save_project_as: MenuItem<Wry>,
     close_project: MenuItem<Wry>,
+    undo: MenuItem<Wry>,
+    redo: MenuItem<Wry>,
     /// "Open Recent" submenu — its items are rebuilt whenever the recent
     /// list changes via `set_recent_menu`.
     recent_submenu: Submenu<Wry>,
@@ -80,9 +82,21 @@ fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Resul
         "save_project" => &items.save_project,
         "save_project_as" => &items.save_project_as,
         "close_project" => &items.close_project,
+        "undo" => &items.undo,
+        "redo" => &items.redo,
         other => return Err(format!("unknown menu id: {other}")),
     };
     item.set_enabled(enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_menu_text(items: State<MenuItems>, id: String, text: String) -> Result<(), String> {
+    let item = match id.as_str() {
+        "undo" => &items.undo,
+        "redo" => &items.redo,
+        other => return Err(format!("unknown menu id: {other}")),
+    };
+    item.set_text(text).map_err(|e| e.to_string())
 }
 
 // ── Default resources (embedded at compile time) ────────────────────────────
@@ -1107,6 +1121,17 @@ pub fn run() {
                 menu_builder = menu_builder.item(&app_menu);
             }
 
+            let undo_item = MenuItemBuilder::new("Undo")
+                .id("menu_undo")
+                .accelerator("CmdOrCtrl+Z")
+                .enabled(false)
+                .build(handle)?;
+            let redo_item = MenuItemBuilder::new("Redo")
+                .id("menu_redo")
+                .accelerator("CmdOrCtrl+Shift+Z")
+                .enabled(false)
+                .build(handle)?;
+
             let export_formats = MenuItemBuilder::new("Export Formats…")
                 .id("menu_export_formats")
                 .build(handle)?;
@@ -1119,8 +1144,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let edit_menu = SubmenuBuilder::new(handle, "Edit")
-                    .undo()
-                    .redo()
+                    .item(&undo_item)
+                    .item(&redo_item)
                     .separator()
                     .cut()
                     .copy()
@@ -1144,6 +1169,9 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             {
                 let edit_menu = SubmenuBuilder::new(handle, "Edit")
+                    .item(&undo_item)
+                    .item(&redo_item)
+                    .separator()
                     .item(&export_formats)
                     .item(&profiles_item)
                     .build()?;
@@ -1156,6 +1184,8 @@ pub fn run() {
                 save_project: save_proj.clone(),
                 save_project_as: save_as.clone(),
                 close_project: close_proj.clone(),
+                undo: undo_item.clone(),
+                redo: redo_item.clone(),
                 recent_submenu: recent_submenu.clone(),
             });
             handle.manage(RecentPaths(StdMutex::new(Vec::new())));
@@ -1241,6 +1271,7 @@ pub fn run() {
             get_log_path,
             frontend_log,
             set_menu_enabled,
+            set_menu_text,
             get_recent_projects,
             add_recent_project,
             clear_recent_projects,
