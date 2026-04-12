@@ -3,12 +3,9 @@ import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
 import { project, isDirty, profiles, selectedProfile, pushHistory } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, BugIcon as Bug, WrenchIcon as Wrench } from "@phosphor-icons/react";
+import { CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { openProfileManager } from "../ProfileManager";
-import { helpOpen } from "../HelpModal";
-import { bugReportOpen } from "../BugReportModal";
 import { hasUpdate, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
-import { theme, toggleTheme } from "../../store/theme";
 import { listModels } from "../../lib/transcription";
 
 const TRANSCRIPTION_MODELS: { id: TranscriptionModel; label: string; size: string }[] = [
@@ -93,32 +90,9 @@ export function TitleBar() {
             <UpdatePopover />
           </div>
         )}
-        <button
-          class="btn btn-ghost btn-icon"
-          data-tooltip={theme.value === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          onClick={toggleTheme}
-        >
-          {theme.value === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
-        <button
-          class="btn btn-ghost btn-icon"
-          data-tooltip="Submit feedback"
-          onClick={() => { bugReportOpen.value = true; }}
-        >
-          <Bug size={14} />
-        </button>
-        <button
-          class="btn btn-ghost btn-icon"
-          data-tooltip="Help"
-          onClick={() => { helpOpen.value = true; }}
-        >
-          <Question size={14} />
-        </button>
 
         {proj && (
           <>
-            <div class="titlebar-divider" />
-
             <SelectButton
               icon={Waveform}
               tooltip="Transcription model"
@@ -152,7 +126,7 @@ export function TitleBar() {
               }}
               footer={(close) => (
                 <button class="titlebar-select-option" onClick={() => { close(); openProfileManager(); }}>
-                  <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage profiles…</span>
+                  <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage caption profiles…</span>
                 </button>
               )}
             />

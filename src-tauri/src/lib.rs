@@ -6,7 +6,7 @@ mod transcription;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
+use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State, Window, Wry};
 use tokio::sync::Mutex as AsyncMutex;
 use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
@@ -25,6 +25,7 @@ struct MenuItems {
     close_project: MenuItem<Wry>,
     undo: MenuItem<Wry>,
     redo: MenuItem<Wry>,
+    dark_mode: CheckMenuItem<Wry>,
     /// "Open Recent" submenu — its items are rebuilt whenever the recent
     /// list changes via `set_recent_menu`.
     recent_submenu: Submenu<Wry>,
@@ -97,6 +98,15 @@ fn set_menu_text(items: State<MenuItems>, id: String, text: String) -> Result<()
         other => return Err(format!("unknown menu id: {other}")),
     };
     item.set_text(text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_menu_checked(items: State<MenuItems>, id: String, checked: bool) -> Result<(), String> {
+    let item = match id.as_str() {
+        "dark_mode" => &items.dark_mode,
+        other => return Err(format!("unknown menu id: {other}")),
+    };
+    item.set_checked(checked).map_err(|e| e.to_string())
 }
 
 // ── Default resources (embedded at compile time) ────────────────────────────
@@ -1135,8 +1145,20 @@ pub fn run() {
             let export_formats = MenuItemBuilder::new("Export Formats…")
                 .id("menu_export_formats")
                 .build(handle)?;
-            let profiles_item = MenuItemBuilder::new("Profiles…")
+            let profiles_item = MenuItemBuilder::new("Caption Profiles…")
                 .id("menu_profiles")
+                .build(handle)?;
+
+            let dark_mode_item = CheckMenuItemBuilder::new("Dark Mode")
+                .id("menu_dark_mode")
+                .checked(true)
+                .build(handle)?;
+
+            let help_item = MenuItemBuilder::new("Help…")
+                .id("menu_help")
+                .build(handle)?;
+            let feedback_item = MenuItemBuilder::new("Submit Feedback…")
+                .id("menu_feedback")
                 .build(handle)?;
 
             menu_builder = menu_builder.item(&file_menu);
@@ -1155,6 +1177,9 @@ pub fn run() {
                     .item(&export_formats)
                     .item(&profiles_item)
                     .build()?;
+                let view_menu = SubmenuBuilder::new(handle, "View")
+                    .item(&dark_mode_item)
+                    .build()?;
                 // Note: deliberately omitting .close_window() so Close Project
                 // (File menu, Cmd+W) owns the Cmd+W binding — matches Adobe and
                 // other document-centric Mac apps. Codfish is single-window so
@@ -1163,7 +1188,15 @@ pub fn run() {
                 let window_menu = SubmenuBuilder::new(handle, "Window")
                     .minimize()
                     .build()?;
-                menu_builder = menu_builder.item(&edit_menu).item(&window_menu);
+                let help_menu = SubmenuBuilder::new(handle, "Help")
+                    .item(&help_item)
+                    .item(&feedback_item)
+                    .build()?;
+                menu_builder = menu_builder
+                    .item(&edit_menu)
+                    .item(&view_menu)
+                    .item(&window_menu)
+                    .item(&help_menu);
             }
 
             #[cfg(not(target_os = "macos"))]
@@ -1175,7 +1208,17 @@ pub fn run() {
                     .item(&export_formats)
                     .item(&profiles_item)
                     .build()?;
-                menu_builder = menu_builder.item(&edit_menu);
+                let view_menu = SubmenuBuilder::new(handle, "View")
+                    .item(&dark_mode_item)
+                    .build()?;
+                let help_menu = SubmenuBuilder::new(handle, "Help")
+                    .item(&help_item)
+                    .item(&feedback_item)
+                    .build()?;
+                menu_builder = menu_builder
+                    .item(&edit_menu)
+                    .item(&view_menu)
+                    .item(&help_menu);
             }
 
             handle.manage(MenuItems {
@@ -1186,6 +1229,7 @@ pub fn run() {
                 close_project: close_proj.clone(),
                 undo: undo_item.clone(),
                 redo: redo_item.clone(),
+                dark_mode: dark_mode_item.clone(),
                 recent_submenu: recent_submenu.clone(),
             });
             handle.manage(RecentPaths(StdMutex::new(Vec::new())));
@@ -1272,6 +1316,7 @@ pub fn run() {
             frontend_log,
             set_menu_enabled,
             set_menu_text,
+            set_menu_checked,
             get_recent_projects,
             add_recent_project,
             clear_recent_projects,

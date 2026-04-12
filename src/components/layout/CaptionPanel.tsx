@@ -421,7 +421,7 @@ export function CaptionPanel() {
             onChange={(v) => { selectedExportFormat.value = v; isDirty.value = true; }}
             footer={(close) => (
               <button class="titlebar-select-option" onClick={() => { close(); openFormatManager(); }}>
-                <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage formats…</span>
+                <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage export formats…</span>
               </button>
             )}
           />

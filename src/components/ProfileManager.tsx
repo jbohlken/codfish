@@ -362,7 +362,7 @@ export function ProfileManager() {
       <div class="fmt-manager prof-manager">
         {/* Header */}
         <div class="fmt-manager-header">
-          <span class="fmt-manager-title">Profiles</span>
+          <span class="fmt-manager-title">Caption Profiles</span>
           <button class="btn btn-ghost btn-icon" onClick={close}><X size={14} /></button>
         </div>
 

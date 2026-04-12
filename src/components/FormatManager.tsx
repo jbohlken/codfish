@@ -477,7 +477,7 @@ export function FormatManager() {
       <div class="fmt-manager">
         {/* Header */}
         <div class="fmt-manager-header">
-          <span class="fmt-manager-title">Export formats</span>
+          <span class="fmt-manager-title">Export Formats</span>
           <button class="btn btn-ghost btn-icon" onClick={close}><X size={14} /></button>
         </div>
 

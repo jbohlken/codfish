@@ -8,6 +8,7 @@ Features shortlisted for the next feature release. Current priority is bugfixes 
 - **Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid
 - **Merge captions** — combine adjacent captions (inverse of split)
 - **UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface
+  - How are model and language stored per project now in comparison to the caption profile and export format?
 - **Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling
 - **Audit undo/redo functionality** — make sure it's solid
   - Decide redo accelerator per platform: `Ctrl+Y` vs `Ctrl+Shift+Z` on Windows (currently menu shows `Ctrl+Shift+Z` on both; `Ctrl+Y` works via keydown fallback)
@@ -18,6 +19,8 @@ Features shortlisted for the next feature release. Current priority is bugfixes 
 ## 0.7.0 candidates
 
 - **Caption styling** — preview, define, and export styling for captions, based on CSS under the hood; users should be able to load custom CSS rules to preview how they want for further flexibility. Must support currently offered export formats.
+- **Editor themeing**
+- **Standardize modals**
 
 ---
 

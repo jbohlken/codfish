@@ -24,18 +24,19 @@ import { ProfileManager, openProfileManager, requestCloseProfileManager } from "
 import { ContextMenu } from "./components/ContextMenu";
 import { MediaSettings } from "./components/MediaSettings";
 import { UnsavedChanges } from "./components/UnsavedChanges";
-import { HelpModal } from "./components/HelpModal";
+import { HelpModal, helpOpen } from "./components/HelpModal";
 import { Tooltip } from "./components/Tooltip";
 import { SidecarSetup } from "./components/SidecarSetup";
 import { Splash, startDaemon } from "./components/Splash";
 import { daemonError } from "./store/app";
 import { useUpdateChecker, sidecarUpdate, UpdateBlocker, isUpdating } from "./components/UpdateNotice";
-import { BugReportModal } from "./components/BugReportModal";
+import { BugReportModal, bugReportOpen } from "./components/BugReportModal";
 import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery";
 import { ensureGpuDetected } from "./lib/gpu";
 import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
 import { FormatManager, openFormatManager, requestCloseFormatManager } from "./components/FormatManager";
+import { theme, toggleTheme } from "./store/theme";
 
 
 export function App() {
@@ -272,6 +273,11 @@ export function App() {
     setText("redo", redoDescription.value ? `Redo ${redoDescription.value}` : "Redo");
   });
 
+  // Sync the View → Dark Mode checkbox with the theme signal.
+  useSignalEffect(() => {
+    invoke("set_menu_checked", { id: "dark_mode", checked: theme.value === "dark" }).catch(() => {});
+  });
+
   useEffect(() => {
     const unlisten = listen<string>("menu://action", (e) => {
       // Block menu actions while splash/setup is up or an update is in
@@ -291,6 +297,9 @@ export function App() {
         case "clear_recent": clearRecent(); break;
         case "export_formats": requestCloseProfileManager().then((ok) => { if (ok) openFormatManager(); }); break;
         case "profiles": requestCloseFormatManager().then((ok) => { if (ok) openProfileManager(); }); break;
+        case "dark_mode": toggleTheme(); break;
+        case "help": helpOpen.value = true; break;
+        case "feedback": bugReportOpen.value = true; break;
       }
     });
     return () => { unlisten.then((f) => f()); };
