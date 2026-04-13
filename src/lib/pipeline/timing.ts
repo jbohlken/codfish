@@ -1,18 +1,8 @@
 import type { CaptionBlock } from "../../types/project";
-import type { TimedRule, TimingConfig } from "../../types/profile";
+import type { TimingConfig } from "../../types/profile";
+import { toSeconds, snapToFrame, timeLt, timeGt, timeLte } from "../time";
 
-function toSeconds(rule: TimedRule, fps: number): number {
-  return rule.unit === "fr" ? rule.value / fps : rule.value;
-}
-
-export function snapToFrame(timeSeconds: number, fps: number): number {
-  const frame = Math.round(timeSeconds * fps);
-  return frame / fps;
-}
-
-export function framesBetween(start: number, end: number, fps: number): number {
-  return Math.round((end - start) * fps);
-}
+export { snapToFrame, framesBetween } from "../time";
 
 function getWordGap(current: CaptionBlock, next: CaptionBlock): number {
   if (current.words?.length && next.words?.length) {
@@ -72,12 +62,12 @@ export function enforceTiming(
     }
 
     // minDuration is always enforced (it's a display safety net)
-    if (block.end - block.start < minDuration) {
+    if (timeLt(block.end - block.start, minDuration)) {
       block.end = snapToFrame(block.start + minDuration, fps);
     }
 
     // maxDuration: always enforced
-    if (block.end - block.start > maxDuration) {
+    if (timeGt(block.end - block.start, maxDuration)) {
       block.end = snapToFrame(block.start + maxDuration, fps);
     }
   }
@@ -111,10 +101,10 @@ export function enforceTiming(
     const next = blocks[i + 1];
     const gapSeconds = next.start - current.end;
 
-    if (gapSeconds < 0) {
+    if (timeLt(gapSeconds, 0)) {
       // Overlap — pull current end back
       current.end = next.start;
-    } else if (config.minGapEnabled && gapSeconds > 0 && gapSeconds < minGapSeconds) {
+    } else if (config.minGapEnabled && timeGt(gapSeconds, 0) && timeLt(gapSeconds, minGapSeconds)) {
       // Flicker zone — close to seamless
       current.end = next.start;
     }
@@ -124,7 +114,7 @@ export function enforceTiming(
   for (let i = blocks.length - 1; i > 0; i--) {
     const current = blocks[i];
     const prev = blocks[i - 1];
-    if (prev.end > current.start) {
+    if (timeGt(prev.end, current.start)) {
       prev.end = current.start;
     }
   }
@@ -133,7 +123,7 @@ export function enforceTiming(
   for (const block of blocks) {
     block.start = snapToFrame(block.start, fps);
     block.end = snapToFrame(block.end, fps);
-    if (block.end <= block.start) {
+    if (timeLte(block.end, block.start)) {
       block.end = snapToFrame(block.start + 1 / fps, fps);
     }
   }

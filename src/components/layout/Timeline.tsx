@@ -18,9 +18,11 @@ import type { CaptionBlock } from "../../types/project";
 import { snapToFrame } from "../../lib/pipeline";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
+import { formatDisplayTime, isDropFrameRate, type DisplayMode } from "../../lib/time";
 
-type TimecodeMode = "time" | "smpte" | "frames";
-const timecodeMode = signal<TimecodeMode>("time");
+const timecodeMode = signal<DisplayMode>(
+  (localStorage.getItem("codfish:timecodeMode") as DisplayMode) || "time"
+);
 const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
@@ -344,26 +346,36 @@ export function Timeline() {
         <span class="timeline-mode-label">
           {timecodeMode.value === "time" && "Time"}
           {timecodeMode.value === "smpte" && "SMPTE"}
+          {timecodeMode.value === "smpte-df" && "SMPTE DF"}
           {timecodeMode.value === "frames" && "Frames"}
         </span>
         <button
           class="timeline-btn timeline-btn--timecode"
           onClick={() => {
-            const modes: TimecodeMode[] = ["time", "smpte", "frames"];
+            const modes: DisplayMode[] = ["time", "smpte"];
+            if (isDropFrameRate(effectiveFps)) modes.push("smpte-df");
+            modes.push("frames");
             const next = modes[(modes.indexOf(timecodeMode.value) + 1) % modes.length];
             timecodeMode.value = next;
+            localStorage.setItem("codfish:timecodeMode", next);
           }}
           data-tooltip="Click to cycle timecode mode"
         >
-          {formatTime(currentTime, timecodeMode.value, effectiveFps)}
-          {duration > 0 ? ` / ${formatTime(duration, timecodeMode.value, effectiveFps)}` : ""}
+          {formatDisplayTime(currentTime, timecodeMode.value, effectiveFps)}
+          {duration > 0 ? ` / ${formatDisplayTime(duration, timecodeMode.value, effectiveFps)}` : ""}
         </button>
         {media && (
           <span
-            class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}`}
-            data-tooltip={fpsIsDetected ? "Detected from file" : `No framerate detected — using profile default (${profileDefaultFps} fps)`}
+            class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}${media.vfr ? " timeline-fps-badge--vfr" : ""}`}
+            data-tooltip={
+              media.vfr
+                ? "Variable frame rate detected — frame-snapping may be imprecise"
+                : fpsIsDetected
+                  ? "Detected from file"
+                  : `No framerate detected — using profile default (${profileDefaultFps} fps)`
+            }
           >
-            {effectiveFps} fps{fpsIsDetected ? "" : "*"}
+            {effectiveFps} fps{fpsIsDetected ? "" : "*"}{media.vfr ? " VFR" : ""}
           </span>
         )}
 
@@ -627,7 +639,7 @@ function RulerRow({ duration, zoom, visibleWidth, mode, fps }: {
   duration: number;
   zoom: number;
   visibleWidth: number;
-  mode: TimecodeMode;
+  mode: DisplayMode;
   fps: number;
 }) {
   const pxPerSec = (visibleWidth * zoom) / duration;
@@ -647,34 +659,10 @@ function RulerRow({ duration, zoom, visibleWidth, mode, fps }: {
           class="timeline-ruler-tick"
           style={{ left: `${(t / duration) * 100}%` }}
         >
-          <span class="timeline-ruler-label">{formatTime(t, mode, fps)}</span>
+          <span class="timeline-ruler-label">{formatDisplayTime(t, mode, fps)}</span>
         </div>
       ))}
     </div>
   );
 }
 
-function formatTime(seconds: number, mode: TimecodeMode, fps: number): string {
-  switch (mode) {
-    case "time": {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const ms = Math.floor((seconds % 1) * 1000);
-      if (h > 0) {
-        return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
-      }
-      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
-    }
-    case "smpte": {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const f = Math.floor((seconds % 1) * fps);
-      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(f).padStart(2, "0")}`;
-    }
-    case "frames": {
-      return `${Math.floor(seconds * fps)}f`;
-    }
-  }
-}

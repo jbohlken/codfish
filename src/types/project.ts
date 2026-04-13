@@ -26,6 +26,7 @@ export interface MediaItem {
   name: string;
   path: string;
   fps: number | null;  // probed from file; null = audio-only or unknown (use profile default)
+  vfr?: boolean;       // true if variable frame rate detected (frame-snapping may be imprecise)
   captions: CaptionBlock[];
   rawWords?: Word[];              // persisted for future re-pipeline without re-transcribing
   generatedAt?: string;

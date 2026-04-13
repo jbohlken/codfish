@@ -1,5 +1,6 @@
 import type { Word, CaptionBlock } from "../../types/project";
 import type { CaptionProfile } from "../../types/profile";
+import { toSeconds } from "../time";
 import { cleanWords } from "./cleanup";
 import { segmentIntoPhrases } from "./segment";
 import { mergeShortPhrases } from "./merge";
@@ -7,10 +8,6 @@ import { formatPhraseToCaptionLines } from "./linebreak";
 import { enforceTiming } from "./timing";
 import { validate } from "./validate";
 import type { ValidationReport } from "./types";
-
-function timedToSeconds(rule: { value: number; unit: "s" | "fr" }, fps: number): number {
-  return rule.unit === "fr" ? rule.value / fps : rule.value;
-}
 
 export interface PipelineResult {
   captions: CaptionBlock[];
@@ -37,7 +34,7 @@ export function runPipeline(
   const cleanedWords = cleanWords(words);
 
   const fps = sourceFps ?? profile.timing.defaultFps;
-  const maxDurationSec = timedToSeconds(profile.timing.maxDuration, fps);
+  const maxDurationSec = toSeconds(profile.timing.maxDuration, fps);
 
   // 2. Segment
   const phrases = segmentIntoPhrases(cleanedWords, {

@@ -7,6 +7,8 @@
  */
 
 import type { SerializedCaption } from "./index";
+import { timeComponents, formatSmpte } from "../time";
+export { formatSmpte } from "../time";
 
 // ── Public config type ──────────────────────────────────────────────────────
 
@@ -266,10 +268,7 @@ const FMT_LITERALS = new Set([":", ".", ",", "-", "/", " "]);
  * All values truncate (floor), no rounding. Non-component characters pass through as literals.
  */
 export function formatTime(t: number, fmt: string): string {
-  const h = Math.floor(t / 3600);
-  const mn = Math.floor((t % 3600) / 60);
-  const sc = Math.floor(t % 60);
-  const fr = Math.round((t - Math.floor(t)) * 1e9) / 1e9;
+  const { h, m: mn, s: sc, frac: fr } = timeComponents(t);
 
   let out = "";
   let i = 0;
@@ -299,73 +298,6 @@ export function formatTime(t: number, fmt: string): string {
     }
   }
   return out;
-}
-
-// ── SMPTE timecode ─────────────────────────────────────────────────────────
-
-/** Whether a frame rate supports drop-frame counting (29.97 or 59.94). */
-function isDropFrameRate(fps: number): boolean {
-  return Math.abs(fps - 29.97) < 0.1 || Math.abs(fps - 59.94) < 0.1;
-}
-
-/**
- * Format a time value as SMPTE timecode (HH:mm:ss:ff or HH:mm:ss;ff).
- *
- * Drop-frame (;) skips frame numbers 0–1 (for 29.97) or 0–3 (for 59.94)
- * at the start of each minute, except every 10th minute. This keeps the
- * timecode aligned with wall-clock time.
- *
- * If drop-frame is requested but fps is incompatible, falls back to NDF.
- */
-export function formatSmpte(t: number, fps: number, dropFrame: boolean): string {
-  const roundFps = Math.round(fps);
-
-  // Fall back to NDF if fps doesn't support drop-frame
-  if (dropFrame && !isDropFrameRate(fps)) {
-    dropFrame = false;
-  }
-
-  const totalFrames = Math.floor(t * fps);
-
-  let h: number, m: number, s: number, f: number;
-
-  if (dropFrame) {
-    const dropCount = roundFps <= 30 ? 2 : 4;
-    const framesPerMin = roundFps * 60 - dropCount;         // 1798 for 29.97
-    const framesPer10Min = framesPerMin * 10 + dropCount;   // 17982 for 29.97
-
-    const blocks10 = Math.floor(totalFrames / framesPer10Min);
-    let remainder = totalFrames % framesPer10Min;
-
-    let minuteInBlock: number;
-    let frameInMinute: number;
-
-    // First minute of each 10-min block has no drops (full roundFps*60 frames)
-    const firstMinFrames = roundFps * 60; // 1800 for 29.97
-    if (remainder < firstMinFrames) {
-      minuteInBlock = 0;
-      frameInMinute = remainder;
-    } else {
-      remainder -= firstMinFrames;
-      minuteInBlock = 1 + Math.floor(remainder / framesPerMin);
-      frameInMinute = dropCount + (remainder % framesPerMin);
-    }
-
-    const totalMinutes = blocks10 * 10 + minuteInBlock;
-    h = Math.floor(totalMinutes / 60);
-    m = totalMinutes % 60;
-    s = Math.floor(frameInMinute / roundFps);
-    f = frameInMinute % roundFps;
-  } else {
-    h = Math.floor(t / 3600);
-    m = Math.floor((t % 3600) / 60);
-    s = Math.floor(t % 60);
-    const fr = Math.round((t - Math.floor(t)) * 1e9) / 1e9;
-    f = Math.floor(fr * fps);
-  }
-
-  const sep = dropFrame ? ";" : ":";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}${sep}${String(f).padStart(2, "0")}`;
 }
 
 // ── Token validation ────────────────────────────────────────────────────────

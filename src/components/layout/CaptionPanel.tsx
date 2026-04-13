@@ -14,6 +14,7 @@ import {
   isDirty,
 } from "../../store/app";
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
+import { formatDisplayTime } from "../../lib/time";
 import { makePhrase } from "../../lib/pipeline/types";
 import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
@@ -380,6 +381,7 @@ export function CaptionPanel() {
               <CaptionRow
                 key={block.index}
                 block={block}
+                fps={fps}
                 selected={selectedCaptionIndex.value === block.index}
                 playing={playingIndex === block.index}
                 editing={editingIndex.value === block.index}
@@ -439,6 +441,7 @@ export function CaptionPanel() {
 
 function CaptionRow({
   block,
+  fps,
   selected,
   playing,
   editing,
@@ -452,6 +455,7 @@ function CaptionRow({
   onDelete,
 }: {
   block: CaptionBlock;
+  fps: number;
   selected: boolean;
   playing: boolean;
   editing: boolean;
@@ -472,7 +476,7 @@ function CaptionRow({
   if (editing) {
     return (
       <div class="caption-row caption-row--selected" data-caption-index={block.index}>
-        <div class="caption-row-meta">#{block.index} · {formatTime(block.start)} → {formatTime(block.end)}</div>
+        <div class="caption-row-meta">#{block.index} · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}</div>
         <textarea
           ref={textareaRef}
           class="caption-row-editor"
@@ -514,7 +518,7 @@ function CaptionRow({
       onKeyDown={(e) => { if (e.key === "Enter") onClick(); }}
     >
       <div class="caption-row-meta">
-        #{block.index} · {formatTime(block.start)} → {formatTime(block.end)}
+        #{block.index} · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}
         {warnings.length > 0 && (
           <WarningBadge warnings={warnings} />
         )}
@@ -590,12 +594,6 @@ function formatFullTimestamp(iso: string): string {
   });
 }
 
-function formatTime(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  const ms = Math.floor((s % 1) * 1000);
-  return `${m}:${String(sec).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
-}
 
 function handleEdit(index: number, text: string) {
   _editCancelled = true; // prevent re-entry if textarea blur fires after unmount

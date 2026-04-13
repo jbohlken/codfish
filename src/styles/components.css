@@ -836,6 +836,10 @@
   opacity: 0.6;
 }
 
+.timeline-fps-badge--vfr {
+  color: var(--color-warning, #e5a100);
+}
+
 .timeline-btn--timecode {
   font-family: var(--font-mono);
   font-size: var(--text-sm);

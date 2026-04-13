@@ -188,7 +188,9 @@ export async function importMedia(): Promise<void> {
   const newItems = await Promise.all(
     paths.map(async (p) => {
       const item = makeMediaItem(p);
-      item.fps = await probeFps(p);
+      const probe = await probeFps(p);
+      item.fps = probe.fps;
+      if (probe.vfr) item.vfr = true;
       return item;
     })
   );
@@ -214,12 +216,12 @@ export async function relinkMediaItem(mediaId: string): Promise<void> {
   const newPath = flattenDialogResult(result);
   if (!newPath) return;
 
-  const fps = await probeFps(newPath);
+  const probe = await probeFps(newPath);
 
   pushHistory({
     ...proj,
     media: proj.media.map((m) =>
-      m.id !== mediaId ? m : { ...m, path: newPath, name: pathToBasename(newPath), fps }
+      m.id !== mediaId ? m : { ...m, path: newPath, name: pathToBasename(newPath), fps: probe.fps, vfr: probe.vfr || undefined }
     ),
   }, "Re-link media");
 }
@@ -232,13 +234,18 @@ export async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-export async function probeFps(path: string): Promise<number | null> {
+interface ProbeResult {
+  fps: number | null;
+  vfr: boolean;
+}
+
+export async function probeFps(path: string): Promise<ProbeResult> {
   try {
-    return await invoke<number | null>("probe_fps", { path });
+    return await invoke<ProbeResult>("probe_fps", { path });
   } catch (e: any) {
     const msg = typeof e === "string" ? e : e?.message || "Unknown error probing frame rate";
     showError(msg);
-    return null;
+    return { fps: null, vfr: false };
   }
 }
 

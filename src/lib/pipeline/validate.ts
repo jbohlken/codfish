@@ -1,11 +1,7 @@
 import type { CaptionBlock } from "../../types/project";
 import type { CaptionProfile, TimedRule } from "../../types/profile";
-import { framesBetween } from "./timing";
+import { toSeconds, framesBetween, timeLt, timeGt } from "../time";
 import type { ValidationReport, ValidationWarning } from "./types";
-
-function toSeconds(rule: TimedRule, fps: number): number {
-  return rule.unit === "fr" ? rule.value / fps : rule.value;
-}
 
 function fmtTimedValue(rule: TimedRule): string {
   return rule.unit === "fr" ? `${rule.value}fr` : `${rule.value}s`;
@@ -72,7 +68,7 @@ export function validate(
     }
 
     // minDuration
-    if (minDurationSec > 0 && duration < minDurationSec) {
+    if (minDurationSec > 0 && timeLt(duration, minDurationSec)) {
       warnings.push({
         blockIndex,
         rule: "min_duration",
@@ -86,7 +82,7 @@ export function validate(
     }
 
     // maxDuration
-    if (duration > maxDurationSec) {
+    if (timeGt(duration, maxDurationSec)) {
       warnings.push({
         blockIndex,
         rule: "max_duration",
@@ -122,7 +118,7 @@ export function validate(
       const next = blocks[i + 1];
       const gapSeconds = next.start - block.end;
 
-      if (gapSeconds < 0) {
+      if (timeLt(gapSeconds, 0)) {
         warnings.push({
           blockIndex,
           rule: "overlap",
@@ -133,7 +129,7 @@ export function validate(
           targetValue: 0,
           strict: true,
         });
-      } else if (timing.minGapEnabled && gapSeconds > 0 && gapSeconds < minGapSec) {
+      } else if (timing.minGapEnabled && timeGt(gapSeconds, 0) && timeLt(gapSeconds, minGapSec)) {
         const gapFrames = framesBetween(block.end, next.start, fps);
         warnings.push({
           blockIndex,

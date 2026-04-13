@@ -831,26 +831,30 @@ fn clear_recovery(app: AppHandle) -> Result<(), String> {
 // ── Model commands ───────────────────────────────────────────────────────────
 
 /// Probe a media file for its frame rate via the running daemon.
-/// Returns null for audio-only files.
+/// Returns null fps for audio-only files, and vfr=true if variable frame rate detected.
 #[tauri::command]
 async fn probe_fps(
     app: AppHandle,
     path: String,
     state: State<'_, DaemonState>,
-) -> Result<Option<f64>, String> {
+) -> Result<ProbeResult, String> {
     let daemon = {
         let guard = state.lock().await;
         guard.clone().ok_or_else(|| "transcription engine not running".to_string())?
     };
 
-    #[derive(serde::Deserialize)]
-    struct R { fps: Option<f64> }
-
-    let r: R = daemon
+    let r: ProbeResult = daemon
         .request("probe_fps", serde_json::json!({ "path": path }))
         .await?;
-    log(&app, &format!("probe_fps: {:?}", r.fps));
-    Ok(r.fps)
+    log(&app, &format!("probe_fps: {:?} vfr: {}", r.fps, r.vfr));
+    Ok(r)
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+struct ProbeResult {
+    fps: Option<f64>,
+    #[serde(default)]
+    vfr: bool,
 }
 
 // ── Daemon commands ──────────────────────────────────────────────────────────

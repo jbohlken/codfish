@@ -193,6 +193,21 @@ def progress(rid: str, percent: int, message: str):
 
 
 # ── handlers ──────────────────────────────────────────────────────────────────
+def _parse_fps_fraction(s: str | None) -> float | None:
+    """Parse an ffprobe fraction like '30000/1001' into a float, or None."""
+    if not s:
+        return None
+    try:
+        parts = s.split("/")
+        num = float(parts[0])
+        den = float(parts[1]) if len(parts) > 1 else 1.0
+    except ValueError:
+        return None
+    if num == 0 or den == 0:
+        return None
+    return num / den
+
+
 def handle_probe_fps(params: dict) -> dict:
     file_path = params["path"]
     try:
@@ -202,32 +217,35 @@ def handle_probe_fps(params: dict) -> dict:
             stderr=subprocess.DEVNULL,
         ).decode()
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"fps": None}
+        return {"fps": None, "vfr": False}
 
     try:
         data = json.loads(out)
     except json.JSONDecodeError:
-        return {"fps": None}
+        return {"fps": None, "vfr": False}
 
     streams = data.get("streams", [])
     if not streams:
-        return {"fps": None}
+        return {"fps": None, "vfr": False}
 
-    fps_str = streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate")
-    if not fps_str:
-        return {"fps": None}
+    stream = streams[0]
+    avg_fps = _parse_fps_fraction(stream.get("avg_frame_rate"))
+    r_fps = _parse_fps_fraction(stream.get("r_frame_rate"))
 
-    try:
-        parts = fps_str.split("/")
-        num = float(parts[0])
-        den = float(parts[1]) if len(parts) > 1 else 1.0
-    except ValueError:
-        return {"fps": None}
+    fps = avg_fps or r_fps
+    if fps is None:
+        return {"fps": None, "vfr": False}
 
-    if num == 0 or den == 0:
-        return {"fps": None}
+    # VFR heuristic: r_frame_rate is a raw timebase (1000, 90000, etc.)
+    # or significantly different from avg_frame_rate
+    vfr = False
+    if avg_fps and r_fps:
+        if r_fps > 120 and abs(r_fps - avg_fps) > 1:
+            vfr = True
+        elif r_fps <= 120 and abs(r_fps - avg_fps) / max(r_fps, 1) > 0.05:
+            vfr = True
 
-    fps = num / den
+    # Snap known fractional rates to their conventional labels
     snaps = [(23.976, 24000 / 1001), (29.97, 30000 / 1001), (59.94, 60000 / 1001)]
     for label, exact in snaps:
         if abs(fps - exact) < 0.01:
@@ -236,7 +254,7 @@ def handle_probe_fps(params: dict) -> dict:
     else:
         fps = round(fps * 1000) / 1000
 
-    return {"fps": fps}
+    return {"fps": fps, "vfr": vfr}
 
 
 def _check_has_audio(file_path: str):
