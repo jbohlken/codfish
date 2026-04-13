@@ -1122,7 +1122,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let app_menu = SubmenuBuilder::new(handle, "Codfish")
-                    .about(None)
+                    .item(&about_item)
                     .separator()
                     .services()
                     .separator()
@@ -1159,8 +1159,8 @@ pub fn run() {
                 .checked(true)
                 .build(handle)?;
 
-            let help_item = MenuItemBuilder::new("Help…")
-                .id("menu_help")
+            let about_item = MenuItemBuilder::new("About Codfish")
+                .id("menu_about")
                 .build(handle)?;
             let feedback_item = MenuItemBuilder::new("Submit Feedback…")
                 .id("menu_feedback")
@@ -1194,7 +1194,6 @@ pub fn run() {
                     .minimize()
                     .build()?;
                 let help_menu = SubmenuBuilder::new(handle, "Help")
-                    .item(&help_item)
                     .item(&feedback_item)
                     .build()?;
                 menu_builder = menu_builder
@@ -1217,7 +1216,7 @@ pub fn run() {
                     .item(&dark_mode_item)
                     .build()?;
                 let help_menu = SubmenuBuilder::new(handle, "Help")
-                    .item(&help_item)
+                    .item(&about_item)
                     .item(&feedback_item)
                     .build()?;
                 menu_builder = menu_builder

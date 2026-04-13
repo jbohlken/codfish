@@ -24,7 +24,7 @@ import { ProfileManager, openProfileManager, requestCloseProfileManager } from "
 import { ContextMenu } from "./components/ContextMenu";
 import { MediaSettings } from "./components/MediaSettings";
 import { UnsavedChanges } from "./components/UnsavedChanges";
-import { HelpModal, helpOpen } from "./components/HelpModal";
+import { AboutModal, aboutOpen } from "./components/AboutModal";
 import { Tooltip } from "./components/Tooltip";
 import { SidecarSetup } from "./components/SidecarSetup";
 import { Splash, startDaemon } from "./components/Splash";
@@ -32,7 +32,6 @@ import { daemonError } from "./store/app";
 import { useUpdateChecker, sidecarUpdate, UpdateBlocker, isUpdating } from "./components/UpdateNotice";
 import { BugReportModal, bugReportOpen } from "./components/BugReportModal";
 import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery";
-import { ensureGpuDetected } from "./lib/gpu";
 import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
 import { FormatManager, openFormatManager, requestCloseFormatManager } from "./components/FormatManager";
@@ -42,8 +41,6 @@ import { theme, toggleTheme } from "./store/theme";
 export function App() {
   useUpdateChecker();
   useAutosaveRecovery();
-  ensureGpuDetected();
-
   // On boot, check for a recovery snapshot and offer to restore it.
   // Gated on sidecar + daemon + profiles being ready so the prompt doesn't
   // queue up behind the Splash/SidecarSetup screens.
@@ -298,7 +295,7 @@ export function App() {
         case "export_formats": requestCloseProfileManager().then((ok) => { if (ok) openFormatManager(); }); break;
         case "profiles": requestCloseFormatManager().then((ok) => { if (ok) openProfileManager(); }); break;
         case "dark_mode": toggleTheme(); break;
-        case "help": helpOpen.value = true; break;
+        case "about": aboutOpen.value = true; break;
         case "feedback": bugReportOpen.value = true; break;
       }
     });
@@ -409,7 +406,7 @@ export function App() {
         <MediaSettings />
         <FormatManager />
         <UnsavedChanges />
-        <HelpModal />
+        <AboutModal />
         <BugReportModal />
         <RecoveryPrompt />
         <Tooltip />
