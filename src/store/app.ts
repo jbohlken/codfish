@@ -99,7 +99,7 @@ export const selectedMedia = computed((): MediaItem | null => {
 
 export const selectedCaption = computed((): CaptionBlock | null => {
   if (!selectedMedia.value || selectedCaptionIndex.value === null) return null;
-  return selectedMedia.value.captions[selectedCaptionIndex.value] ?? null;
+  return selectedMedia.value.captions.find((c) => c.index === selectedCaptionIndex.value) ?? null;
 });
 
 export const activeProfile = computed((): CaptionProfile => {

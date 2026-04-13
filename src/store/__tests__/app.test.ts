@@ -311,7 +311,7 @@ describe("derived signals", () => {
       project.value = makeProject("Test", 3);
       selectedMediaId.value = "media-1";
       selectedCaptionIndex.value = 1;
-      expect(selectedCaption.value?.lines).toEqual(["Caption 2"]);
+      expect(selectedCaption.value?.lines).toEqual(["Caption 1"]);
     });
 
     it("returns null for out-of-bounds index", () => {
