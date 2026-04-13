@@ -104,8 +104,11 @@ function splitCaption(index: number) {
   const maxLines = profile.formatting.maxLines.value;
 
   // Words source: rawWords filtered to this block's time range.
-  // Not available for manually added captions.
-  const sourceWords = media.rawWords?.filter((w) => w.start < block.end && w.end > block.start) ?? [];
+  // Not available for manually added captions, and skipped for edited captions
+  // so we don't overwrite the user's text with rawWords-derived text.
+  const sourceWords = block.edited
+    ? []
+    : media.rawWords?.filter((w) => w.start < block.end && w.end > block.start) ?? [];
 
   let linesA: string[];
   let linesB: string[];
@@ -166,10 +169,15 @@ function mergeCaption(index: number) {
   const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
   const maxLines = profile.formatting.maxLines.value;
 
+  // If either side was manually edited or added, fall back to text concat
+  // so we don't overwrite the user's text with rawWords-derived text.
+  const eitherEdited = blockA.edited || blockB.edited;
   let mergedLines: string[];
-  const sourceWords = media.rawWords?.filter(
-    (w) => w.start < blockB.end && w.end > blockA.start
-  );
+  const sourceWords = eitherEdited
+    ? undefined
+    : media.rawWords?.filter(
+        (w) => w.start < blockB.end && w.end > blockA.start
+      );
 
   if (sourceWords && sourceWords.length > 0) {
     mergedLines = formatPhraseToCaptionLines(
@@ -188,6 +196,7 @@ function mergeCaption(index: number) {
     end: blockB.end,
     lines: mergedLines,
     speaker,
+    ...(eitherEdited ? { edited: true } : {}),
   };
 
   const newCaptions = [
@@ -231,6 +240,7 @@ function addCaption() {
     start,
     end,
     lines: [""],
+    edited: true,
   };
 
   const newCaptions = [
@@ -688,7 +698,7 @@ function handleEdit(index: number, text: string) {
       m.id !== media.id ? m : {
         ...m,
         captions: m.captions.map((c) =>
-          c.index !== index ? c : { ...c, lines }
+          c.index !== index ? c : { ...c, lines, edited: true }
         ),
       }
     ),

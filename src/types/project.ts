@@ -13,6 +13,10 @@ export interface CaptionBlock {
   lines: string[];
   speaker?: string;
   words?: Word[];   // populated during pipeline, not persisted to .cod file
+  /// True when the caption's text was manually edited or the caption was
+  /// manually added. Split/merge fall back to text-only operations on edited
+  /// captions so user edits aren't overwritten by rawWords-derived text.
+  edited?: boolean;
 }
 
 export interface ExportRecord {
