@@ -1216,8 +1216,9 @@ pub fn run() {
                     .item(&dark_mode_item)
                     .build()?;
                 let help_menu = SubmenuBuilder::new(handle, "Help")
-                    .item(&about_item)
                     .item(&feedback_item)
+                    .separator()
+                    .item(&about_item)
                     .build()?;
                 menu_builder = menu_builder
                     .item(&edit_menu)
