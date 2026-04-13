@@ -16,6 +16,7 @@ const SHORTCUTS = [
   { key: "A",              desc: "Add caption at playhead" },
   { key: "E",              desc: "Edit selected caption" },
   { key: "S",              desc: "Split selected caption at playhead" },
+  { key: "M",              desc: "Merge selected caption with next" },
   { key: "Delete",         desc: "Delete selected caption" },
   { key: "Escape",         desc: "Deselect caption / cancel edit" },
   { group: "History" },

@@ -655,7 +655,7 @@
 
 .btn-caption-action:disabled {
   opacity: 0.35;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .btn-caption-action--delete {

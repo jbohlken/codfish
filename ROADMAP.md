@@ -6,7 +6,7 @@ Features shortlisted for the next feature release. Current priority is bugfixes 
 
 - ~~**Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export~~
 - **Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid
-- **Merge captions** — combine adjacent captions (inverse of split)
+- ~~**Merge captions** — combine adjacent captions (inverse of split)~~
 - ~~**UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface~~
 - ~~**Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling~~
 - ~~**Audit undo/redo functionality** — make sure it's solid~~

@@ -16,7 +16,7 @@ import {
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
 import { formatDisplayTime } from "../../lib/time";
 import { makePhrase } from "../../lib/pipeline/types";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { openFormatManager } from "../FormatManager";
 import { validate } from "../../lib/pipeline/validate";
@@ -149,6 +149,63 @@ function splitCaption(index: number) {
   selectedCaptionIndex.value = blockA.index;
 }
 
+function mergeCaption(index: number) {
+  const proj = project.value;
+  const media = selectedMedia.value;
+  if (!proj || !media) return;
+
+  const pos = media.captions.findIndex((c) => c.index === index);
+  if (pos < 0 || pos >= media.captions.length - 1) return;
+
+  const blockA = media.captions[pos];
+  const blockB = media.captions[pos + 1];
+
+  const speaker = blockA.speaker === blockB.speaker ? blockA.speaker : undefined;
+
+  const profile = activeProfile.value;
+  const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
+  const maxLines = profile.formatting.maxLines.value;
+
+  let mergedLines: string[];
+  const sourceWords = media.rawWords?.filter(
+    (w) => w.start < blockB.end && w.end > blockA.start
+  );
+
+  if (sourceWords && sourceWords.length > 0) {
+    mergedLines = formatPhraseToCaptionLines(
+      makePhrase(sourceWords),
+      maxCharsPerLine,
+      maxLines,
+    );
+  } else {
+    const combined = [...blockA.lines, ...blockB.lines].join(" ").trim();
+    mergedLines = combined.length > 0 ? [combined] : [""];
+  }
+
+  const merged: CaptionBlock = {
+    index: 0,
+    start: blockA.start,
+    end: blockB.end,
+    lines: mergedLines,
+    speaker,
+  };
+
+  const newCaptions = [
+    ...media.captions.slice(0, pos),
+    merged,
+    ...media.captions.slice(pos + 2),
+  ].map((c, i) => ({ ...c, index: i + 1 }));
+
+  pushHistory({
+    ...proj,
+    media: proj.media.map((m) =>
+      m.id !== media.id ? m : { ...m, captions: newCaptions }
+    ),
+  }, "Merge captions");
+
+  selectedCaptionIndex.value = pos + 1;
+}
+
 function addCaption() {
   const proj = project.value;
   const media = selectedMedia.value;
@@ -223,6 +280,9 @@ export function CaptionPanel() {
       } else if (e.key === "s" && !e.ctrlKey && !e.metaKey && idx !== null) {
         e.preventDefault();
         splitCaption(idx);
+      } else if (e.key === "m" && !e.ctrlKey && !e.metaKey && idx !== null) {
+        e.preventDefault();
+        mergeCaption(idx);
       } else if (e.key === "a" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         addCaption();
@@ -387,6 +447,7 @@ export function CaptionPanel() {
                 editing={editingIndex.value === block.index}
                 warnings={warningsByIndex.get(block.index) ?? []}
                 splitEnabled={currentTime > block.start && currentTime < block.end}
+                mergeEnabled={block.index < media.captions.length}
                 onMouseDown={() => {
                   if (editingIndex.value !== null && editingIndex.value !== block.index) {
                     handleEdit(editingIndex.value, editText.value);
@@ -405,6 +466,7 @@ export function CaptionPanel() {
                 }}
                 onEdit={(text) => handleEdit(block.index, text)}
                 onSplit={() => splitCaption(block.index)}
+                onMerge={() => mergeCaption(block.index)}
                 onDelete={() => deleteCaption(block.index)}
               />
             ))}
@@ -447,11 +509,13 @@ function CaptionRow({
   editing,
   warnings,
   splitEnabled,
+  mergeEnabled,
   onMouseDown,
   onClick,
   onDblClick,
   onEdit,
   onSplit,
+  onMerge,
   onDelete,
 }: {
   block: CaptionBlock;
@@ -461,11 +525,13 @@ function CaptionRow({
   editing: boolean;
   warnings: ValidationWarning[];
   splitEnabled: boolean;
+  mergeEnabled: boolean;
   onMouseDown: () => void;
   onClick: () => void;
   onDblClick: () => void;
   onEdit: (text: string) => void;
   onSplit: () => void;
+  onMerge: () => void;
   onDelete: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -544,6 +610,14 @@ function CaptionRow({
             onClick={onSplit}
           >
             <Scissors size={14} />
+          </button>
+          <button
+            class="btn-caption-action"
+            disabled={!mergeEnabled}
+            data-tooltip={mergeEnabled ? "Merge with next (M)" : "No next caption to merge with"}
+            onClick={onMerge}
+          >
+            <ArrowsMerge size={14} />
           </button>
           <button
             class="btn-caption-action btn-caption-action--delete"
