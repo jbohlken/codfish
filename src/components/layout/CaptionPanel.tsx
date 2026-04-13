@@ -14,6 +14,7 @@ import {
   isDirty,
 } from "../../store/app";
 import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
+import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
 import { makePhrase } from "../../lib/pipeline/types";
 import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
@@ -97,7 +98,20 @@ function splitCaption(index: number) {
   if (t <= block.start || t >= block.end) return;
 
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
-  const splitPoint = snapToFrame(t, fps);
+
+  // Caption must be at least 2 frames long to produce two non-empty halves.
+  const totalFrames = framesBetween(block.start, block.end, fps);
+  if (totalFrames < 2) return;
+
+  // Snap to nearest frame, then round inward if we landed on a boundary so
+  // both halves are guaranteed to be at least 1 frame long.
+  let splitPoint = snapToFrame(t, fps);
+  const leftFrames = framesBetween(block.start, splitPoint, fps);
+  if (leftFrames < 1) {
+    splitPoint = snapToFrame(block.start + 1 / fps, fps);
+  } else if (leftFrames >= totalFrames) {
+    splitPoint = snapToFrame(block.end - 1 / fps, fps);
+  }
 
   const profile = activeProfile.value;
   const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
@@ -456,7 +470,14 @@ export function CaptionPanel() {
                 playing={playingIndex === block.index}
                 editing={editingIndex.value === block.index}
                 warnings={warningsByIndex.get(block.index) ?? []}
-                splitEnabled={currentTime > block.start && currentTime < block.end}
+                splitEnabled={currentTime > block.start && currentTime < block.end && framesBetween(block.start, block.end, fps) >= 2}
+                splitTooltip={
+                  framesBetween(block.start, block.end, fps) < 2
+                    ? "Caption too short to split"
+                    : currentTime > block.start && currentTime < block.end
+                      ? "Split at playhead (S)"
+                      : "Position playhead inside this caption to split"
+                }
                 mergeEnabled={block.index < media.captions.length}
                 onMouseDown={() => {
                   if (editingIndex.value !== null && editingIndex.value !== block.index) {
@@ -519,6 +540,7 @@ function CaptionRow({
   editing,
   warnings,
   splitEnabled,
+  splitTooltip,
   mergeEnabled,
   onMouseDown,
   onClick,
@@ -535,6 +557,7 @@ function CaptionRow({
   editing: boolean;
   warnings: ValidationWarning[];
   splitEnabled: boolean;
+  splitTooltip: string;
   mergeEnabled: boolean;
   onMouseDown: () => void;
   onClick: () => void;
@@ -616,7 +639,7 @@ function CaptionRow({
           <button
             class="btn-caption-action"
             disabled={!splitEnabled}
-            data-tooltip={splitEnabled ? "Split at playhead (S)" : "Position playhead inside this caption to split"}
+            data-tooltip={splitTooltip}
             onClick={onSplit}
           >
             <Scissors size={14} />
