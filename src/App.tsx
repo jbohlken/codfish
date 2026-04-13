@@ -326,6 +326,17 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Block browser/devtools shortcuts in release builds (F5 refresh, Ctrl+Shift+I, Ctrl+R, etc.)
+      if (!import.meta.env.DEV && (
+        e.key === "F5" ||
+        (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "i") ||
+        (e.metaKey && e.shiftKey && e.key.toLowerCase() === "i") ||
+        (e.ctrlKey && e.key.toLowerCase() === "r") ||
+        (e.metaKey && e.key.toLowerCase() === "r")
+      )) {
+        e.preventDefault();
+        return;
+      }
       // Swallow everything while an update is in flight — the blocker is up
       // and there's no project state left to act on.
       if (isUpdating()) {

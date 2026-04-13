@@ -135,8 +135,6 @@ describe("filterAutocomplete", () => {
   it("surfaces index variants in variant mode", () => {
     const idx = tokens(filterAutocomplete("index:"));
     expect(idx).toContain("{{index:1}}");
-    expect(idx).toContain("{{index:0:3}}");
-    expect(idx).toContain("{{index:1:3}}");
   });
 
   it("further filters variants by the typed suffix", () => {

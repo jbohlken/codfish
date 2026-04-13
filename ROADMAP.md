@@ -4,11 +4,10 @@
 
 Features shortlisted for the next feature release. Current priority is bugfixes and stabilization.
 
-- **Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export
+- ~~**Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export~~
 - **Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid
 - **Merge captions** — combine adjacent captions (inverse of split)
-- **UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface
-  - How are model and language stored per project now in comparison to the caption profile and export format?
+- ~~**UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface~~
 - **Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling
 - **Audit undo/redo functionality** — make sure it's solid
   - Decide redo accelerator per platform: `Ctrl+Y` vs `Ctrl+Shift+Z` on Windows (currently menu shows `Ctrl+Shift+Z` on both; `Ctrl+Y` works via keydown fallback)

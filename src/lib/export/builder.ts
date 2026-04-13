@@ -38,11 +38,8 @@ export const TOKEN_GROUPS: TokenGroup[] = [
   {
     group: "Caption",
     tokens: [
-      { token: "{{index}}", description: "0-based. {{index:1}} for 1-based, {{index:N:W}} to pad to W digits", perCaption: true },
+      { token: "{{index}}", description: "0-based. {{index:N}} for N-based, {{index:N:W}} to pad to W digits", perCaption: true },
       { token: "{{index:1}}", description: "1-based (offset by 1)", perCaption: true },
-      { token: "{{index:0:3}}", description: "0-based, zero-padded to 3 digits", perCaption: true },
-      { token: "{{index:1:3}}", description: "1-based, zero-padded to 3 digits", perCaption: true },
-      { token: "{{index:1:4}}", description: "1-based, zero-padded to 4 digits", perCaption: true },
       { token: "{{text}}", description: "All lines joined with newlines", perCaption: true },
       { token: "{{text:space}}", description: "All lines joined with spaces", perCaption: true },
     ],
@@ -50,17 +47,17 @@ export const TOKEN_GROUPS: TokenGroup[] = [
   {
     group: "Timing",
     tokens: [
-      { token: "{{start}}", description: "Raw seconds, e.g. 1.2", perCaption: true },
+      { token: "{{start}}", description: "Start time as raw seconds", perCaption: true },
       { token: "{{start:HH:mm:ss.SSS}}", description: "00:00:01.200", perCaption: true },
       { token: "{{start:HH:mm:ss,SSS}}", description: "00:00:01,200", perCaption: true },
       { token: "{{start:HH:mm:ss}}", description: "00:00:01", perCaption: true },
       { token: "{{start:X.SSS}}", description: "1.200", perCaption: true },
-      { token: "{{end}}", description: "Raw seconds", perCaption: true },
+      { token: "{{end}}", description: "End time as raw seconds", perCaption: true },
       { token: "{{end:HH:mm:ss.SSS}}", description: "00:00:03.500", perCaption: true },
       { token: "{{end:HH:mm:ss,SSS}}", description: "00:00:03,500", perCaption: true },
       { token: "{{end:HH:mm:ss}}", description: "00:00:03", perCaption: true },
       { token: "{{end:X.SSS}}", description: "3.500", perCaption: true },
-      { token: "{{duration}}", description: "end \u2212 start as raw seconds", perCaption: true },
+      { token: "{{duration}}", description: "Duration as raw seconds (end − start)", perCaption: true },
       { token: "{{duration:HH:mm:ss.SSS}}", description: "00:00:02.300", perCaption: true },
       { token: "{{duration:HH:mm:ss,SSS}}", description: "00:00:02,300", perCaption: true },
       { token: "{{duration:HH:mm:ss}}", description: "00:00:02", perCaption: true },
@@ -80,7 +77,7 @@ export const TOKEN_GROUPS: TokenGroup[] = [
     group: "Global",
     tokens: [
       { token: "{{count}}", description: "Total number of captions" },
-      { token: "{{json}}", description: "Full caption data as formatted JSON" },
+      { token: "{{json}}", description: "All captions as formatted JSON" },
     ],
   },
   {
@@ -98,9 +95,9 @@ export const TOKENS: TokenDef[] = TOKEN_GROUPS.flatMap((g) => g.tokens);
 // ── Sample captions for live preview ────────────────────────────────────────
 
 export const SAMPLE_CAPTIONS: SerializedCaption[] = [
-  { index: 0, start: 1.2, end: 3.5, lines: ["Hello world"], speaker: "Alice" },
-  { index: 1, start: 3.8, end: 5.1, lines: ["From the builder"], speaker: null },
-  { index: 2, start: 6.0, end: 8.75, lines: ["Line one", "Line two"], speaker: "Bob" },
+  { index: 0, start: 1.2, end: 3.5, lines: ["Hello world"] },
+  { index: 1, start: 3.8, end: 5.1, lines: ["From the builder"] },
+  { index: 2, start: 6.0, end: 8.75, lines: ["Line one", "Line two"] },
 ];
 
 /** Preview fps for SMPTE tokens. 29.97 so DF preview is meaningful. */
@@ -278,11 +275,11 @@ export function formatTime(t: number, fmt: string): string {
   let i = 0;
   while (i < fmt.length) {
     const c2 = fmt.substring(i, i + 2);
-    const c3 = fmt.substring(i, i + 3);
-    if (c3 === "SSS") {
-      out += String(Math.floor(fr * 1000)).padStart(3, "0"); i += 3;
-    } else if (c2 === "SS" && fmt.charAt(i + 2) !== "S") {
-      out += String(Math.floor(fr * 100)).padStart(2, "0"); i += 2;
+    // Count consecutive S's for fractional precision (S=tenths, SS=hundredths, SSS=millis, etc.)
+    if (fmt.charAt(i) === "S") {
+      let n = 0;
+      while (i + n < fmt.length && fmt.charAt(i + n) === "S") n++;
+      out += String(Math.floor(fr * 10 ** n)).padStart(n, "0"); i += n;
     } else if (c2 === "HH") {
       out += String(h).padStart(2, "0"); i += 2;
     } else if (c2 === "mm") {
@@ -297,8 +294,6 @@ export function formatTime(t: number, fmt: string): string {
       out += String(mn); i += 1;
     } else if (fmt.charAt(i) === "s") {
       out += String(sc); i += 1;
-    } else if (fmt.charAt(i) === "S") {
-      out += String(Math.floor(fr * 10)); i += 1;
     } else {
       out += fmt.charAt(i); i += 1;
     }
@@ -493,12 +488,11 @@ function isValidDynamicToken(key: string): boolean {
 function isValidTimeFormat(fmt: string): boolean {
   // Strip recognized components (longest first), then check remaining chars
   const stripped = fmt
-    .replace(/SSS/g, "")
+    .replace(/S+/g, "")
     .replace(/HH/g, "")
     .replace(/mm/g, "")
     .replace(/ss/g, "")
-    .replace(/SS/g, "")
-    .replace(/[HmsXS]/g, "");
+    .replace(/[HmsX]/g, "");
   // Must have consumed at least one component
   if (stripped.length === fmt.length) return false;
   // Every remaining character must be an allowed literal

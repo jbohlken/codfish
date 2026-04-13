@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
-import { project, isDirty, profiles, selectedProfile, pushHistory } from "../../store/app";
+import { project, isDirty, profiles, selectedProfile } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
 import { CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { openProfileManager } from "../ProfileManager";
@@ -103,14 +103,14 @@ export function TitleBar() {
                 badge: cacheLoaded ? !(cached[m.id] ?? true) : undefined,
               }))}
               value={proj.transcriptionModel}
-              onChange={(v) => pushHistory({ ...proj, transcriptionModel: v }, "Change model")}
+              onChange={(v) => { project.value = { ...proj, transcriptionModel: v }; isDirty.value = true; }}
             />
             <SelectButton
               icon={Translate}
               tooltip="Language"
               options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
               value={proj.language}
-              onChange={(v) => pushHistory({ ...proj, language: v }, "Change language")}
+              onChange={(v) => { project.value = { ...proj, language: v }; isDirty.value = true; }}
             />
 
             <div class="titlebar-divider" />

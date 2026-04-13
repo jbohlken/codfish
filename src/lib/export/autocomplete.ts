@@ -95,7 +95,7 @@ export interface GrammarHelp {
 }
 
 const TIME_FORMAT_LINES = [
-  "HH hours · mm min · ss sec · SSS millis · SS centi · X total seconds",
+  "HH hours · mm min · ss sec · S+ fractional (S=tenths, SS=hundredths, SSS=millis, …) · X total seconds",
   "Drop parts you don't need: {{start:mm:ss}} → 01:30",
 ];
 

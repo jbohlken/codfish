@@ -22,7 +22,6 @@ export interface SerializedCaption {
   start: number;    // seconds
   end: number;      // seconds
   lines: string[];
-  speaker: string | null;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -57,7 +56,6 @@ export async function exportCaptions(
     start: c.start,
     end: c.end,
     lines: c.lines,
-    speaker: c.speaker ?? null,
   }));
 
   const content = await runFormat(format.formatPath, serialized, fps);
