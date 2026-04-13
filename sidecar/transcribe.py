@@ -47,6 +47,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+VERSION = "0.5.0"
+
 # ── stdout protocol setup ─────────────────────────────────────────────────────
 # Force UTF-8 so non-ASCII paths don't blow up on Windows.
 try:
@@ -428,6 +430,10 @@ HANDLERS = {
 
 
 def main():
+    if "--version" in sys.argv:
+        print(VERSION)
+        sys.exit(0)
+
     # Protocol-level side effects must NOT run at module level: on macOS,
     # PyTorch / pyannote multiprocessing workers use the "spawn" start method,
     # which re-imports this module from the top in each worker process. Anything
@@ -436,7 +442,7 @@ def main():
     emit({"event": "booting"})
     ensure_ffmpeg_on_path()
     log(
-        f"boot pid={os.getpid()} device={DEVICE} compute_type={COMPUTE_TYPE} "
+        f"boot v={VERSION} pid={os.getpid()} device={DEVICE} compute_type={COMPUTE_TYPE} "
         f"torch={torch.__version__} python={sys.version.split()[0]}",
         tag="boot",
     )

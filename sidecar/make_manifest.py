@@ -3,7 +3,10 @@
 Generate a sidecar-manifest.json for a Codfish sidecar release.
 
 Usage:
-    python sidecar/make_manifest.py --version 0.1.0 --dir sidecar/dist/
+    python sidecar/make_manifest.py --dir sidecar/dist/
+
+Version is read from the VERSION constant in transcribe.py by default.
+Override with --version if needed.
 
 The --dir should contain release zips named like:
     transcribe-cpu-x86_64-pc-windows-msvc.zip
@@ -19,6 +22,17 @@ import json
 import re
 import sys
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
+def read_version_from_source() -> str:
+    """Read VERSION from transcribe.py — single source of truth."""
+    for line in (SCRIPT_DIR / "transcribe.py").read_text().splitlines():
+        m = re.match(r'^VERSION\s*=\s*["\'](.+)["\']', line)
+        if m:
+            return m.group(1)
+    sys.exit("ERROR: could not find VERSION in transcribe.py")
 
 REPO = "jbohlken/codfish"
 BINARY_PATTERN = re.compile(
@@ -39,9 +53,12 @@ def sha256_file(path: Path) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate sidecar release manifest")
-    parser.add_argument("--version", required=True, help="Sidecar version (e.g. 0.1.0)")
+    parser.add_argument("--version", default=None, help="Sidecar version (default: read from transcribe.py)")
     parser.add_argument("--dir", required=True, help="Directory containing release binaries")
     args = parser.parse_args()
+
+    args.version = args.version or read_version_from_source()
+    print(f"Version: {args.version}")
 
     dist = Path(args.dir)
     if not dist.is_dir():

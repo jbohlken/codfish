@@ -152,7 +152,7 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#sidecar-v}" >> "$GITHUB_OUTPUT"
 
       - name: Generate manifest
-        run: python sidecar/make_manifest.py --version ${{ steps.version.outputs.version }} --dir sidecar/dist
+        run: python sidecar/make_manifest.py --dir sidecar/dist
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
