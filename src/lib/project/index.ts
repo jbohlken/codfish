@@ -10,6 +10,7 @@ import { selectedExportFormat, exportFormats, selectedProfile, profiles } from "
 import { loadFormatSource, listFormats } from "../export";
 import { loadProfiles, loadProfileSource } from "../profiles";
 import type { CodProject, MediaItem } from "../../types/project";
+import { isDropFrameRate } from "../time";
 
 const PROJECT_VERSION = 1;
 
@@ -191,6 +192,7 @@ export async function importMedia(): Promise<void> {
       const probe = await probeFps(p);
       item.fps = probe.fps;
       if (probe.vfr) item.vfr = true;
+      if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
       return item;
     })
   );
@@ -221,7 +223,14 @@ export async function relinkMediaItem(mediaId: string): Promise<void> {
   pushHistory({
     ...proj,
     media: proj.media.map((m) =>
-      m.id !== mediaId ? m : { ...m, path: newPath, name: pathToBasename(newPath), fps: probe.fps, vfr: probe.vfr || undefined }
+      m.id !== mediaId ? m : {
+        ...m,
+        path: newPath,
+        name: pathToBasename(newPath),
+        fps: probe.fps,
+        vfr: probe.vfr || undefined,
+        dropFrame: probe.fps != null && isDropFrameRate(probe.fps) ? true : undefined,
+      }
     ),
   }, "Re-link media");
 }

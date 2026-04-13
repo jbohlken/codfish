@@ -143,7 +143,9 @@ function MediaRow({ item, selected, missing, onClick, onContextMenu }: {
       ? `${item.captions.length} captions`
       : "No captions";
 
-  const fpsLabel = item.fps != null ? `${item.fps} fps` : null;
+  const fpsLabel = item.fps != null
+    ? `${item.fps} fps${item.dropFrame != null ? (item.dropFrame ? " DF" : " NDF") : ""}`
+    : null;
 
   return (
     <button

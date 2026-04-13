@@ -676,7 +676,7 @@ async function handleExport(baseName: string) {
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
 
   try {
-    await exportCaptions(format, media.captions, baseName, fps);
+    await exportCaptions(format, media.captions, baseName, fps, media.dropFrame ?? false);
   } catch (e) {
     showError(String(e));
   }

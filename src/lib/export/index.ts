@@ -50,6 +50,7 @@ export async function exportCaptions(
   captions: CaptionBlock[],
   baseName: string,
   fps: number,
+  dropFrame = false,
 ): Promise<void> {
   const serialized: SerializedCaption[] = captions.map((c) => ({
     index: c.index,
@@ -58,7 +59,7 @@ export async function exportCaptions(
     lines: c.lines,
   }));
 
-  const content = await runFormat(format.formatPath, serialized, fps);
+  const content = await runFormat(format.formatPath, serialized, fps, dropFrame);
 
   const savePath = await save({
     title: "Export Captions",
@@ -130,9 +131,9 @@ export async function exportFormatFile(formatPath: string): Promise<void> {
 
 // ── Format execution ────────────────────────────────────────────────────────
 
-async function runFormat(formatPath: string, captions: SerializedCaption[], fps: number): Promise<string> {
+async function runFormat(formatPath: string, captions: SerializedCaption[], fps: number, dropFrame: boolean): Promise<string> {
   const source = await invoke<string>("load_project", { path: formatPath });
   const config = parseCff(source);
   if (!config) throw new Error(`Invalid .cff format file: "${formatPath}"`);
-  return executeTemplate(config.template, captions, fps);
+  return executeTemplate(config.template, captions, fps, dropFrame);
 }

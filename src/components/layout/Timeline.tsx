@@ -18,11 +18,12 @@ import type { CaptionBlock } from "../../types/project";
 import { snapToFrame } from "../../lib/pipeline";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
-import { formatDisplayTime, isDropFrameRate, type DisplayMode } from "../../lib/time";
+import { formatDisplayTime, type DisplayMode } from "../../lib/time";
 
-const timecodeMode = signal<DisplayMode>(
-  (localStorage.getItem("codfish:timecodeMode") as DisplayMode) || "time"
-);
+type TimecodeCycle = "time" | "smpte" | "frames";
+const VALID_MODES: TimecodeCycle[] = ["time", "smpte", "frames"];
+const stored = localStorage.getItem("codfish:timecodeMode") as TimecodeCycle;
+const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored : "time");
 const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
@@ -46,6 +47,10 @@ export function Timeline() {
   const profileDefaultFps = activeProfile.value.timing.defaultFps;
   const effectiveFps = media?.fps ?? profileDefaultFps;
   const fpsIsDetected = media != null && media.fps != null;
+  // Resolve "smpte" cycle mode to the actual DisplayMode based on media's DF setting
+  const smpteMode: DisplayMode = timecodeMode.value === "smpte" && media?.dropFrame
+    ? "smpte-df"
+    : timecodeMode.value;
 
   const playingIndex = media?.captions.find(
     (c) => currentTime >= c.start && currentTime < c.end
@@ -345,24 +350,21 @@ export function Timeline() {
         </button>
         <span class="timeline-mode-label">
           {timecodeMode.value === "time" && "Time"}
-          {timecodeMode.value === "smpte" && "SMPTE"}
-          {timecodeMode.value === "smpte-df" && "SMPTE DF"}
+          {timecodeMode.value === "smpte" && (media?.dropFrame ? "SMPTE DF" : "SMPTE")}
           {timecodeMode.value === "frames" && "Frames"}
         </span>
         <button
           class="timeline-btn timeline-btn--timecode"
           onClick={() => {
-            const modes: DisplayMode[] = ["time", "smpte"];
-            if (isDropFrameRate(effectiveFps)) modes.push("smpte-df");
-            modes.push("frames");
+            const modes: TimecodeCycle[] = ["time", "smpte", "frames"];
             const next = modes[(modes.indexOf(timecodeMode.value) + 1) % modes.length];
             timecodeMode.value = next;
             localStorage.setItem("codfish:timecodeMode", next);
           }}
           data-tooltip="Click to cycle timecode mode"
         >
-          {formatDisplayTime(currentTime, timecodeMode.value, effectiveFps)}
-          {duration > 0 ? ` / ${formatDisplayTime(duration, timecodeMode.value, effectiveFps)}` : ""}
+          {formatDisplayTime(currentTime, smpteMode, effectiveFps)}
+          {duration > 0 ? ` / ${formatDisplayTime(duration, smpteMode, effectiveFps)}` : ""}
         </button>
         {media && (
           <span
@@ -432,7 +434,7 @@ export function Timeline() {
                   duration={duration}
                   zoom={zoom}
                   visibleWidth={scrollRef.current?.clientWidth ?? 800}
-                  mode={timecodeMode.value}
+                  mode={smpteMode}
                   fps={effectiveFps}
                 />
               )}

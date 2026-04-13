@@ -305,7 +305,7 @@ describe("round-trip: config → cff → parse → config", () => {
 describe("findInvalidTokens", () => {
   it("valid base tokens", () => {
     const valid = ["{{start}}", "{{end}}", "{{duration}}", "{{text}}", "{{text:space}}",
-      "{{start-smpte}}", "{{end-smpte}}", "{{start-smpte-df}}", "{{end-smpte-df}}",
+      "{{start-smpte}}", "{{end-smpte}}",
       "{{count}}", "{{json}}",
       "{{index}}", "{{each}}", "{{/each}}"];
     for (const token of valid) {
@@ -412,26 +412,24 @@ describe("formatSmpte", () => {
 });
 
 describe("SMPTE tokens in template", () => {
-  const run = (tmpl: string, fps = SAMPLE_FPS) =>
-    executeTemplate(tmpl, SAMPLE_CAPTIONS, fps);
-
-  it("start-smpte and end-smpte (NDF)", () => {
-    const output = run("{{each}}{{start-smpte}} {{end-smpte}},{{/each}}");
+  it("start-smpte and end-smpte (NDF — dropFrame=false)", () => {
+    const output = executeTemplate("{{each}}{{start-smpte}} {{end-smpte}},{{/each}}", SAMPLE_CAPTIONS, SAMPLE_FPS, false);
     expect(output).toContain("00:00:01:05 00:00:03:14");
+    expect(output).not.toContain(";");
   });
 
-  it("start-smpte-df (DF at 29.97)", () => {
-    const output = run("{{each}}{{start-smpte-df}},{{/each}}", 29.97);
+  it("start-smpte uses DF when dropFrame=true at 29.97", () => {
+    const output = executeTemplate("{{each}}{{start-smpte}},{{/each}}", SAMPLE_CAPTIONS, 29.97, true);
     expect(output).toContain(";"); // DF uses semicolon
   });
 
-  it("start-smpte-df falls back to NDF at 24fps", () => {
-    const output = run("{{each}}{{start-smpte-df}},{{/each}}", 24);
+  it("start-smpte falls back to NDF at 24fps even with dropFrame=true", () => {
+    const output = executeTemplate("{{each}}{{start-smpte}},{{/each}}", SAMPLE_CAPTIONS, 24, true);
     expect(output).not.toContain(";"); // NDF uses colon
   });
 
   it("smpte tokens are per-caption (empty outside each)", () => {
-    const output = run("before:{{start-smpte}}:after");
+    const output = executeTemplate("before:{{start-smpte}}:after", SAMPLE_CAPTIONS, SAMPLE_FPS, false);
     expect(output).toBe("before::after");
   });
 });
@@ -458,7 +456,7 @@ describe("isValidToken", () => {
   it("accepts static tokens", () => {
     const keys = [
       "start", "end", "duration", "text", "text:space",
-      "start-smpte", "end-smpte", "start-smpte-df", "end-smpte-df",
+      "start-smpte", "end-smpte",
       "count", "json", "index", "each", "/each",
     ];
     for (const k of keys) expect(isValidToken(k), k).toBe(true);
@@ -502,7 +500,7 @@ describe("isPerCaptionToken", () => {
   it("returns true for per-caption keys", () => {
     const keys = [
       "index", "start", "end", "duration", "text", "text:space",
-      "start-smpte", "end-smpte", "start-smpte-df", "end-smpte-df",
+      "start-smpte", "end-smpte",
     ];
     for (const k of keys) expect(isPerCaptionToken(k), k).toBe(true);
   });
@@ -572,13 +570,13 @@ describe("validateTemplate", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("adds a drop-frame advisory when *-smpte-df tokens are used", () => {
+  it("smpte-df tokens are now unrecognized (removed)", () => {
     const t = "{{each}}{{start-smpte-df}}{{/each}}";
     const warnings = validateTemplate(t);
-    expect(warnings.some((w) => /[Dd]rop-frame/.test(w.message))).toBe(true);
+    expect(warnings.some((w) => /Unrecognized token/.test(w.message))).toBe(true);
   });
 
-  it("does not add a drop-frame advisory for regular smpte tokens", () => {
+  it("smpte tokens are valid", () => {
     const t = "{{each}}{{start-smpte}}{{/each}}";
     const warnings = validateTemplate(t);
     expect(warnings).toEqual([]);
