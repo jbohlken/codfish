@@ -7,12 +7,14 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   build-windows:
     runs-on: windows-latest
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -33,20 +35,46 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app
+      - name: Build Tauri app (no release upload)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           CODFISH_GH_PAT: ${{ secrets.CODFISH_GH_PAT }}
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Codfish ${{ github.ref_name }}"
-          releaseBody: ""
-          releaseDraft: true
-          prerelease: false
-          includeUpdaterJson: true
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows installer
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: https://cus.codesigning.azure.net
+          trusted-signing-account-name: codfish
+          certificate-profile-name: codfish-signing
+          files-folder: src-tauri/target/release/bundle/nsis/
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Upload signed artifacts to release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.ref_name }}"
+          # Create draft release if it doesn't exist yet
+          gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create "$tag" --repo "${{ github.repository }}" --title "Codfish $tag" --draft
+          # Upload NSIS installer + updater sig
+          for f in src-tauri/target/release/bundle/nsis/*.exe src-tauri/target/release/bundle/nsis/*.sig; do
+            [ -f "$f" ] && gh release upload "$tag" "$f" --repo "${{ github.repository }}" --clobber
+          done
 
   build-macos:
     runs-on: macos-latest

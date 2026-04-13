@@ -41,9 +41,16 @@ Codfish makes the following network calls, and **only** these:
 
 There are **no analytics, no telemetry, and no third-party tracking** of any kind.
 
+## Code signing
+
+Release builds are code-signed on both platforms:
+
+- **Windows** — Installers are signed via [Azure Trusted Signing](https://azure.microsoft.com/en-us/products/trusted-signing) using a certificate issued to Jared Bohlken. The signing step runs in CI after the build and before the release upload, so only signed binaries are published.
+- **macOS** — Builds are signed with an Apple Developer ID certificate and notarized with Apple's notary service. macOS verifies the signature and notarization ticket on first launch.
+
 ## Update integrity
 
-App updates are distributed via Tauri's built-in updater. Each release artifact is signed with a Minisign private key held only in the project's GitHub Actions secrets. The installed app verifies the signature against an embedded public key before applying any update. Tampered or unsigned update artifacts are rejected.
+App updates are distributed via Tauri's built-in updater. Each release artifact is signed with a Minisign private key held only in the project's GitHub Actions secrets. The installed app verifies the signature against an embedded public key before applying any update. Tampered or unsigned update artifacts are rejected. This is independent of the OS-level code signing described above — both layers must pass.
 
 ## Build provenance
 
