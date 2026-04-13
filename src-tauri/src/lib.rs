@@ -1140,9 +1140,10 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+Z")
                 .enabled(false)
                 .build(handle)?;
+            let redo_accel = if cfg!(target_os = "macos") { "Cmd+Shift+Z" } else { "Ctrl+Y" };
             let redo_item = MenuItemBuilder::new("Redo")
                 .id("menu_redo")
-                .accelerator("CmdOrCtrl+Shift+Z")
+                .accelerator(redo_accel)
                 .enabled(false)
                 .build(handle)?;
 
