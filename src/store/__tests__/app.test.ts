@@ -192,6 +192,43 @@ describe("undo / redo", () => {
     });
   });
 
+  describe("selection restoration", () => {
+    it("restores selectedMediaId on undo even after switching media", () => {
+      resetHistory(makeProject("v0"));
+      selectedMediaId.value = "media-a";
+      selectedCaptionIndex.value = 2;
+      pushHistory(makeProject("v1"), "Edit on media-a");
+      // User switches to a different media item without editing
+      selectedMediaId.value = "media-b";
+      selectedCaptionIndex.value = null;
+      undo();
+      expect(selectedMediaId.value).toBe("media-a");
+      expect(selectedCaptionIndex.value).toBe(2);
+    });
+
+    it("restores selection on redo", () => {
+      resetHistory(makeProject("v0"));
+      selectedMediaId.value = "media-a";
+      selectedCaptionIndex.value = 1;
+      pushHistory(makeProject("v1"), "Edit"); // captures (media-a, 1)
+      selectedMediaId.value = "media-a";
+      selectedCaptionIndex.value = 5;
+      pushHistory(makeProject("v2"), "Another edit"); // captures (media-a, 5)
+      // Undo v2 → land where v2 happened so the user sees what was undone.
+      undo();
+      expect(selectedCaptionIndex.value).toBe(5);
+      // Undo v1 → land where v1 happened.
+      undo();
+      expect(selectedCaptionIndex.value).toBe(1);
+      // Redo v1 → land where v1 was performed.
+      redo();
+      expect(selectedCaptionIndex.value).toBe(1);
+      // Redo v2 → land where v2 was performed.
+      redo();
+      expect(selectedCaptionIndex.value).toBe(5);
+    });
+  });
+
   describe("descriptions", () => {
     it("undoDescription reflects current entry", () => {
       resetHistory(makeProject("v0"));

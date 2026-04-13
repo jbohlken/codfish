@@ -39,6 +39,8 @@ export const daemonError = signal<string | null>(null);
 interface HistoryEntry {
   project: CodProject;
   description: string;
+  selectedMediaId: string | null;
+  selectedCaptionIndex: number | null;
 }
 
 const _history = signal<HistoryEntry[]>([]);
@@ -47,7 +49,12 @@ const _historyIndex = signal(-1);
 /** Reset undo/redo history with the initial project state as the baseline. */
 export function resetHistory(initial?: CodProject) {
   if (initial) {
-    _history.value = [{ project: initial, description: "Open project" }];
+    _history.value = [{
+      project: initial,
+      description: "Open project",
+      selectedMediaId: selectedMediaId.value,
+      selectedCaptionIndex: selectedCaptionIndex.value,
+    }];
     _historyIndex.value = 0;
   } else {
     _history.value = [];
@@ -58,7 +65,12 @@ export function resetHistory(initial?: CodProject) {
 /** Commit a new project state to the undo history and update project. */
 export function pushHistory(newProject: CodProject, description = "Edit") {
   const trimmed = _history.value.slice(0, _historyIndex.value + 1);
-  _history.value = [...trimmed, { project: newProject, description }];
+  _history.value = [...trimmed, {
+    project: newProject,
+    description,
+    selectedMediaId: selectedMediaId.value,
+    selectedCaptionIndex: selectedCaptionIndex.value,
+  }];
   _historyIndex.value = trimmed.length;
   project.value = newProject;
   isDirty.value = true;
@@ -66,15 +78,24 @@ export function pushHistory(newProject: CodProject, description = "Edit") {
 
 export function undo() {
   if (_historyIndex.value <= 0) return;
+  // Restore selection to where the operation we're undoing happened, so the
+  // user can see what changed. Project state rolls back to the previous entry.
+  const undone = _history.value[_historyIndex.value];
   _historyIndex.value--;
-  project.value = _history.value[_historyIndex.value].project;
+  const entry = _history.value[_historyIndex.value];
+  project.value = entry.project;
+  selectedMediaId.value = undone.selectedMediaId;
+  selectedCaptionIndex.value = undone.selectedCaptionIndex;
   isDirty.value = true;
 }
 
 export function redo() {
   if (_historyIndex.value >= _history.value.length - 1) return;
   _historyIndex.value++;
-  project.value = _history.value[_historyIndex.value].project;
+  const entry = _history.value[_historyIndex.value];
+  project.value = entry.project;
+  selectedMediaId.value = entry.selectedMediaId;
+  selectedCaptionIndex.value = entry.selectedCaptionIndex;
   isDirty.value = true;
 }
 
