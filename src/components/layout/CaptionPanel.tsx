@@ -103,6 +103,10 @@ function splitCaption(index: number) {
   const totalFrames = framesBetween(block.start, block.end, fps);
   if (totalFrames < 2) return;
 
+  // Splitting a single-word caption would always leave one half empty.
+  const wordCount = block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length;
+  if (wordCount < 2) return;
+
   // Snap to nearest frame, then round inward if we landed on a boundary so
   // both halves are guaranteed to be at least 1 frame long.
   let splitPoint = snapToFrame(t, fps);
@@ -470,13 +474,20 @@ export function CaptionPanel() {
                 playing={playingIndex === block.index}
                 editing={editingIndex.value === block.index}
                 warnings={warningsByIndex.get(block.index) ?? []}
-                splitEnabled={currentTime > block.start && currentTime < block.end && framesBetween(block.start, block.end, fps) >= 2}
+                splitEnabled={
+                  currentTime > block.start &&
+                  currentTime < block.end &&
+                  framesBetween(block.start, block.end, fps) >= 2 &&
+                  block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length >= 2
+                }
                 splitTooltip={
-                  framesBetween(block.start, block.end, fps) < 2
-                    ? "Caption too short to split"
-                    : currentTime > block.start && currentTime < block.end
-                      ? "Split at playhead (S)"
-                      : "Position playhead inside this caption to split"
+                  block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length < 2
+                    ? "Can't split a single-word caption"
+                    : framesBetween(block.start, block.end, fps) < 2
+                      ? "Caption too short to split"
+                      : currentTime > block.start && currentTime < block.end
+                        ? "Split at playhead (S)"
+                        : "Position playhead inside this caption to split"
                 }
                 mergeEnabled={block.index < media.captions.length}
                 onMouseDown={() => {
