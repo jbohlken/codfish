@@ -3,9 +3,6 @@ import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/pr
 
 // ── Module mocks (must be hoisted) ───────────────────────────────────────────
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
-
 const saveFormatMock = vi.fn(async (filename: string, _content: string) => `/fake/${filename}`);
 const deleteFormatMock = vi.fn(async (_filename: string) => {});
 const loadFormatSourceMock = vi.fn(async (_path: string) => "");
