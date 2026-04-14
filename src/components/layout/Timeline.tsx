@@ -33,7 +33,7 @@ const zoomLevel = signal(1);
 export function resetTimelineView(): void {
   zoomLevel.value = 1;
 }
-type WaveformState = "idle" | "loading" | "ready";
+type WaveformState = "idle" | "loading" | "ready" | "failed";
 const waveformState = signal<WaveformState>("idle");
 
 const SNAP_THRESHOLD_PX = 8;
@@ -101,7 +101,13 @@ export function Timeline() {
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
 
-    // Try loading from cache first, fall back to full decode
+    // Try loading from cache first, fall back to full decode. On failure
+    // (corrupt file, no audio stream, unreachable URL) drop the spinner —
+    // otherwise "Generating waveform…" hangs forever with no feedback.
+    const markFailed = (reason: string) => {
+      flog(reason);
+      if (!cancelled) waveformState.value = "failed";
+    };
     flog(`init path=${media.path}`);
     getCachedPeaks(media.path).then((cached) => {
       if (cancelled) return;
@@ -111,16 +117,16 @@ export function Timeline() {
         // Load with pre-computed peaks — skips the expensive Web Audio decode
         ws.load(url, cached.peaks, cached.duration)
           .then(() => flog("cached load resolved"))
-          .catch((e) => flog(`cached load failed: ${(e as any)?.message ?? String(e)}`));
+          .catch((e) => markFailed(`cached load failed: ${(e as any)?.message ?? String(e)}`));
       } else {
         ws.load(url)
           .then(() => flog("fresh load resolved"))
-          .catch((e) => flog(`fresh load failed: ${(e as any)?.message ?? String(e)}`));
+          .catch((e) => markFailed(`fresh load failed: ${(e as any)?.message ?? String(e)}`));
       }
     });
 
     ws.on("error", (e) => {
-      flog(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
+      markFailed(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
     });
 
     // Sync zoom once audio is decoded and duration is known
@@ -152,12 +158,14 @@ export function Timeline() {
     };
   }, [media?.path]);
 
-  // Sync zoomLevel → WaveSurfer pxPerSec, then re-sync its internal scroll
+  // Sync zoomLevel → WaveSurfer pxPerSec, then re-sync its internal scroll.
+  // Skip when ws hasn't decoded audio yet — the "ready" handler does the
+  // initial zoom. Calling ws.zoom() pre-decode throws "No audio loaded".
   useSignalEffect(() => {
     const ws = wsRef.current;
     const zoom = zoomLevel.value;
     const dur = mediaDuration.value;
-    if (!ws || !dur) return;
+    if (!ws || !dur || !ws.getDuration()) return;
     const visibleWidth = scrollRef.current?.clientWidth ?? 800;
     ws.zoom((visibleWidth * zoom) / dur);
     requestAnimationFrame(() => syncWsScroll());
@@ -272,6 +280,24 @@ export function Timeline() {
     window.addEventListener("mouseup", onUp);
   };
 
+  const zoom = zoomLevel.value;
+
+  const profile = activeProfile.value;
+  const fps = media?.fps ?? profile.timing.defaultFps;
+  const minGapRule = profile.timing.minGapSeconds;
+  const minGap = profile.timing.minGapEnabled
+    ? (minGapRule.unit === "fr" ? minGapRule.value / fps : minGapRule.value)
+    : null;
+  const warningsByIndex = new Map<number, ValidationWarning[]>();
+  if (media) {
+    const report = validate(media.captions, profile, media.fps ?? undefined);
+    for (const w of report.warnings) {
+      const arr = warningsByIndex.get(w.blockIndex) ?? [];
+      arr.push(w);
+      warningsByIndex.set(w.blockIndex, arr);
+    }
+  }
+
   // Live-update caption timing during drag (no history entry yet)
   const handleResizeLive = (index: number, newStart: number, newEnd: number) => {
     const proj = project.value;
@@ -297,24 +323,6 @@ export function Timeline() {
   const handleResizeCommit = () => {
     if (project.value) pushHistory(project.value, "Resize caption");
   };
-
-  const zoom = zoomLevel.value;
-
-  const profile = activeProfile.value;
-  const fps = media?.fps ?? profile.timing.defaultFps;
-  const minGapRule = profile.timing.minGapSeconds;
-  const minGap = profile.timing.minGapEnabled
-    ? (minGapRule.unit === "fr" ? minGapRule.value / fps : minGapRule.value)
-    : null;
-  const warningsByIndex = new Map<number, ValidationWarning[]>();
-  if (media) {
-    const report = validate(media.captions, profile, media.fps ?? undefined);
-    for (const w of report.warnings) {
-      const arr = warningsByIndex.get(w.blockIndex) ?? [];
-      arr.push(w);
-      warningsByIndex.set(w.blockIndex, arr);
-    }
-  }
 
   // Zoom in/out keeping the playhead visually stationary.
   // If the playhead is off-screen, anchors to the center of the visible area instead.
@@ -465,6 +473,11 @@ export function Timeline() {
                   <div class="timeline-waveform-loading">
                     <div class="timeline-waveform-loading-spinner" />
                     <span>Generating waveform…</span>
+                  </div>
+                )}
+                {waveformState.value === "failed" && (
+                  <div class="timeline-waveform-loading">
+                    <span>No waveform available</span>
                   </div>
                 )}
                 {duration > 0 && (
