@@ -14,6 +14,7 @@ import {
   pushHistory,
   activeProfile,
 } from "../../store/app";
+import { editingIndex, editText, commitActiveEdit } from "./CaptionPanel";
 import type { CaptionBlock } from "../../types/project";
 import { snapToFrame } from "../../lib/pipeline";
 import { validate } from "../../lib/pipeline/validate";
@@ -492,6 +493,12 @@ export function Timeline() {
                       selectedCaptionIndex.value = block.index;
                       playbackTime.value = block.start;
                     }}
+                    onDblClick={() => {
+                      selectedCaptionIndex.value = block.index;
+                      isPlaying.value = false;
+                      editingIndex.value = block.index;
+                      editText.value = block.lines.join("\n");
+                    }}
                   />
                 ))}
               </div>
@@ -518,6 +525,7 @@ function ResizableCaptionBlock({
   onResizeLive,
   onResizeCommit,
   onClick,
+  onDblClick,
 }: {
   block: CaptionBlock;
   duration: number;
@@ -533,6 +541,7 @@ function ResizableCaptionBlock({
   onResizeLive: (index: number, start: number, end: number) => void;
   onResizeCommit: () => void;
   onClick: () => void;
+  onDblClick: () => void;
 }) {
   const left = (block.start / duration) * 100;
   const width = ((block.end - block.start) / duration) * 100;
@@ -546,6 +555,15 @@ function ResizableCaptionBlock({
 
   const startEdgeDrag = (e: MouseEvent, edge: "left" | "right") => {
     e.stopPropagation();
+    // stopPropagation prevents the textarea's click-outside listener from
+    // firing, so an active edit would linger through the drag and corrupt
+    // state (resize history pushed with phantom caption still present, then
+    // cancel reverts to pre-add and loses the resize). Commit the edit and
+    // abort this drag — indices may have shifted, so require a fresh click.
+    if (editingIndex.value !== null) {
+      commitActiveEdit();
+      return;
+    }
     const rowEl = blocksRowRef.current;
     if (!rowEl) return;
 
@@ -621,6 +639,7 @@ function ResizableCaptionBlock({
       class={`timeline-block${selected ? " timeline-block--selected" : ""}${playing ? " timeline-block--playing" : ""}${warnClass ? ` ${warnClass}` : ""}`}
       style={{ left: `${left}%`, width: `${width}%` }}
       onClick={onClick}
+      onDblClick={onDblClick}
     >
       <div
         class="timeline-block-handle timeline-block-handle--left"

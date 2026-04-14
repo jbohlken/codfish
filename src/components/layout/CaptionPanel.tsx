@@ -744,6 +744,29 @@ function formatFullTimestamp(iso: string): string {
 }
 
 
+/** Commit any active caption edit. Called from forward-moving menu actions
+ * (save, new, open) so the user's typed text is preserved. Native menu clicks
+ * don't produce a DOM mousedown, so they bypass the textarea's click-outside
+ * commit. */
+export function commitActiveEdit() {
+  const idx = editingIndex.value;
+  if (idx === null) return;
+  handleEdit(idx, editText.value);
+}
+
+/** Discard any active caption edit without committing. Called from backward-
+ * moving menu actions (undo, redo) where auto-committing would insert a new
+ * history entry that the menu label promised would be undone. Mirrors the
+ * Escape-in-textarea behavior. */
+export function cancelActiveEdit() {
+  if (editingIndex.value === null) return;
+  _editCancelled = true;
+  editingIndex.value = null;
+  if (getPendingAddIndex() !== null) {
+    cancelPendingAdd();
+  }
+}
+
 function handleEdit(index: number, text: string) {
   _editCancelled = true; // prevent re-entry if textarea blur fires after unmount
   editingIndex.value = null;
@@ -761,6 +784,20 @@ function handleEdit(index: number, text: string) {
     } else {
       deleteCaption(index);
     }
+    return;
+  }
+
+  // Identity commit: user opened the editor but didn't change the text. Skip
+  // pushing a history entry so Undo operates on the prior real change instead
+  // of this no-op. Pending adds never hit this path — an unchanged pending add
+  // means empty text, which is handled above.
+  const existing = media.captions.find((c) => c.index === index);
+  if (
+    !isPendingAdd &&
+    existing &&
+    existing.lines.length === lines.length &&
+    existing.lines.every((l, i) => l === lines[i])
+  ) {
     return;
   }
 

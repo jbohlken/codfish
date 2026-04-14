@@ -1164,6 +1164,8 @@
   resize: none;
   outline: none;
   line-height: var(--line-height-tight);
+  field-sizing: content;
+  overflow: hidden;
 }
 
 /* ── Confirm Modal ──────────────────────────────────────────────────────── */

@@ -9,7 +9,7 @@ import "./styles/components.css";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
-import { CaptionPanel } from "./components/layout/CaptionPanel";
+import { CaptionPanel, commitActiveEdit, cancelActiveEdit } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
 import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, openRecent } from "./lib/project";
@@ -282,6 +282,17 @@ export function App() {
       if (isUpdating()) return;
       const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
       if (!sidecarReady || daemonStatus.value !== "ready") return;
+      // Forward-moving actions (save/new/open/close) commit in-flight edits so
+      // the user's typed text is preserved. Backward-moving actions (undo/redo)
+      // cancel them — committing would insert a history entry between the
+      // action the menu label promised and the one actually performed.
+      // Native menu clicks bypass the textarea's click-outside commit because
+      // they don't produce a DOM mousedown.
+      if (e.payload === "undo" || e.payload === "redo") {
+        cancelActiveEdit();
+      } else {
+        commitActiveEdit();
+      }
       const hasProject = !!project.value;
       switch (e.payload) {
         case "new_project": newProjectGuarded(); break;
