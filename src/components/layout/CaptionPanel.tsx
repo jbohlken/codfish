@@ -75,6 +75,7 @@ function deleteCaption(index: number) {
   if (!proj || !media) return;
 
   const pos = media.captions.findIndex((c) => c.index === index);
+  if (pos < 0) return;
   const newCaptions = media.captions
     .filter((c) => c.index !== index)
     .map((c, i) => ({ ...c, index: i + 1 }));
@@ -239,20 +240,21 @@ function addCaption() {
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
-  const t = playbackTime.value;
-
-  // Can't add inside an existing caption
-  if (media.captions.some((c) => t >= c.start && t < c.end)) return;
-
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
-  const start = snapToFrame(t, fps);
-  const nextCaption = media.captions.find((c) => c.start > t);
-  const maxEnd = nextCaption?.start ?? (mediaDuration.value || start + 5);
+  const start = snapToFrame(playbackTime.value, fps);
+
+  // Can't add inside an existing caption. Check on the snapped start, not the
+  // raw playhead — snapping can round into a caption if its end isn't frame-
+  // aligned (possible with imports / pre-frame-snap project files).
+  if (media.captions.some((c) => start >= c.start && start < c.end)) return;
+
+  const nextCaption = media.captions.find((c) => c.start > start);
+  const maxEnd = nextCaption?.start ?? mediaDuration.value ?? Infinity;
   const end = snapToFrame(Math.min(start + 2, maxEnd), fps);
 
   if (end <= start) return;
 
-  const insertPos = media.captions.filter((c) => c.end <= t).length;
+  const insertPos = media.captions.filter((c) => c.end <= start).length;
 
   const newBlock: CaptionBlock = {
     index: 0,

@@ -64,12 +64,14 @@ I think undo history can result in bringing back an added caption that has no co
 
 ### Edit (E / double-click)
 
-- [ ] **E1** Double-click a caption -- enters edit mode
-- [ ] **E2** Press E on selected caption -- enters edit mode
-- [ ] **E3** Edit text and press Enter -- saves changes
-- [ ] **E4** Edit text and press Escape -- discards changes
-- [ ] **E5** Clear all text and press Enter -- deletes the caption
-- [ ] **E6** Multi-line edit with Shift+Enter -- preserves line breaks
+- [?] **E1** Double-click a caption -- enters edit mode
+ --- Should we do the same for double clicking the caption in the timeline?
+- [X] **E2** Press E on selected caption -- enters edit mode
+- [X] **E3** Edit text and press Enter -- saves changes
+- [X] **E4** Edit text and press Escape -- discards changes
+- [X] **E5** Clear all text and press Enter -- deletes the caption
+- [!] **E6** Multi-line edit with Shift+Enter -- preserves line breaks
+ --- Scrollbar appears after 2 lines on the edit text field, can we flex with the content? the non-editing state already does this.
 
 ---
 

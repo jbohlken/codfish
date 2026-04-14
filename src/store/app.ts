@@ -60,6 +60,7 @@ const _historyIndex = signal(-1);
 
 /** Reset undo/redo history with the initial project state as the baseline. */
 export function resetHistory(initial?: CodProject) {
+  _pendingAdd = null;
   if (initial) {
     _history.value = [{
       project: initial,
@@ -144,6 +145,7 @@ let _pendingAdd: PendingAdd | null = null;
  * (on non-empty edit) or cancelPendingAdd (on Escape/empty commit). */
 export function beginPendingAdd(newProject: CodProject, captionIndex: number) {
   if (!project.value) return;
+  if (_pendingAdd) return;
   _pendingAdd = {
     preAddProject: project.value,
     preAddSelectedMediaId: selectedMediaId.value,
