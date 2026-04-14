@@ -11,6 +11,7 @@ import { loadFormatSource, listFormats } from "../export";
 import { loadProfiles, loadProfileSource } from "../profiles";
 import type { CodProject, MediaItem } from "../../types/project";
 import { isDropFrameRate } from "../time";
+import { cancelActiveEdit } from "../../components/layout/CaptionPanel";
 
 const PROJECT_VERSION = 1;
 
@@ -55,6 +56,7 @@ export function closeProjectGuarded(): Promise<boolean> {
 
 /** Clear the current project from the store. Does not touch disk. */
 function closeProject(): void {
+  cancelActiveEdit();
   resetHistory();
   project.value = null;
   projectPath.value = null;

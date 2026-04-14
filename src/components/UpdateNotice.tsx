@@ -21,6 +21,7 @@ import { saveCurrentProject } from "../lib/project";
 import { confirmUnsavedChanges, unsavedChanges } from "./UnsavedChanges";
 import { clearRecovery } from "../lib/recovery";
 import { showError } from "./ErrorModal";
+import { cancelActiveEdit } from "./layout/CaptionPanel";
 
 type SidecarPhase = "downloading" | "extracting" | "finishing";
 
@@ -55,6 +56,7 @@ export function isUpdating(): boolean {
 
 /** Close the currently open project entirely. Used before an update tears things down. */
 function closeCurrentProject(): void {
+  cancelActiveEdit();
   resetHistory();
   project.value = null;
   projectPath.value = null;
