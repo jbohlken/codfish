@@ -77,13 +77,13 @@ I think undo history can result in bringing back an added caption that has no co
 
 ## Undo/Redo
 
-- [ ] **U1** Undo after split/merge/delete/add/edit -- each restores correctly
-- [ ] **U2** Redo after undo -- re-applies the operation
-- [ ] **U3** Multiple undos back to initial state -- canUndo becomes false
-- [ ] **U4** Undo, then make a new edit -- redo history truncated
-- [ ] **U5** Ctrl+Z / Ctrl+Y on Windows (Cmd+Z / Cmd+Shift+Z on Mac)
-- [ ] **U6** Edit menu shows correct labels ("Undo Split caption", "Redo Merge captions", etc.)
-- [ ] **U7** Undo/redo after timeline resize -- restores caption timing
+- [X] **U1** Undo after split/merge/delete/add/edit -- each restores correctly
+- [X] **U2** Redo after undo -- re-applies the operation
+- [X] **U3** Multiple undos back to initial state -- canUndo becomes false
+- [X] **U4** Undo, then make a new edit -- redo history truncated
+- [X] **U5** Ctrl+Z / Ctrl+Y on Windows (Cmd+Z / Cmd+Shift+Z on Mac)
+- [X] **U6** Edit menu shows correct labels ("Undo Split caption", "Redo Merge captions", etc.)
+- [X] **U7** Undo/redo after timeline resize -- restores caption timing
 
 ---
 
@@ -91,34 +91,44 @@ I think undo history can result in bringing back an added caption that has no co
 
 ### Playback
 
-- [ ] **T1** Play/pause with transport button
-- [ ] **T2** Click waveform to seek -- playhead jumps correctly
-- [ ] **T3** Drag on waveform to scrub
-- [ ] **T4** Caption list auto-scrolls to playing caption during playback
-- [ ] **T5** Playhead auto-scrolls into view when zoomed in
+- [X] **T1** Play/pause with transport button
+- [!] **T2** Click waveform to seek -- playhead jumps correctly
+-- Doesn't work if playing
+- [!] **T3** Drag on waveform to scrub
+-- Doesn't work if playing
+- [X] **T4** Caption list auto-scrolls to playing caption during playback
+- [X] **T5** Playhead auto-scrolls into view when zoomed in
 
 ### Caption Block Resize
 
-- [ ] **T6** Drag left handle -- adjusts start time, frame-snapped
-- [ ] **T7** Drag right handle -- adjusts end time, frame-snapped
-- [ ] **T8** Drag handle past neighbor -- clamped, no overlap
-- [ ] **T9** Snapping enabled -- handle snaps to neighbor edge and minGap boundary
-- [ ] **T10** Snapping disabled -- free drag, still frame-snapped
-- [ ] **T11** Resize indicator line appears during drag
-- [ ] **T12** Release handle -- undo history entry created ("Resize caption")
+- [X] **T6** Drag left handle -- adjusts start time, frame-snapped
+- [X] **T7** Drag right handle -- adjusts end time, frame-snapped
+- [X] **T8** Drag handle past neighbor -- clamped, no overlap
+- [X] **T9** Snapping enabled -- handle snaps to neighbor edge and minGap boundary
+- [X] **T10** Snapping disabled -- free drag, still frame-snapped
+- [X] **T11** Resize indicator line appears during drag
+- [X] **T12** Release handle -- undo history entry created ("Resize caption")
+
+First and last captions don't need to abide by the minGap rules for beginning and end of media item.
 
 ### Zoom
 
-- [ ] **T13** Ctrl+scroll to zoom in/out
-- [ ] **T14** +/- buttons zoom in/out
-- [ ] **T15** Zoom label click resets to fit
-- [ ] **T16** Zoom anchors around cursor (Ctrl+scroll) or playhead (buttons)
+- [?] **T13** Ctrl+scroll to zoom in/out
+-- This is working, but I also wonder if we just do scroll instead of Ctrl+Scroll
+- [X] **T14** +/- buttons zoom in/out
+- [X] **T15** Zoom label click resets to fit
+- [X] **T16** Zoom anchors around cursor (Ctrl+scroll) or playhead (buttons)
+
+-Should we reset zoom when a new project is loaded?
+-Sometimes the waveform still doesn't appear at certain zoom sizes (inconsistent) — PARKED. Breakage starts at ~28x zoom (total waveform width ~32767px, Chrome single-canvas limit). Root cause is WaveSurfer v7's lazy-render + isScrollable heuristic interacting with our outer-scroll-sync shim. Revisit alongside smooth-scroll rework since both touch the same sync path.
 
 ### Timecode
 
 - [ ] **T17** Click timecode to cycle: Time > SMPTE > Frames > Time
 - [ ] **T18** SMPTE shows DF semicolons when media has dropFrame enabled
 - [ ] **T19** Mode persists across sessions (localStorage)
+
+-Getting jery
 
 ---
 
@@ -241,6 +251,8 @@ For each: waveform loads, playback works, transcription produces captions.
 - [ ] **PM3** Save / Save As -- writes .cod file, clears dirty flag
 - [ ] **PM4** Re-link media -- dialog opens, path updates, playback resumes
 - [ ] **PM5** Multiple media items in one project -- switching between them works
+
+Revert project?
 
 ---
 
