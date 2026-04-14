@@ -5,17 +5,24 @@
 ### Split (S)
 
 - [X] **S1** Split a caption with playhead in the middle -- both halves get correct text and timing
-- [X] **S2** Split a caption that has rawWords -- text re-wraps properly
-- [!] **S3** Split a manually added caption (no rawWords) -- text splits proportionally
-        -If I manually edit a caption and then split it, it changes my edits based on rawWords
-        -A manually added caption when split must also be taking something from rawWords
-        -A brand new media item with no transcription works correctly
-- [!] **S4** Split near the start/end boundary -- should be blocked (playhead must be inside)
-        -When outside yes, but we can create 0 frame-long captions -- should we always round "inwards" -- does that make sense?
-- [!] **S5** Split a single-word caption -- one half gets the word, other is empty
-        -When splitting single-word captions maybe we dupe instead of leaving an empty caption
-- [!] **S6** Split, then undo -- original caption restored
-        -Undo/redo doesn't switch the media item
+- [X] **S2** Split a caption that has rawWords (unedited) -- text re-wraps via formatPhraseToCaptionLines
+- [X] **S3a** Split a manually edited caption -- user's text is preserved (proportional split, no rawWords clobber)
+- [X] **S3b** Split a manually added caption (created with A, never had rawWords) -- text splits proportionally
+- [X] **S3c** Split, then edit one half, then split that half again -- edits still preserved
+- [X] **S4a** Split with playhead outside the caption -- blocked (button disabled, S key no-op)
+- [X] **S4b** Split with playhead just inside the boundary (snap would land on boundary) -- splitPoint rounded inward by 1 frame, no 0-duration halves
+- [!] **S4c** Split a 1-frame caption -- blocked, button disabled with tooltip "Caption too short to split"
+    -Tooltip shows the 1-frame version when seek bar is outside
+- [!] **S5** Split a single-word caption -- blocked, button disabled with tooltip "Can't split a single-word caption"; S key no-op
+    -Tooltip shows the single-word version when seek bar is outside
+- [X] **S6a** Split, then undo -- original caption restored, selection lands on the split caption
+- [X] **S6b** Edit Media A, switch to Media B, undo -- selection switches back to Media A so the undone change is visible
+- [X] **S6c** Undo, then redo -- selection lands at the location where the redone op was performed
+
+Weird case:
+
+1. Split a caption near a boundary -- creates 1 frame caption
+2. Extend out point of new 1 frame caption -- doesn't snap to next frame (moves outwards by like 2.5 frames, which becomes its minimum, can never be manually set to 1, might point to a larger time issue)
 
 ### Merge (M)
 
