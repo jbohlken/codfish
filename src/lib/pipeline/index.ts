@@ -79,7 +79,7 @@ export function runPipeline(
 export { cleanWords } from "./cleanup";
 export { segmentIntoPhrases } from "./segment";
 export { mergeShortPhrases } from "./merge";
-export { formatPhraseToCaptionLines, breakIntoLines } from "./linebreak";
+export { formatPhraseToCaptionLines, breakIntoLines, breakTextIntoLines } from "./linebreak";
 export { enforceTiming, snapToFrame, framesBetween } from "./timing";
 export { validate } from "./validate";
 export type { PipelineResult as default };

@@ -26,13 +26,22 @@ Weird case:
 
 ### Merge (M)
 
-- [ ] **M1** Merge two adjacent captions -- timing spans both, text combined
-- [ ] **M2** Merge captions with rawWords -- text re-wraps via formatting rules
-- [ ] **M3** Merge captions without rawWords -- lines concatenated
-- [ ] **M4** Merge two captions with different speakers -- speaker field dropped
-- [ ] **M5** Merge on last caption -- blocked (button disabled, M key is no-op)
-- [ ] **M6** Merge, then undo -- both captions restored
-- [ ] **M7** Split then merge -- should return to roughly the original caption
+- [X] **M1** Merge two adjacent captions -- timing spans both (start = first.start, end = second.end), text combined
+- [!] **M2** Merge two unedited captions with rawWords -- text re-wraps via formatPhraseToCaptionLines
+   - Experiencing an issue where the end of the second caption is somehow picking up the first word of the one after THAT?
+- [!] **M3a** Merge two manually added captions (no rawWords either side) -- lines concatenated with space
+   - Are we running manual captions through any of the formatting pipeline?
+- [!] **M3b** Merge an edited caption with an unedited one -- text concatenated (no rawWords clobber); merged block inherits edited=true
+   - Are we running edited captions through any of the formatting pipeline?
+- [!] **M3c** Merge two edited captions -- text concatenated; merged block inherits edited=true
+   - Same question as the last two about manual/edited captions. What is the criteria for merged captions to be formatted?
+- [?] **M4** Merge two captions with different speakers -- speaker field dropped on merged block
+   - Not testable at the moment.
+- [!] **M5** Merge on last caption -- blocked (button disabled with tooltip, M key is no-op)
+- [X] **M6a** Merge, then undo -- both captions restored, selection lands on the location where the merge happened
+- [X] **M6b** Edit Media A (merge), switch to Media B, undo -- selection switches back to Media A so the undone merge is visible
+- [X] **M7** Split then merge an unedited caption -- returns to roughly the original (text re-wrapped from same rawWords, edited=false preserved)
+- [X] **M8** Merge captions across a non-adjacent gap (with empty time between them) -- merged caption spans the gap (start = first.start, end = second.end, gap absorbed)
 
 ### Delete (Delete/Backspace)
 

@@ -13,10 +13,9 @@ import {
   selectedExportFormat,
   isDirty,
 } from "../../store/app";
-import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
+import { snapToFrame, runPipeline, breakTextIntoLines } from "../../lib/pipeline";
 import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
-import { makePhrase } from "../../lib/pipeline/types";
 import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { openFormatManager } from "../FormatManager";
@@ -121,34 +120,30 @@ function splitCaption(index: number) {
   const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
   const maxLines = profile.formatting.maxLines.value;
 
-  // Words source: rawWords filtered to this block's time range.
-  // Not available for manually added captions, and skipped for edited captions
-  // so we don't overwrite the user's text with rawWords-derived text.
-  const sourceWords = block.edited
+  // Text is the source of truth — the user sees block.lines and expects the
+  // split to divide exactly those words, never lose or duplicate any. rawWords
+  // are consulted only to pick a timing-aware split index when they align 1:1
+  // with the displayed tokens; otherwise fall back to a proportional ratio.
+  const textTokens = block.lines.join(" ").split(/\s+/).filter(Boolean);
+  const wordsInBlock = block.edited
     ? []
-    : media.rawWords?.filter((w) => w.start < block.end && w.end > block.start) ?? [];
+    : media.rawWords?.filter((w) => {
+        const mid = (w.start + w.end) / 2;
+        return mid >= block.start && mid <= block.end;
+      }) ?? [];
 
-  let linesA: string[];
-  let linesB: string[];
-
-  if (sourceWords.length > 0) {
-    const wordsA = sourceWords.filter((w) => w.start < splitPoint && (w.end <= splitPoint || (w.start + w.end) / 2 < splitPoint));
-    const wordsB = sourceWords.filter((w) => !wordsA.includes(w));
-
-    linesA = wordsA.length > 0
-      ? formatPhraseToCaptionLines(makePhrase(wordsA), maxCharsPerLine, maxLines)
-      : [""];
-    linesB = wordsB.length > 0
-      ? formatPhraseToCaptionLines(makePhrase(wordsB), maxCharsPerLine, maxLines)
-      : [""];
+  let splitIdx: number;
+  if (wordsInBlock.length === textTokens.length) {
+    const firstAfter = wordsInBlock.findIndex((w) => (w.start + w.end) / 2 >= splitPoint);
+    splitIdx = firstAfter < 0 ? textTokens.length - 1 : firstAfter;
   } else {
-    // No word timing — split text proportionally at a word boundary
     const ratio = (splitPoint - block.start) / (block.end - block.start);
-    const textWords = block.lines.join(" ").split(" ").filter(Boolean);
-    const splitIdx = Math.max(1, Math.min(textWords.length - 1, Math.round(textWords.length * ratio)));
-    linesA = [textWords.slice(0, splitIdx).join(" ")];
-    linesB = [textWords.slice(splitIdx).join(" ")];
+    splitIdx = Math.round(textTokens.length * ratio);
   }
+  splitIdx = Math.max(1, Math.min(textTokens.length - 1, splitIdx));
+
+  const linesA = breakTextIntoLines(textTokens.slice(0, splitIdx).join(" "), maxCharsPerLine, maxLines);
+  const linesB = breakTextIntoLines(textTokens.slice(splitIdx).join(" "), maxCharsPerLine, maxLines);
 
   const blockA: CaptionBlock = { ...block, end: splitPoint, lines: linesA };
   const blockB: CaptionBlock = { ...block, start: splitPoint, lines: linesB };
@@ -187,27 +182,15 @@ function mergeCaption(index: number) {
   const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
   const maxLines = profile.formatting.maxLines.value;
 
-  // If either side was manually edited or added, fall back to text concat
-  // so we don't overwrite the user's text with rawWords-derived text.
+  // Text is the source of truth — concatenate the displayed lines and wrap.
+  // rawWords would produce the same result via a more fragile route and can
+  // silently drop or pull in neighbor words when midpoints disagree.
+  const combined = [...blockA.lines, ...blockB.lines].join(" ").trim();
+  const mergedLines = combined.length > 0
+    ? breakTextIntoLines(combined, maxCharsPerLine, maxLines)
+    : [""];
+
   const eitherEdited = blockA.edited || blockB.edited;
-  let mergedLines: string[];
-  const sourceWords = eitherEdited
-    ? undefined
-    : media.rawWords?.filter(
-        (w) => w.start < blockB.end && w.end > blockA.start
-      );
-
-  if (sourceWords && sourceWords.length > 0) {
-    mergedLines = formatPhraseToCaptionLines(
-      makePhrase(sourceWords),
-      maxCharsPerLine,
-      maxLines,
-    );
-  } else {
-    const combined = [...blockA.lines, ...blockB.lines].join(" ").trim();
-    mergedLines = combined.length > 0 ? [combined] : [""];
-  }
-
   const merged: CaptionBlock = {
     index: 0,
     start: blockA.start,

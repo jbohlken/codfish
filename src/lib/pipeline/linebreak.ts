@@ -106,3 +106,17 @@ export function formatPhraseToCaptionLines(
 ): string[] {
   return breakIntoLines(phrase, maxCharsPerLine, maxLines);
 }
+
+/** Line-wrap plain text by profile limits. Used when no word timing is available
+ * (edited or manually added captions) so split/merge still produce well-wrapped
+ * lines matching the profile. */
+export function breakTextIntoLines(
+  text: string,
+  maxCharsPerLine = 42,
+  maxLines = 2,
+): string[] {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [""];
+  const words = tokens.map((t) => ({ text: t, start: 0, end: 0, confidence: 1 }));
+  return breakIntoLines(makePhrase(words), maxCharsPerLine, maxLines);
+}
