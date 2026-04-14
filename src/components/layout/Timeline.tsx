@@ -479,8 +479,8 @@ export function Timeline() {
                     block={block}
                     duration={duration}
                     fps={effectiveFps}
-                    prevEnd={media.captions[i - 1]?.end ?? 0}
-                    nextStart={media.captions[i + 1]?.start ?? duration}
+                    prevEnd={media.captions[i - 1]?.end ?? null}
+                    nextStart={media.captions[i + 1]?.start ?? null}
                     snapEnabled={snapEnabled.value}
                     minGap={minGap}
                     blocksRowRef={blocksRowRef}
@@ -530,8 +530,8 @@ function ResizableCaptionBlock({
   block: CaptionBlock;
   duration: number;
   fps: number;
-  prevEnd: number;
-  nextStart: number;
+  prevEnd: number | null;
+  nextStart: number | null;
   snapEnabled: boolean;
   minGap: number | null;
   blocksRowRef: { current: HTMLDivElement | null };
@@ -582,21 +582,26 @@ function ResizableCaptionBlock({
       if (edge === "left") {
         let rawTime = originStart + dx * secPerPx;
         let snapped: number | null = null;
+        const lowerBound = prevEnd ?? 0;
         if (snapEnabled) {
-          // Dead zone exclusion: push values in (prevEnd, prevEnd+minGap) to nearest valid boundary
-          if (minGap !== null && minGap > 0) {
+          // Dead zone + snap only when there's an actual preceding caption;
+          // at the media start (prevEnd === null) the first caption can begin
+          // at 0 without a minGap buffer.
+          if (prevEnd !== null && minGap !== null && minGap > 0) {
             const gap = rawTime - prevEnd;
             if (gap > 0 && gap < minGap) {
               rawTime = gap < minGap / 2 ? prevEnd : snapToFrame(prevEnd + minGap, fps);
             }
           }
-          const snapPoints = [prevEnd];
-          if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(prevEnd + minGap, fps));
-          snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          if (prevEnd !== null) {
+            const snapPoints = [prevEnd];
+            if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(prevEnd + minGap, fps));
+            snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          }
         }
         const newStart = snapped !== null
-          ? Math.max(prevEnd, Math.min(snapped, originEnd - minDuration))
-          : snapToFrame(Math.max(prevEnd, Math.min(rawTime, originEnd - minDuration)), fps);
+          ? Math.max(lowerBound, Math.min(snapped, originEnd - minDuration))
+          : snapToFrame(Math.max(lowerBound, Math.min(rawTime, originEnd - minDuration)), fps);
         resizeIndicator.value = newStart;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, newStart, originEnd);
@@ -604,21 +609,26 @@ function ResizableCaptionBlock({
       } else {
         let rawTime = originEnd + dx * secPerPx;
         let snapped: number | null = null;
+        const upperBound = nextStart ?? duration;
         if (snapEnabled) {
-          // Dead zone exclusion: push values in (nextStart-minGap, nextStart) to nearest valid boundary
-          if (minGap !== null && minGap > 0) {
+          // Dead zone + snap only when there's an actual following caption;
+          // at the media end (nextStart === null) the last caption can run
+          // all the way to duration without a minGap buffer.
+          if (nextStart !== null && minGap !== null && minGap > 0) {
             const gap = nextStart - rawTime;
             if (gap > 0 && gap < minGap) {
               rawTime = gap < minGap / 2 ? nextStart : snapToFrame(nextStart - minGap, fps);
             }
           }
-          const snapPoints = [nextStart];
-          if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(nextStart - minGap, fps));
-          snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          if (nextStart !== null) {
+            const snapPoints = [nextStart];
+            if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(nextStart - minGap, fps));
+            snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          }
         }
         const newEnd = snapped !== null
-          ? Math.max(originStart + minDuration, Math.min(snapped, nextStart))
-          : snapToFrame(Math.max(originStart + minDuration, Math.min(rawTime, nextStart)), fps);
+          ? Math.max(originStart + minDuration, Math.min(snapped, upperBound))
+          : snapToFrame(Math.max(originStart + minDuration, Math.min(rawTime, upperBound)), fps);
         resizeIndicator.value = newEnd;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);
