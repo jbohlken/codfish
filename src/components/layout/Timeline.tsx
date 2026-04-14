@@ -29,6 +29,10 @@ const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 const zoomLevel = signal(1);
+
+export function resetTimelineView(): void {
+  zoomLevel.value = 1;
+}
 type WaveformState = "idle" | "loading" | "ready";
 const waveformState = signal<WaveformState>("idle");
 
@@ -208,29 +212,39 @@ export function Timeline() {
     }
   });
 
-  // Ctrl+Wheel → zoom (non-passive so preventDefault works)
+  // Wheel: Ctrl → zoom, plain → horizontal scroll (vertical wheel maps to
+  // horizontal since the timeline's primary axis is time). Non-passive so
+  // preventDefault works for both.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
+      if (e.ctrlKey) {
+        e.preventDefault();
 
-      const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
-      const oldZoom = zoomLevel.peek();
-      const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
-      if (newZoom === oldZoom) return;
+        const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
+        const oldZoom = zoomLevel.peek();
+        const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
+        if (newZoom === oldZoom) return;
 
-      // Zoom around cursor position
-      const rect = el.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const fraction = (el.scrollLeft + mouseX) / el.scrollWidth;
+        // Zoom around cursor position
+        const rect = el.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const fraction = (el.scrollLeft + mouseX) / el.scrollWidth;
 
-      zoomLevel.value = newZoom;
+        zoomLevel.value = newZoom;
 
-      requestAnimationFrame(() => {
-        el.scrollLeft = Math.max(0, fraction * el.scrollWidth - mouseX);
-      });
+        requestAnimationFrame(() => {
+          el.scrollLeft = Math.max(0, fraction * el.scrollWidth - mouseX);
+        });
+        return;
+      }
+      // Plain wheel → horizontal scroll. Most mice only have vertical wheel
+      // and there's nothing useful to scroll vertically here.
+      if (e.deltaY !== 0 && el.scrollWidth > el.clientWidth) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
