@@ -132,8 +132,15 @@ function splitCaption(index: number) {
         return mid >= block.start && mid <= block.end;
       }) ?? [];
 
+  // Timing-aware path requires rawWords to align with displayed tokens in
+  // both count AND content — matching counts alone could be coincidental if
+  // something mutated block.lines without flipping edited=true.
+  const tokensAlign =
+    wordsInBlock.length === textTokens.length &&
+    wordsInBlock.map((w) => w.text).join(" ") === textTokens.join(" ");
+
   let splitIdx: number;
-  if (wordsInBlock.length === textTokens.length) {
+  if (tokensAlign) {
     const firstAfter = wordsInBlock.findIndex((w) => (w.start + w.end) / 2 >= splitPoint);
     splitIdx = firstAfter < 0 ? textTokens.length - 1 : firstAfter;
   } else {
@@ -162,7 +169,7 @@ function splitCaption(index: number) {
     ),
   }, "Split caption");
 
-  selectedCaptionIndex.value = blockA.index;
+  selectedCaptionIndex.value = index;
 }
 
 function mergeCaption(index: number) {
