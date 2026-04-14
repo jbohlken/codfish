@@ -569,6 +569,24 @@ function CaptionRow({
     if (editing) textareaRef.current?.focus();
   }, [editing]);
 
+  // Click-outside commit: native blur only fires when focus moves to another
+  // focusable element. Clicks on non-focusable areas (video panel, timeline
+  // body, empty list space) would otherwise leave the editor open. The row's
+  // own mousedown handler runs first (bubble phase) and may have already
+  // committed for row-to-row clicks, so guard against double-commit.
+  useEffect(() => {
+    if (!editing) return;
+    const handler = (e: MouseEvent) => {
+      if (editingIndex.value !== block.index) return;
+      const target = e.target as Node | null;
+      if (target && textareaRef.current && !textareaRef.current.contains(target)) {
+        onEdit(editText.value);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [editing, onEdit, block.index]);
+
   if (editing) {
     return (
       <div class="caption-row caption-row--selected" data-caption-index={block.index}>
