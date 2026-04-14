@@ -13,6 +13,7 @@ function isAudioOnly(path: string): boolean {
 export function VideoPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const rafRef = useRef<number>(0);
+  const rafLastWrittenRef = useRef<number>(0);
 
   // Read signals — subscribes this component to re-render when they change
   const media = selectedMedia.value;
@@ -42,9 +43,21 @@ export function VideoPanel() {
 
     if (playing) {
       video.play().catch(() => { isPlaying.value = false; });
+      rafLastWrittenRef.current = video.currentTime;
 
       const tick = () => {
-        playbackTime.value = video.currentTime;
+        // If playbackTime has drifted from what rAF last wrote, an external
+        // seek landed — write through to the video instead of clobbering the
+        // user's seek with a stale video.currentTime read.
+        const pt = playbackTime.value;
+        if (Math.abs(pt - rafLastWrittenRef.current) > 1 / (2 * fps)) {
+          video.currentTime = pt;
+          rafLastWrittenRef.current = pt;
+        } else {
+          const vt = video.currentTime;
+          playbackTime.value = vt;
+          rafLastWrittenRef.current = vt;
+        }
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
