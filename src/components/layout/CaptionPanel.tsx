@@ -481,13 +481,16 @@ export function CaptionPanel() {
                   block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length >= 2
                 }
                 splitTooltip={
-                  block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length < 2
-                    ? "Can't split a single-word caption"
-                    : framesBetween(block.start, block.end, fps) < 2
-                      ? "Caption too short to split"
-                      : currentTime > block.start && currentTime < block.end
-                        ? "Split at playhead (S)"
-                        : "Position playhead inside this caption to split"
+                  // Playhead-outside takes priority — it's the actionable hint.
+                  // Only after the playhead is inside do the structural reasons
+                  // (single-word, too-short) become relevant.
+                  !(currentTime > block.start && currentTime < block.end)
+                    ? "Position playhead inside this caption to split"
+                    : block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length < 2
+                      ? "Can't split a single-word caption"
+                      : framesBetween(block.start, block.end, fps) < 2
+                        ? "Caption too short to split"
+                        : "Split at playhead (S)"
                 }
                 mergeEnabled={block.index < media.captions.length}
                 onMouseDown={() => {
