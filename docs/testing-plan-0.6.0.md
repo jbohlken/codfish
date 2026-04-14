@@ -45,18 +45,22 @@ Weird case:
 
 ### Delete (Delete/Backspace)
 
-- [ ] **D1** Delete a middle caption -- selection moves to next
-- [ ] **D2** Delete the last caption in the list -- selection moves to previous
-- [ ] **D3** Delete the only caption -- selection clears, empty state shown
-- [ ] **D4** Delete, then undo -- caption restored
+- [X] **D1** Delete a middle caption -- selection moves to next
+- [!] **D2** Delete the last caption in the list -- selection moves to previous
+  -- Undo doesn't highlight the deleted last caption
+- [X] **D3** Delete the only caption -- selection clears, empty state shown
+- [!] **D4** Delete, then undo -- caption restored
+  -- Undo doesn't highlight the deleted last caption
 
 ### Add (A)
 
-- [ ] **A1** Add caption in a gap between two captions -- inserted correctly, edit mode activates
-- [ ] **A2** Add when playhead is inside an existing caption -- blocked
-- [ ] **A3** Add at the very end past all captions -- creates caption with reasonable duration
-- [ ] **A4** Press Escape on a newly added empty caption -- deletes it
-- [ ] **A5** Type text and press Enter -- commits the caption
+- [X] **A1** Add caption in a gap between two captions -- inserted correctly, edit mode activates
+- [X] **A2** Add when playhead is inside an existing caption -- blocked
+- [X] **A3** Add at the very end past all captions -- creates caption with reasonable duration
+- [X] **A4** Press Escape on a newly added empty caption -- deletes it
+- [X] **A5** Type text and press Enter -- commits the caption
+
+I think undo history can result in bringing back an added caption that has no content in it.
 
 ### Edit (E / double-click)
 

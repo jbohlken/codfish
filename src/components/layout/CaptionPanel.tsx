@@ -2,11 +2,16 @@ import { useEffect, useRef } from "preact/hooks";
 import { signal, useSignalEffect } from "@preact/signals";
 import {
   selectedMedia,
+  selectedMediaId,
   selectedCaptionIndex,
   playbackTime,
   project,
   activeProfile,
   pushHistory,
+  beginPendingAdd,
+  commitPendingAdd,
+  cancelPendingAdd,
+  getPendingAddIndex,
   mediaDuration,
   isPlaying,
   exportFormats,
@@ -75,14 +80,20 @@ function deleteCaption(index: number) {
     .map((c, i) => ({ ...c, index: i + 1 }));
 
   const next = newCaptions[pos] ?? newCaptions[pos - 1] ?? null;
-  selectedCaptionIndex.value = next?.index ?? null;
 
+  // Push while selection still points at the deleted caption so undo lands
+  // there; pass the neighbor as post-op selection so redo settles naturally.
   pushHistory({
     ...proj,
     media: proj.media.map((m) =>
       m.id !== media.id ? m : { ...m, captions: newCaptions }
     ),
-  }, "Delete caption");
+  }, "Delete caption", {
+    selectedMediaId: selectedMediaId.value,
+    selectedCaptionIndex: next?.index ?? null,
+  });
+
+  selectedCaptionIndex.value = next?.index ?? null;
 }
 
 function splitCaption(index: number) {
@@ -257,14 +268,18 @@ function addCaption() {
     ...media.captions.slice(insertPos),
   ].map((c, i) => ({ ...c, index: i + 1 }));
 
-  pushHistory({
+  const newIndex = insertPos + 1;
+
+  // Tentatively add to project state only — no history entry until the user
+  // commits non-empty text. Escape / empty commit reverts cleanly via
+  // cancelPendingAdd, so history never accumulates Add+Delete phantom pairs.
+  beginPendingAdd({
     ...proj,
     media: proj.media.map((m) =>
       m.id !== media.id ? m : { ...m, captions: newCaptions }
     ),
-  }, "Add caption");
+  }, newIndex);
 
-  const newIndex = insertPos + 1;
   _editCancelled = false;
   selectedCaptionIndex.value = newIndex;
   editingIndex.value = newIndex;
@@ -607,7 +622,10 @@ function CaptionRow({
             if (e.key === "Escape") {
               _editCancelled = true;
               editingIndex.value = null;
-              if (!block.lines.join("").trim()) {
+              if (getPendingAddIndex() === block.index) {
+                // A-then-Escape: roll back the tentative add entirely.
+                cancelPendingAdd();
+              } else if (!block.lines.join("").trim()) {
                 onDelete();
               }
             }
@@ -731,13 +749,20 @@ function handleEdit(index: number, text: string) {
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
+  const isPendingAdd = getPendingAddIndex() === index;
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+
   if (!lines.length) {
-    deleteCaption(index);
+    // Empty commit: cancel a pending add (no history), otherwise delete.
+    if (isPendingAdd) {
+      cancelPendingAdd();
+    } else {
+      deleteCaption(index);
+    }
     return;
   }
 
-  pushHistory({
+  const newProject = {
     ...proj,
     media: proj.media.map((m) =>
       m.id !== media.id ? m : {
@@ -747,7 +772,13 @@ function handleEdit(index: number, text: string) {
         ),
       }
     ),
-  }, "Edit caption");
+  };
+
+  if (isPendingAdd) {
+    commitPendingAdd(newProject);
+  } else {
+    pushHistory(newProject, "Edit caption");
+  }
 }
 
 async function handleGenerate() {

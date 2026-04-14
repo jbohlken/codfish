@@ -227,6 +227,25 @@ describe("undo / redo", () => {
       redo();
       expect(selectedCaptionIndex.value).toBe(5);
     });
+
+    it("post-op selection lands on different spot than pre-op", () => {
+      // Models delete: pre-op selection = deleted caption; post-op = neighbor.
+      resetHistory(makeProject("v0"));
+      selectedMediaId.value = "media-a";
+      selectedCaptionIndex.value = 3;
+      pushHistory(makeProject("v1"), "Delete caption", {
+        selectedMediaId: "media-a",
+        selectedCaptionIndex: 2,
+      });
+      // Simulate caller moving selection to neighbor after push
+      selectedCaptionIndex.value = 2;
+      // Undo → pre-op selection (the deleted caption)
+      undo();
+      expect(selectedCaptionIndex.value).toBe(3);
+      // Redo → post-op selection (the neighbor)
+      redo();
+      expect(selectedCaptionIndex.value).toBe(2);
+    });
   });
 
   describe("descriptions", () => {
