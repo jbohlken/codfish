@@ -574,6 +574,8 @@ function ResizableCaptionBlock({
     const originX = e.clientX;
     const originStart = block.start;
     const originEnd = block.end;
+    let lastStart = originStart;
+    let lastEnd = originEnd;
 
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - originX;
@@ -598,6 +600,7 @@ function ResizableCaptionBlock({
         resizeIndicator.value = newStart;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, newStart, originEnd);
+        lastStart = newStart;
       } else {
         let rawTime = originEnd + dx * secPerPx;
         let snapped: number | null = null;
@@ -619,13 +622,16 @@ function ResizableCaptionBlock({
         resizeIndicator.value = newEnd;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);
+        lastEnd = newEnd;
       }
     };
 
     const onUp = () => {
       resizeIndicator.value = null;
       resizeSnapped.value = false;
-      onResizeCommit();
+      // Skip commit if the final snapped values land back on the origin —
+      // a drag that snaps into its starting position produced no net change.
+      if (lastStart !== originStart || lastEnd !== originEnd) onResizeCommit();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
