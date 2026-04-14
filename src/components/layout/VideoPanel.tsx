@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "preact/hooks";
 import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { selectedMedia, playbackTime, isPlaying, mediaDuration } from "../../store/app";
+import { selectedMedia, playbackTime, isPlaying, mediaDuration, activeProfile } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
 
 const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg"]);
@@ -57,14 +57,16 @@ export function VideoPanel() {
   }, [playing]);
 
   // Sync external seeks (timeline click, caption click) → video element.
-  // The threshold avoids fighting with onTimeUpdate feedback.
+  // Use a half-frame threshold so any frame-aligned seek registers, while
+  // still absorbing sub-frame float drift from the rAF playback loop.
+  const fps = media?.fps ?? activeProfile.value.timing.defaultFps;
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (Math.abs(video.currentTime - currentTime) > 0.25) {
+    if (Math.abs(video.currentTime - currentTime) > 1 / (2 * fps)) {
       video.currentTime = currentTime;
     }
-  }, [currentTime]);
+  }, [currentTime, fps]);
 
   return (
     <div class="panel video-panel">

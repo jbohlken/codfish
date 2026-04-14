@@ -270,7 +270,7 @@ export function Timeline() {
             c.index !== index ? c : {
               ...c,
               start: Math.max(0, newStart),
-              end: Math.max(newStart + 0.1, newEnd),
+              end: Math.max(newStart + 1 / fps, newEnd),
             }
           ),
         }
