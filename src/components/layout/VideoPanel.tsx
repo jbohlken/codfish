@@ -69,17 +69,18 @@ export function VideoPanel() {
     }
   }, [playing]);
 
-  // Sync external seeks (timeline click, caption click) → video element.
-  // Use a half-frame threshold so any frame-aligned seek registers, while
-  // still absorbing sub-frame float drift from the rAF playback loop.
+  // Sync external seeks (timeline click, caption click) → video element
+  // while paused. During playback the rAF loop owns video sync; running
+  // this effect then would micro-seek every tick (the half-frame threshold
+  // is tighter than the vt-vs-currentTime drift between rAF writes).
   const fps = media?.fps ?? activeProfile.value.timing.defaultFps;
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || playing) return;
     if (Math.abs(video.currentTime - currentTime) > 1 / (2 * fps)) {
       video.currentTime = currentTime;
     }
-  }, [currentTime, fps]);
+  }, [currentTime, fps, playing]);
 
   return (
     <div class="panel video-panel">
