@@ -640,6 +640,19 @@ fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).is_file()
 }
 
+/// Modification time in unix seconds. Used by the peaks cache to invalidate
+/// entries when a file is edited or replaced (rename alone changes the path
+/// key, but an in-place edit keeps the path and needs the mtime to differ).
+#[tauri::command]
+fn file_mtime(path: String) -> Result<u64, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| format!("stat: {e}"))?;
+    let mtime = meta.modified().map_err(|e| format!("modified: {e}"))?;
+    mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| format!("epoch: {e}"))
+}
+
 // ── Recent projects ──────────────────────────────────────────────────────────
 
 const RECENT_LIMIT: usize = 10;
@@ -855,6 +868,34 @@ struct ProbeResult {
     fps: Option<f64>,
     #[serde(default)]
     vfr: bool,
+}
+
+/// Generate downsampled waveform peaks via the sidecar's bundled ffmpeg.
+/// Replaces WaveSurfer's browser-side fetch+decode, which is unreliable
+/// for the Tauri asset-protocol path on Windows and chokes on any codec
+/// WebAudio can't handle.
+#[tauri::command]
+async fn generate_peaks(
+    app: AppHandle,
+    path: String,
+    state: State<'_, DaemonState>,
+) -> Result<PeaksResult, String> {
+    let daemon = {
+        let guard = state.lock().await;
+        guard.clone().ok_or_else(|| "transcription engine not running".to_string())?
+    };
+
+    let r: PeaksResult = daemon
+        .request("generate_peaks", serde_json::json!({ "path": path }))
+        .await?;
+    log(&app, &format!("generate_peaks: bins={} duration={:.2}s", r.peaks.len(), r.duration));
+    Ok(r)
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+struct PeaksResult {
+    peaks: Vec<f32>,
+    duration: f64,
 }
 
 // ── Daemon commands ──────────────────────────────────────────────────────────
@@ -1313,6 +1354,8 @@ pub fn run() {
             save_project,
             load_project,
             file_exists,
+            file_mtime,
+            generate_peaks,
             save_recovery,
             load_recovery,
             clear_recovery,

@@ -101,35 +101,50 @@ export function Timeline() {
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
 
-    // Try loading from cache first, fall back to full decode. On failure
-    // (corrupt file, no audio stream, unreachable URL) drop the spinner —
-    // otherwise "Generating waveform…" hangs forever with no feedback.
+    // Peaks come from the sidecar's ffmpeg, not from WaveSurfer's fetch+decode.
+    // The browser-side path is unreliable for the Tauri asset protocol
+    // (whole-file fetch fails for many files even though playback via range
+    // requests works fine) and can't handle codecs WebAudio doesn't support.
+    // On failure (no sidecar, no audio stream, codec error) drop the spinner
+    // so "Generating waveform…" doesn't hang forever.
     const markFailed = (reason: string) => {
       flog(reason);
       if (!cancelled) waveformState.value = "failed";
     };
     flog(`init path=${media.path}`);
-    getCachedPeaks(media.path).then((cached) => {
+    (async () => {
+      const mtime = await invoke<number>("file_mtime", { path: media.path });
       if (cancelled) return;
-      const url = convertFileSrc(media.path);
-      flog(`loading url=${url} cached=${!!cached}`);
+      let peaks: Float32Array;
+      let duration: number;
+      const cached = await getCachedPeaks(media.path, mtime);
+      if (cancelled) return;
       if (cached) {
-        // Load with pre-computed peaks — skips the expensive Web Audio decode
-        ws.load(url, cached.peaks, cached.duration)
-          .then(() => flog("cached load resolved"))
-          .catch((e) => markFailed(`cached load failed: ${(e as any)?.message ?? String(e)}`));
+        flog(`cache hit bins=${cached.peaks.length}`);
+        peaks = cached.peaks;
+        duration = cached.duration;
       } else {
-        ws.load(url)
-          .then(() => flog("fresh load resolved"))
-          .catch((e) => markFailed(`fresh load failed: ${(e as any)?.message ?? String(e)}`));
+        flog("cache miss → generate_peaks");
+        const r = await invoke<{ peaks: number[]; duration: number }>(
+          "generate_peaks",
+          { path: media.path },
+        );
+        if (cancelled) return;
+        peaks = new Float32Array(r.peaks);
+        duration = r.duration;
+        cachePeaks(media.path, mtime, peaks, duration);
+        flog(`generated bins=${peaks.length} duration=${duration.toFixed(2)}s`);
       }
-    });
+      const url = convertFileSrc(media.path);
+      await ws.load(url, [peaks], duration);
+      if (!cancelled) flog("load resolved");
+    })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     ws.on("error", (e) => {
       markFailed(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
     });
 
-    // Sync zoom once audio is decoded and duration is known
+    // Sync zoom once peaks are in and duration is known
     ws.on("ready", () => {
       flog(`ready duration=${ws.getDuration()}`);
       waveformState.value = "ready";
@@ -137,16 +152,6 @@ export function Timeline() {
       if (!dur) return;
       const visibleWidth = scrollRef.current?.clientWidth ?? 800;
       ws.zoom((visibleWidth * zoomLevel.peek()) / dur);
-
-      // Cache peaks for next time (only if we decoded fresh)
-      const decoded = ws.getDecodedData();
-      if (decoded) {
-        const peaks: Float32Array[] = [];
-        for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-          peaks.push(decoded.getChannelData(ch));
-        }
-        cachePeaks(media.path, peaks, dur);
-      }
     });
 
     wsRef.current = ws;

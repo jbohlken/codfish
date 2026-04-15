@@ -47,7 +47,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # ── stdout protocol setup ─────────────────────────────────────────────────────
 # Force UTF-8 so non-ASCII paths don't blow up on Windows.
@@ -259,6 +259,49 @@ def handle_probe_fps(params: dict) -> dict:
     return {"fps": fps, "vfr": vfr}
 
 
+def handle_generate_peaks(params: dict) -> dict:
+    """Decode audio via ffmpeg, emit downsampled max-abs peaks.
+
+    Replaces WaveSurfer's whole-file fetch+WebAudio decode, which is
+    unreliable on Windows for the asset-protocol path and any codec that
+    WebAudio can't handle (HEVC containers, ProRes, etc.). Downmixes all
+    channels so stereo/5.1 content shows the full envelope instead of just L.
+    """
+    import numpy as np
+
+    file_path = params["path"]
+    bins_per_sec = int(params.get("binsPerSec", 100))
+    src_rate = 8000
+
+    # ffmpeg: downmix to mono, resample to 8kHz s16le, write to stdout
+    proc = subprocess.Popen(
+        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+         "-i", file_path, "-ac", "1", "-ar", str(src_rate),
+         "-f", "s16le", "-"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    raw, err = proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {err.decode(errors='replace').strip()}")
+
+    pcm = np.frombuffer(raw, dtype=np.int16)
+    if pcm.size == 0:
+        raise RuntimeError("no audio samples decoded")
+
+    bin_size = max(1, src_rate // bins_per_sec)
+    trim = pcm.size - (pcm.size % bin_size)
+    if trim == 0:
+        # File is shorter than one bin — fall back to a single bin
+        peaks = [float(np.abs(pcm).max()) / 32768.0] if pcm.size else [0.0]
+    else:
+        reshaped = pcm[:trim].reshape(-1, bin_size)
+        peaks = (np.abs(reshaped).max(axis=1).astype(np.float32) / 32768.0).tolist()
+
+    duration = pcm.size / src_rate
+    return {"peaks": peaks, "duration": duration}
+
+
 def _check_has_audio(file_path: str):
     try:
         out = subprocess.check_output(
@@ -425,6 +468,7 @@ def handle_transcribe(rid: str, params: dict) -> dict:
 # ── request loop ──────────────────────────────────────────────────────────────
 HANDLERS = {
     "probe_fps": handle_probe_fps,
+    "generate_peaks": handle_generate_peaks,
     "transcribe": handle_transcribe,
 }
 
