@@ -16,8 +16,8 @@ import { resetTimelineView } from "../../components/layout/Timeline";
 
 const PROJECT_VERSION = 1;
 
-const VIDEO_EXTS = ["mp4", "mov", "mkv", "avi", "webm"];
-const AUDIO_EXTS = ["mp3", "wav", "m4a", "aac", "flac", "ogg"];
+export const VIDEO_EXTS = ["mp4", "mov", "webm"];
+export const AUDIO_EXTS = ["mp3", "wav", "aac", "flac", "ogg"];
 const MEDIA_EXTS = [...VIDEO_EXTS, ...AUDIO_EXTS];
 
 // ── Public actions ────────────────────────────────────────────────────────────

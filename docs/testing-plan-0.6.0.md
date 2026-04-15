@@ -124,11 +124,9 @@ First and last captions don't need to abide by the minGap rules for beginning an
 
 ### Timecode
 
-- [ ] **T17** Click timecode to cycle: Time > SMPTE > Frames > Time
-- [ ] **T18** SMPTE shows DF semicolons when media has dropFrame enabled
-- [ ] **T19** Mode persists across sessions (localStorage)
-
--Getting jery
+- [X] **T17** Click timecode to cycle: Time > SMPTE > Frames > Time
+- [X] **T18** SMPTE shows DF semicolons when media has dropFrame enabled
+- [X] **T19** Mode persists across sessions (localStorage)
 
 ---
 
@@ -136,22 +134,23 @@ First and last captions don't need to abide by the minGap rules for beginning an
 
 ### Video (playback + transcription)
 
-- [ ] **MF1** mp4
-- [ ] **MF2** mov
-- [ ] **MF3** webm
-- [ ] **MF4** mkv (may not play in webview -- transcription should still work)
-- [ ] **MF5** avi (may not play in webview -- transcription should still work)
+- [X] **MF1** mp4 (h.264, HEVC -- HEVC relies on OS decoder extension being present)
+- [X] **MF2** mov (h.264, HEVC; ProRes = waveform + captions only, no playback)
+- [X] **MF3** webm (VP9 + Opus)
+
+Dropped: mkv, avi -- too patchy across WebView2 codec builds to support reliably.
 
 ### Audio (playback + transcription)
 
-- [ ] **MF6** mp3
-- [ ] **MF7** wav
-- [ ] **MF8** m4a
-- [ ] **MF9** aac
-- [ ] **MF10** flac
-- [ ] **MF11** ogg
+- [X] **MF6** mp3
+- [X] **MF7** wav
+- [X] **MF9** aac
+- [X] **MF10** flac
+- [X] **MF11** ogg
 
 For each: waveform loads, playback works, transcription produces captions.
+
+Dropped: m4a, aif/aiff, au -- WebView2 rejects playback (MEDIA_ERR_SRC_NOT_SUPPORTED); mp3/wav/aac/flac/ogg cover the lossy/lossless use cases.
 
 ### No Audio Stream
 

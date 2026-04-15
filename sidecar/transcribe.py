@@ -226,7 +226,12 @@ def handle_probe_fps(params: dict) -> dict:
     except json.JSONDecodeError:
         return {"fps": None, "vfr": False}
 
-    streams = data.get("streams", [])
+    # Skip attached pictures (cover art in mp3/m4a shows up as a video
+    # stream at 90000 fps) — we only care about real video tracks.
+    streams = [
+        s for s in data.get("streams", [])
+        if not s.get("disposition", {}).get("attached_pic")
+    ]
     if not streams:
         return {"fps": None, "vfr": False}
 

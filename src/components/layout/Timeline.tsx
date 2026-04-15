@@ -109,7 +109,14 @@ export function Timeline() {
     // so "Generating waveform…" doesn't hang forever.
     const markFailed = (reason: string) => {
       flog(reason);
-      if (!cancelled) waveformState.value = "failed";
+      // Don't clobber a rendered waveform. WaveSurfer sets up its own
+      // media element for playback even when peaks are pre-computed, and
+      // that element can error after `ready` for codecs WebView2 doesn't
+      // like (m4a, etc.). We drive playback from VideoPanel, so those
+      // post-ready errors don't affect the user.
+      if (!cancelled && waveformState.value !== "ready") {
+        waveformState.value = "failed";
+      }
     };
     flog(`init path=${media.path}`);
     (async () => {

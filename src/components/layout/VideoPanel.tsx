@@ -3,11 +3,11 @@ import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, activeProfile } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
+import { AUDIO_EXTS } from "../../lib/project";
 
-const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg"]);
 function isAudioOnly(path: string): boolean {
   const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
-  return AUDIO_EXTS.has(ext);
+  return AUDIO_EXTS.includes(ext);
 }
 
 export function VideoPanel() {
