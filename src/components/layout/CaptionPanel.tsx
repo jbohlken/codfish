@@ -367,6 +367,9 @@ export function CaptionPanel() {
   const generating = isGenerating.value;
   const progress = generateProgress.value;
   const hasCaptions = (media?.captions.length ?? 0) > 0;
+  // Undefined = unprobed (old projects) or probe failed — allow the attempt.
+  // Only block when we explicitly know there's no audio stream.
+  const canGenerate = media?.hasAudio ?? true;
   const currentTime = playbackTime.value;
   const playingCaption = media?.captions.find(
     (c) => currentTime >= c.start && currentTime < c.end
@@ -421,7 +424,8 @@ export function CaptionPanel() {
             {hasCaptions && (
               <button
                 class="btn btn-ghost btn-icon"
-                data-tooltip="Regenerate captions"
+                disabled={!canGenerate}
+                data-tooltip={!canGenerate ? "No audio track — nothing to transcribe" : "Regenerate captions"}
                 onClick={(e) => { e.stopPropagation(); confirmingRegenerate.value = true; }}
               >
                 <ArrowsClockwise size={14} />
@@ -468,7 +472,11 @@ export function CaptionPanel() {
         ) : media.captions.length === 0 ? (
           <div class="empty-state">
             <span class="empty-state-title">No captions yet</span>
-            <button class="btn btn-primary btn-sm" onClick={handleGenerate}><ArrowsClockwise size={13} /> Generate</button>
+            {!canGenerate ? (
+              <span class="empty-state-body">This file has no audio track.</span>
+            ) : (
+              <button class="btn btn-primary btn-sm" onClick={handleGenerate}><ArrowsClockwise size={13} /> Generate</button>
+            )}
           </div>
         ) : (
           <div class="caption-list" onClick={(e) => { if (e.target === e.currentTarget) selectedCaptionIndex.value = null; }}>

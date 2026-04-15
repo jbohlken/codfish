@@ -31,6 +31,7 @@ export interface MediaItem {
   path: string;
   fps: number | null;  // probed from file; null = audio-only or unknown (use profile default)
   vfr?: boolean;       // true if variable frame rate detected (frame-snapping may be imprecise)
+  hasAudio?: boolean;  // probed from file; false = no audio stream, so transcription is blocked
   dropFrame?: boolean; // true = DF, false = NDF; auto-set for 29.97/59.94, user-overridable
   captions: CaptionBlock[];
   rawWords?: Word[];              // persisted for future re-pipeline without re-transcribing

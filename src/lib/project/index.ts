@@ -196,6 +196,7 @@ export async function importMedia(): Promise<void> {
       const probe = await probeFps(p);
       item.fps = probe.fps;
       if (probe.vfr) item.vfr = true;
+      if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
       if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
       return item;
     })
@@ -233,6 +234,7 @@ export async function relinkMediaItem(mediaId: string): Promise<void> {
         name: pathToBasename(newPath),
         fps: probe.fps,
         vfr: probe.vfr || undefined,
+        hasAudio: probe.hasAudio,
         dropFrame: probe.fps != null && isDropFrameRate(probe.fps) ? true : undefined,
       }
     ),
@@ -250,6 +252,10 @@ export async function fileExists(path: string): Promise<boolean> {
 interface ProbeResult {
   fps: number | null;
   vfr: boolean;
+  // Undefined when the probe itself failed — we don't want to bake a
+  // transient sidecar failure into the media item and permanently block
+  // transcription. A real "no audio" finding comes back as false.
+  hasAudio?: boolean;
 }
 
 export async function probeFps(path: string): Promise<ProbeResult> {

@@ -215,33 +215,36 @@ def handle_probe_fps(params: dict) -> dict:
     try:
         out = subprocess.check_output(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", "-select_streams", "v:0", file_path],
+             "-show_streams", file_path],
             stderr=subprocess.DEVNULL,
         ).decode()
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"fps": None, "vfr": False}
+        return {"fps": None, "vfr": False, "hasAudio": False}
 
     try:
         data = json.loads(out)
     except json.JSONDecodeError:
-        return {"fps": None, "vfr": False}
+        return {"fps": None, "vfr": False, "hasAudio": False}
 
+    all_streams = data.get("streams", [])
+    has_audio = any(s.get("codec_type") == "audio" for s in all_streams)
     # Skip attached pictures (cover art in mp3/m4a shows up as a video
     # stream at 90000 fps) — we only care about real video tracks.
-    streams = [
-        s for s in data.get("streams", [])
-        if not s.get("disposition", {}).get("attached_pic")
+    video_streams = [
+        s for s in all_streams
+        if s.get("codec_type") == "video"
+        and not s.get("disposition", {}).get("attached_pic")
     ]
-    if not streams:
-        return {"fps": None, "vfr": False}
+    if not video_streams:
+        return {"fps": None, "vfr": False, "hasAudio": has_audio}
 
-    stream = streams[0]
+    stream = video_streams[0]
     avg_fps = _parse_fps_fraction(stream.get("avg_frame_rate"))
     r_fps = _parse_fps_fraction(stream.get("r_frame_rate"))
 
     fps = avg_fps or r_fps
     if fps is None:
-        return {"fps": None, "vfr": False}
+        return {"fps": None, "vfr": False, "hasAudio": has_audio}
 
     # VFR heuristic: r_frame_rate is a raw timebase (1000, 90000, etc.)
     # or significantly different from avg_frame_rate
@@ -261,7 +264,7 @@ def handle_probe_fps(params: dict) -> dict:
     else:
         fps = round(fps * 1000) / 1000
 
-    return {"fps": fps, "vfr": vfr}
+    return {"fps": fps, "vfr": vfr, "hasAudio": has_audio}
 
 
 def handle_generate_peaks(params: dict) -> dict:

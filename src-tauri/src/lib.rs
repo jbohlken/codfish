@@ -859,7 +859,7 @@ async fn probe_fps(
     let r: ProbeResult = daemon
         .request("probe_fps", serde_json::json!({ "path": path }))
         .await?;
-    log(&app, &format!("probe_fps: {:?} vfr: {}", r.fps, r.vfr));
+    log(&app, &format!("probe_fps: {:?} vfr: {} hasAudio: {}", r.fps, r.vfr, r.has_audio));
     Ok(r)
 }
 
@@ -868,6 +868,8 @@ struct ProbeResult {
     fps: Option<f64>,
     #[serde(default)]
     vfr: bool,
+    #[serde(default, rename = "hasAudio")]
+    has_audio: bool,
 }
 
 /// Generate downsampled waveform peaks via the sidecar's bundled ffmpeg.

@@ -1257,7 +1257,7 @@
   font-size: var(--text-xs);
   color: var(--color-text-primary);
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
   line-height: 1.6;
   margin: 0;
   background: var(--color-surface);

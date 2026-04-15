@@ -33,7 +33,7 @@ const zoomLevel = signal(1);
 export function resetTimelineView(): void {
   zoomLevel.value = 1;
 }
-type WaveformState = "idle" | "loading" | "ready" | "failed";
+type WaveformState = "idle" | "loading" | "ready" | "failed" | "no-audio";
 const waveformState = signal<WaveformState>("idle");
 
 const SNAP_THRESHOLD_PX = 8;
@@ -79,6 +79,13 @@ export function Timeline() {
 
     if (!container || !media) {
       waveformState.value = "idle";
+      return;
+    }
+
+    // No audio stream — don't spin up WaveSurfer at all. The peaks pipeline
+    // would just fail on ffmpeg stream-missing and spam a traceback.
+    if (media.hasAudio === false) {
+      waveformState.value = "no-audio";
       return;
     }
 
@@ -490,6 +497,11 @@ export function Timeline() {
                 {waveformState.value === "failed" && (
                   <div class="timeline-waveform-loading">
                     <span>No waveform available</span>
+                  </div>
+                )}
+                {waveformState.value === "no-audio" && (
+                  <div class="timeline-waveform-loading">
+                    <span>No audio track</span>
                   </div>
                 )}
                 {duration > 0 && (

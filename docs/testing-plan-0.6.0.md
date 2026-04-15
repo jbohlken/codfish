@@ -154,10 +154,13 @@ Dropped: m4a, aif/aiff, au -- WebView2 rejects playback (MEDIA_ERR_SRC_NOT_SUPPO
 
 ### No Audio Stream
 
-- [ ] **MF12** Video file with no audio track -- waveform shows empty/loading state gracefully
-- [ ] **MF13** Video with no audio -- transcription fails with a clear error message (not a crash)
-- [ ] **MF14** Video with no audio -- playback still works (video plays, no sound)
-- [ ] **MF15** Video with no audio -- manually adding captions still works
+- [X] **MF12** Video file with no audio track -- timeline waveform row shows "No audio track" (no sidecar call, no error spam)
+- [X] **MF13** Video with no audio -- transcription blocked at the UI layer
+   - Generate button replaced with "This file has no audio track" in the empty state
+   - Regenerate button disabled with tooltip "No audio track -- nothing to transcribe"
+   - Error modal wrapping fixed (was breaking mid-word with `word-break: break-all`; now uses `overflow-wrap: anywhere`)
+- [X] **MF14** Video with no audio -- playback still works (video plays, no sound)
+- [X] **MF15** Video with no audio -- manually adding captions still works
 
 ---
 
