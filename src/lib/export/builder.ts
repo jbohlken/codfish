@@ -361,20 +361,20 @@ export function validateTemplate(template: string): TemplateWarning[] {
     if (m[1] === "each") {
       depth++;
       if (depth > 1 && !nestedReported) {
-        warnings.push({ message: "Nested {{each}} blocks aren't supported." });
+        warnings.push({ message: "Nested {{each}} blocks aren't supported" });
         nestedReported = true;
       }
     } else {
       depth--;
       if (depth < 0 && !strayCloseReported) {
-        warnings.push({ message: "{{/each}} without a matching {{each}}." });
+        warnings.push({ message: "{{/each}} without a matching {{each}}" });
         strayCloseReported = true;
         depth = 0; // recover so a later opener doesn't get double-counted
       }
     }
   }
   if (depth > 0) {
-    warnings.push({ message: "{{each}} without a matching {{/each}}." });
+    warnings.push({ message: "{{each}} without a matching {{/each}}" });
   }
 
   // Per-caption tokens used outside any {{each}} block.
@@ -384,7 +384,7 @@ export function validateTemplate(template: string): TemplateWarning[] {
     const offset = match.index ?? 0;
     const inside = blocks.some((b) => offset > b.open && offset < b.close);
     if (!inside && isValidToken(key) && isPerCaptionToken(key)) {
-      warnings.push({ message: `{{${key}}} is a per-caption token and won't work outside {{each}}.` });
+      warnings.push({ message: `{{${key}}} is a per-caption token and won't work outside {{each}}` });
       break; // one warning is enough
     }
   }

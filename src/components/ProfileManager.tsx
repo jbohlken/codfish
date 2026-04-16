@@ -22,6 +22,7 @@ import {
 } from "../lib/profiles";
 import { showError } from "./ErrorModal";
 import { confirmUnsavedChanges } from "./UnsavedChanges";
+import { validateNameChars } from "../lib/naming";
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -138,10 +139,11 @@ export function ProfileManager() {
   });
 
   const getNameError = (name: string, id: string): string | null => {
-    const trimmed = name.trim();
-    if (!trimmed) return "Name can't be empty";
-    if (allProfiles.some((p) => p.id !== id && p.name === trimmed)) {
-      return `A profile named "${trimmed}" already exists`;
+    const charError = validateNameChars(name);
+    if (charError) return charError;
+    const lower = name.trim().toLowerCase();
+    if (allProfiles.some((p) => p.id !== id && p.name.toLowerCase() === lower)) {
+      return "Name in use";
     }
     return null;
   };

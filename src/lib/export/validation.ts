@@ -6,6 +6,7 @@
 
 import type { FormatConfig } from "./builder";
 import type { ExportFormat } from "./index";
+import { validateNameChars, validateExtensionChars } from "../naming";
 
 export interface FieldErrors {
   name?: string;
@@ -26,15 +27,18 @@ export function validateFormatConfig(
   currentFormatPath: string | null,
 ): FieldErrors {
   const errs: FieldErrors = {};
-  if (!config.name.trim()) {
-    errs.name = "Required";
+  const nameError = validateNameChars(config.name);
+  if (nameError) {
+    errs.name = nameError;
   } else {
+    const trimmedLower = config.name.trim().toLowerCase();
     const duplicate = formats.find(
-      (f) => f.name === config.name.trim() && f.formatPath !== currentFormatPath,
+      (f) => f.name.toLowerCase() === trimmedLower && f.formatPath !== currentFormatPath,
     );
     if (duplicate) errs.name = "Name in use";
   }
-  if (!config.extension.trim()) errs.extension = "Required";
+  const extError = validateExtensionChars(config.extension);
+  if (extError) errs.extension = extError;
   if (!config.template.trim()) errs.template = "Required";
   return errs;
 }
