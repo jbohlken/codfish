@@ -45,6 +45,20 @@ function trySnap(value: number, snapPoints: number[], thresholdSec: number): num
   return null;
 }
 
+/** Wait for the video element to report a duration via loadedmetadata.
+ *  Resolves with null on timeout so callers can fall back to sidecar data
+ *  rather than hang forever if the element never fires the event. */
+function waitForMediaDuration(timeoutMs: number): Promise<number | null> {
+  const current = mediaDuration.peek();
+  if (current > 0) return Promise.resolve(current);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { unsub(); resolve(null); }, timeoutMs);
+    const unsub = mediaDuration.subscribe((v) => {
+      if (v > 0) { clearTimeout(timer); unsub(); resolve(v); }
+    });
+  });
+}
+
 export function Timeline() {
   const media = selectedMedia.value;
   const currentTime = playbackTime.value;
@@ -130,13 +144,13 @@ export function Timeline() {
       const mtime = await invoke<number>("file_mtime", { path: media.path });
       if (cancelled) return;
       let peaks: Float32Array;
-      let duration: number;
+      let audioDuration: number;
       const cached = await getCachedPeaks(media.path, mtime);
       if (cancelled) return;
       if (cached) {
         flog(`cache hit bins=${cached.peaks.length}`);
         peaks = cached.peaks;
-        duration = cached.duration;
+        audioDuration = cached.duration;
       } else {
         flog("cache miss → generate_peaks");
         const r = await invoke<{ peaks: number[]; duration: number }>(
@@ -145,13 +159,37 @@ export function Timeline() {
         );
         if (cancelled) return;
         peaks = new Float32Array(r.peaks);
-        duration = r.duration;
-        cachePeaks(media.path, mtime, peaks, duration);
-        flog(`generated bins=${peaks.length} duration=${duration.toFixed(2)}s`);
+        audioDuration = r.duration;
+        cachePeaks(media.path, mtime, peaks, audioDuration);
+        flog(`generated bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
+      }
+      // Align the waveform with the <video> element's duration so the
+      // ruler, caption blocks, playhead, and waveform all share one axis.
+      // For VFR media the ffmpeg-reported audio duration can diverge from
+      // what <video>.duration reports — using the audio duration here makes
+      // the waveform and the seek bar drift apart as playback progresses.
+      const layoutDuration = await waitForMediaDuration(5000) ?? audioDuration;
+      if (cancelled) return;
+      // Pad or trim the peaks to the layout duration at the original bins/sec.
+      // If we just passed layoutDuration to ws.load() without resizing, WaveSurfer
+      // would stretch (or compress) the peaks to fill that duration — so audio
+      // that ends at t=193s in a 232s container would still visually draw out
+      // to the right edge. Padding with silence lets the waveform end where the
+      // audio actually ends while caption blocks stay on the video-clock axis.
+      if (audioDuration > 0) {
+        const binsPerSec = peaks.length / audioDuration;
+        const targetBins = Math.max(1, Math.round(binsPerSec * layoutDuration));
+        if (targetBins > peaks.length) {
+          const padded = new Float32Array(targetBins);
+          padded.set(peaks);
+          peaks = padded;
+        } else if (targetBins < peaks.length) {
+          peaks = peaks.slice(0, targetBins);
+        }
       }
       const url = convertFileSrc(media.path);
-      await ws.load(url, [peaks], duration);
-      if (!cancelled) flog("load resolved");
+      await ws.load(url, [peaks], layoutDuration);
+      if (!cancelled) flog(`load resolved layoutDuration=${layoutDuration.toFixed(2)}s audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
     })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     ws.on("error", (e) => {
