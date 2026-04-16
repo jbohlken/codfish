@@ -328,6 +328,16 @@ describe("formatSmpte", () => {
     expect(result).toContain(";");
     expect(result).toBe("00:00:01;11");
   });
+
+  it("DF skips frames 0-3 at minute boundary (59.94)", () => {
+    const t = 3600 / 59.94;
+    expect(formatSmpte(t, 59.94, true)).toBe("00:01:00;04");
+  });
+
+  it("DF does NOT skip at 10-minute boundaries (59.94)", () => {
+    const t = 35964 / 59.94;
+    expect(formatSmpte(t, 59.94, true)).toBe("00:10:00;00");
+  });
 });
 
 // ── Display formatting ─────────────────────────────────────────────────────
