@@ -168,34 +168,40 @@ Dropped: m4a, aif/aiff, au -- WebView2 rejects playback (MEDIA_ERR_SRC_NOT_SUPPO
 
 ### Framerate Detection
 
-- [ ] **FR1** Media with standard framerate (24, 25, 30, 60) -- fps badge shows detected value
-- [ ] **FR2** Media with no detectable framerate (audio-only) -- fps badge shows profile default with asterisk
-- [ ] **FR3** Media at 29.97fps -- detected and displayed correctly
-- [ ] **FR4** Media at 23.976fps -- detected and displayed correctly
+- [X] **FR1** Media with standard framerate (24, 25, 30, 60) -- fps badge shows detected value
+- [X] **FR2** Media with no detectable framerate (audio-only) -- fps badge shows profile default with asterisk
+- [X] **FR3** Media at 29.97fps -- detected and displayed correctly
+- [X] **FR4** Media at 23.976fps -- detected and displayed correctly
 
 ### Variable Frame Rate (VFR)
 
-- [ ] **FR5** VFR media -- fps badge shows "VFR" label
-- [ ] **FR6** VFR media -- tooltip warns that frame-snapping may be imprecise
-- [ ] **FR7** VFR media -- captions still generate and export correctly
+- [X] **FR5** VFR media -- fps badge shows "VFR" label
+- [X] **FR6** VFR media -- tooltip warns that frame-snapping may be imprecise
+- [!] **FR7** VFR media -- captions still generate and export correctly
+   -There seems to be an issue with the timeline waveform display and the caption regions not lining up. Playback shows captions are timed correctly, but it's like the waveform isn't right, including the seek bar (drift?)
+
 
 ### Drop Frame
 
-- [ ] **FR8** 29.97fps media with DF enabled -- SMPTE timecode uses semicolons (;)
-- [ ] **FR9** 29.97fps media with DF disabled -- SMPTE timecode uses colons (:)
-- [ ] **FR10** 30fps media with DF enabled -- should fall back to NDF (colons)
-- [ ] **FR11** 24fps media -- DF not applicable, always NDF
-- [ ] **FR12** Toggle DF setting on media -- timecodes in timeline and caption list update
-- [ ] **FR13** Export with SMPTE tokens -- DF/NDF respects media setting
-- [ ] **FR14** Timeline SMPTE mode label shows "SMPTE DF" when drop frame is active
+- [X] **FR8** 29.97fps media with DF enabled -- SMPTE timecode uses semicolons (;)
+- [X] **FR9** 29.97fps media with DF disabled -- SMPTE timecode uses colons (:)
+- [?] **FR10** 30fps media with DF enabled -- should fall back to NDF (colons)
+   - Do you mean switching to 30fps media from say a 29.97fps clip with DF enabled to ensure the display changes? 30 doesn't have DF/NDF
+- [X] **FR11** 24fps media -- DF not applicable, always NDF
+- [?] **FR12** Toggle DF setting on media -- timecodes in timeline and caption list update
+   - Caption list shouldn't because it uses different time display?
+- [X] **FR13** Export with SMPTE tokens -- DF/NDF respects media setting
+- [X] **FR14** Timeline SMPTE mode label shows "SMPTE DF" when drop frame is active
 
 ### Frame Snapping
 
-- [ ] **FR15** Split a caption -- split point is frame-snapped
-- [ ] **FR16** Add a caption -- start/end are frame-snapped
-- [ ] **FR17** Resize a caption handle -- snaps to frame boundaries
-- [ ] **FR18** Generated captions -- all start/end times are frame-aligned
-- [ ] **FR19** Frame snapping at 24fps, 29.97fps, 30fps -- verify precision
+- [X] **FR15** Split a caption -- split point is frame-snapped
+- [X] **FR16** Add a caption -- start/end are frame-snapped
+- [X] **FR17** Resize a caption handle -- snaps to frame boundaries
+- [X] **FR18** Generated captions -- all start/end times are frame-aligned
+- [X] **FR19** Frame snapping at 24fps, 29.97fps, 30fps -- verify precision
+
+Tick mark rounding -- noticed with a 24fps media item that when zoomed in to see individual frame ticks in the timeline, there were two entires for 01:01, then skipped to 01:03 -- can we look at rounding of the tick mark labels across display type?
 
 ---
 

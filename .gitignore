@@ -24,6 +24,7 @@ sidecar/*.spec
 sidecar/.venv*/
 
 OLD/
+test-media/
 .env
 .env.*
 *.key
