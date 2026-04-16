@@ -207,27 +207,37 @@ Tick mark rounding -- noticed with a 24fps media item that when zoomed in to see
 
 ## Export
 
-- [ ] **EX1** Export as SRT -- valid file, timestamps with commas
-- [ ] **EX2** Export as WebVTT -- WEBVTT header, timestamps with dots
-- [ ] **EX3** Export as JSON -- valid JSON array with all fields
-- [ ] **EX4** Export as Plain Text -- space-joined text, no timestamps
-- [ ] **EX5** Export with custom .cff format
-- [ ] **EX6** Export with SMPTE tokens in a custom format
-- [ ] **EX7** Export format dropdown persists selection
-- [ ] **EX8** Export with multi-line captions -- line breaks preserved in SRT/VTT
-- [ ] **EX9** Export empty project (no captions) -- graceful handling (no crash, clear feedback)
+- [X] **EX1** Export as SRT -- valid file, timestamps with commas
+- [X] **EX2** Export as WebVTT -- WEBVTT header, timestamps with dots
+- [X] **EX3** Export as JSON -- valid JSON array with all fields
+- [X] **EX4** Export as Plain Text -- space-joined text, no timestamps
+- [X] **EX5** Export with custom .cff format
+- [X] **EX6** Export with SMPTE tokens in a custom format
+- [X] **EX7** Export format dropdown persists selection
+- [X] **EX8** Export with multi-line captions -- line breaks preserved in SRT/VTT
+- [X] **EX9** Export empty project (no captions) -- graceful handling (no crash, clear feedback)
 
 ---
 
 ## Validation
 
-- [ ] **V1** Captions exceeding maxCharsPerLine show warnings
-- [ ] **V2** Captions exceeding maxDuration show warnings
-- [ ] **V3** Overlapping captions show warnings (after manual resize)
-- [ ] **V4** Warnings appear in both caption list badges and timeline block colors
-- [ ] **V5** Strict vs fuzzy warnings render differently
-- [ ] **V6** Validation updates live after resize/edit (not stale from previous state)
-- [ ] **V7** minGap warnings appear when captions are too close together
+- [X] **V1** Captions exceeding maxCharsPerLine show warnings
+- [X] **V2** Captions exceeding maxDuration show warnings
+- [X] **V3** Overlapping captions show warnings
+   - Editor paths (resize, add, split, merge, pipeline) all prevent overlap; verified via hand-edited .cod — validator surfaces the warning as expected
+   - Known: timeline resize handles get weird when overlap is present. Parked until caption import lands (first realistic path for overlap to enter a project).
+- [X] **V4** Warnings appear in both caption list badges and timeline block colors
+- [X] **V5** Strict vs fuzzy warnings render differently
+- [X] **V6** Validation updates live after resize/edit (not stale from previous state)
+- [X] **V7** minGap warnings appear when captions are too close together
+- [X] **V8** Caption with more lines than maxLines shows warning
+- [X] **V9** Caption shorter than minDuration shows warning
+- [X] **V10** Caption exceeding maxCps (reading speed) shows warning
+- [X] **V11** Two-line caption with imbalanced lengths (>60% difference) shows warning (always fuzzy)
+- [X] **V12** minGapEnabled=false suppresses gap_flicker warnings even when captions are close
+- [X] **V4a** Hover warning badge shows tooltip listing all warnings for that caption (label + detail rows)
+- [X] **V5a** Caption with both strict and fuzzy warnings shows both colors; tooltip lists all in priority order (strict first)
+- [X] **V13** Export proceeds even when captions have warnings (advisory-not-blocking by design — no pre-export validation gate)
 
 ---
 
