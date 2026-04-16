@@ -121,7 +121,11 @@ export async function openRecent(filePath: string): Promise<boolean> {
   }
   return withUnsavedCheck(async () => {
     try { await loadProjectFromPath(filePath); return true; }
-    catch (err) { console.error(err); return false; }
+    catch (err) {
+      console.error(err);
+      showError(`Could not open project:\n${filePath}`);
+      return false;
+    }
   });
 }
 
@@ -134,6 +138,32 @@ async function openProject(): Promise<boolean> {
   const filePath = flattenDialogResult(result);
   if (!filePath) return false;
   return loadProjectFromPath(filePath);
+}
+
+/** Discard unsaved changes and reload the project from disk. Prompts for
+ *  confirmation first — reloading clobbers in-memory state that the undo
+ *  history can't recover. No-op without a path + dirty state (the menu
+ *  item is also gated on both, but guard here for keyboard/programmatic
+ *  callers). */
+export async function revertProject(): Promise<boolean> {
+  const path = projectPath.value;
+  if (!path || !isDirty.value) return false;
+
+  const choice = await confirmUnsavedChanges(
+    "Revert will reload the saved version from disk and discard your unsaved changes.",
+    { title: "Revert project?", hideDiscard: true, confirmLabel: "Revert" },
+  );
+  if (choice !== "save") return false;
+
+  try {
+    await loadProjectFromPath(path);
+    await clearRecovery();
+    return true;
+  } catch (err) {
+    console.error(err);
+    showError("Could not reload the project from disk.");
+    return false;
+  }
 }
 
 export async function saveCurrentProject(): Promise<boolean> {

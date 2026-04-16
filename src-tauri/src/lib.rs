@@ -22,10 +22,15 @@ struct MenuItems {
     open_project: MenuItem<Wry>,
     save_project: MenuItem<Wry>,
     save_project_as: MenuItem<Wry>,
+    revert_project: MenuItem<Wry>,
     close_project: MenuItem<Wry>,
     undo: MenuItem<Wry>,
     redo: MenuItem<Wry>,
     dark_mode: CheckMenuItem<Wry>,
+    export_formats: MenuItem<Wry>,
+    profiles: MenuItem<Wry>,
+    about: MenuItem<Wry>,
+    feedback: MenuItem<Wry>,
     /// "Open Recent" submenu — its items are rebuilt whenever the recent
     /// list changes via `set_recent_menu`.
     recent_submenu: Submenu<Wry>,
@@ -74,17 +79,27 @@ fn frontend_log(app: AppHandle, message: String) {
 
 #[tauri::command]
 fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Result<(), String> {
+    // open_recent (Submenu) and dark_mode (CheckMenuItem) are different types
+    // from the regular MenuItems, so they can't go through the match arm.
     if id == "open_recent" {
         return items.recent_submenu.set_enabled(enabled).map_err(|e| e.to_string());
+    }
+    if id == "dark_mode" {
+        return items.dark_mode.set_enabled(enabled).map_err(|e| e.to_string());
     }
     let item = match id.as_str() {
         "new_project" => &items.new_project,
         "open_project" => &items.open_project,
         "save_project" => &items.save_project,
         "save_project_as" => &items.save_project_as,
+        "revert_project" => &items.revert_project,
         "close_project" => &items.close_project,
         "undo" => &items.undo,
         "redo" => &items.redo,
+        "export_formats" => &items.export_formats,
+        "profiles" => &items.profiles,
+        "about" => &items.about,
+        "feedback" => &items.feedback,
         other => return Err(format!("unknown menu id: {other}")),
     };
     item.set_enabled(enabled).map_err(|e| e.to_string())
@@ -1107,22 +1122,31 @@ pub fn run() {
             let new_proj = MenuItemBuilder::new("New Project")
                 .id("menu_new_project")
                 .accelerator("CmdOrCtrl+N")
+                .enabled(false)
                 .build(handle)?;
             let open_proj = MenuItemBuilder::new("Open Project…")
                 .id("menu_open_project")
                 .accelerator("CmdOrCtrl+O")
+                .enabled(false)
                 .build(handle)?;
             let save_proj = MenuItemBuilder::new("Save")
                 .id("menu_save_project")
                 .accelerator("CmdOrCtrl+S")
+                .enabled(false)
                 .build(handle)?;
             let save_as = MenuItemBuilder::new("Save As…")
                 .id("menu_save_project_as")
                 .accelerator("CmdOrCtrl+Shift+S")
+                .enabled(false)
+                .build(handle)?;
+            let revert_proj = MenuItemBuilder::new("Revert")
+                .id("menu_revert_project")
+                .enabled(false)
                 .build(handle)?;
             let close_proj = MenuItemBuilder::new("Close Project")
                 .id("menu_close_project")
                 .accelerator("CmdOrCtrl+W")
+                .enabled(false)
                 .build(handle)?;
 
             // Exit lives in the File menu on Windows/Linux per platform
@@ -1143,6 +1167,7 @@ pub fn run() {
                 .build(handle)?;
             let recent_submenu = SubmenuBuilder::new(handle, "Open Recent")
                 .item(&recent_placeholder)
+                .enabled(false)
                 .build()?;
 
             let file_menu_builder = SubmenuBuilder::new(handle, "File")
@@ -1152,6 +1177,7 @@ pub fn run() {
                 .separator()
                 .item(&save_proj)
                 .item(&save_as)
+                .item(&revert_proj)
                 .separator()
                 .item(&close_proj);
 
@@ -1190,23 +1216,32 @@ pub fn run() {
                 .enabled(false)
                 .build(handle)?;
 
+            // Non-project items also start disabled: pre-splash and splash
+            // should have a uniformly inert menu (Exit is the only escape
+            // hatch). The frontend flips them on once sidecar + daemon are
+            // ready.
             let export_formats = MenuItemBuilder::new("Export Formats…")
                 .id("menu_export_formats")
+                .enabled(false)
                 .build(handle)?;
             let profiles_item = MenuItemBuilder::new("Caption Profiles…")
                 .id("menu_profiles")
+                .enabled(false)
                 .build(handle)?;
 
             let dark_mode_item = CheckMenuItemBuilder::new("Dark Mode")
                 .id("menu_dark_mode")
                 .checked(true)
+                .enabled(false)
                 .build(handle)?;
 
             let about_item = MenuItemBuilder::new("About Codfish")
                 .id("menu_about")
+                .enabled(false)
                 .build(handle)?;
             let feedback_item = MenuItemBuilder::new("Submit Feedback…")
                 .id("menu_feedback")
+                .enabled(false)
                 .build(handle)?;
 
             menu_builder = menu_builder.item(&file_menu);
@@ -1274,10 +1309,15 @@ pub fn run() {
                 open_project: open_proj.clone(),
                 save_project: save_proj.clone(),
                 save_project_as: save_as.clone(),
+                revert_project: revert_proj.clone(),
                 close_project: close_proj.clone(),
                 undo: undo_item.clone(),
                 redo: redo_item.clone(),
                 dark_mode: dark_mode_item.clone(),
+                export_formats: export_formats.clone(),
+                profiles: profiles_item.clone(),
+                about: about_item.clone(),
+                feedback: feedback_item.clone(),
                 recent_submenu: recent_submenu.clone(),
             });
             handle.manage(RecentPaths(StdMutex::new(Vec::new())));

@@ -5,6 +5,11 @@ import { signal, useSignalEffect } from "@preact/signals";
 // haven't been drained yet." Set on boot and on every launch-paths-added
 // event; the signal-effect inside App flips it off once it actually drains.
 const launchPathsPending = signal(false);
+// Flipped to true once the boot-time recovery check has fully resolved
+// (no file found, or the user accepted/dismissed the prompt). Launch-path
+// drain waits on this so a file-association open can't race the recovery
+// prompt.
+const recoveryDone = signal(false);
 import "./styles/components.css";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ProjectPanel } from "./components/layout/ProjectPanel";
@@ -12,7 +17,7 @@ import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel, commitActiveEdit, cancelActiveEdit } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
-import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, openRecent } from "./lib/project";
+import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, revertProject, openRecent } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
 import { invoke } from "@tauri-apps/api/core";
@@ -54,7 +59,10 @@ export function App() {
     let cancelled = false;
     (async () => {
       const blob = await loadRecovery();
-      if (cancelled || !blob) return;
+      if (cancelled || !blob) {
+        recoveryDone.value = true;
+        return;
+      }
       const restore = await askRestoreRecovery(blob.saved_at);
       if (cancelled) return;
       if (restore) {
@@ -63,14 +71,13 @@ export function App() {
           resetHistory(proj);
           project.value = proj;
           projectPath.value = blob.original_path ?? null;
-          // Mark dirty so the user is prompted to save — the recovery
-          // file represents unsaved work, and on-disk is still stale.
           isDirty.value = true;
         } catch (e) {
           console.error("recovery parse failed", e);
         }
       }
       await clearRecovery();
+      recoveryDone.value = true;
     })();
     return () => { cancelled = true; };
   }, [sidecarStatus.value, daemonStatus.value, profiles.value.length]);
@@ -191,6 +198,9 @@ export function App() {
     if (!launchPathsPending.value) return;
     const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
     if (!sidecarReady || daemonStatus.value !== "ready" || isUpdating()) return;
+    // Wait for the recovery prompt to resolve before draining launch paths,
+    // otherwise a file-association open could race the restore decision.
+    if (!recoveryDone.value) return;
     if (drainingLaunchPaths.current) return;
     drainingLaunchPaths.current = true;
     launchPathsPending.value = false;
@@ -259,11 +269,20 @@ export function App() {
     set("open_recent", ready);
     set("save_project_as", ready && hasProject);
     set("save_project", ready && hasProject && dirty);
+    set("revert_project", ready && hasProject && !!projectPath.value && dirty);
     set("close_project", ready && hasProject);
     const undoEnabled = ready && hasProject && canUndo.value;
     const redoEnabled = ready && hasProject && canRedo.value;
     set("undo", undoEnabled);
     set("redo", redoEnabled);
+    // Non-project-gated items: enabled whenever the app is fully ready so
+    // the menu is uniformly inert during pre-splash and splash (Exit is the
+    // only live escape hatch).
+    set("export_formats", ready);
+    set("profiles", ready);
+    set("dark_mode", ready);
+    set("about", ready);
+    set("feedback", ready);
     const setText = (id: string, text: string) =>
       invoke("set_menu_text", { id, text }).catch(() => {});
     setText("undo", undoDescription.value ? `Undo ${undoDescription.value}` : "Undo");
@@ -277,8 +296,11 @@ export function App() {
 
   useEffect(() => {
     const unlisten = listen<string>("menu://action", (e) => {
-      // Block menu actions while splash/setup is up or an update is in
-      // flight — otherwise file dialogs pop over the splash screen.
+      // Belt-and-suspenders: the menu's enabled state already blocks every
+      // item except Exit during pre-splash, splash, and updates — but keep
+      // a dispatcher-side gate so any residual event (e.g. a native menu
+      // firing in a race window before set_menu_enabled lands) is still a
+      // no-op.
       if (isUpdating()) return;
       const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
       if (!sidecarReady || daemonStatus.value !== "ready") return;
@@ -299,6 +321,7 @@ export function App() {
         case "open_project": openProjectGuarded(); break;
         case "save_project": if (hasProject && isDirty.value) saveCurrentProject(); break;
         case "save_project_as": if (hasProject) saveCurrentProjectAs(); break;
+        case "revert_project": if (hasProject && projectPath.value && isDirty.value) revertProject(); break;
         case "close_project": if (hasProject) closeProjectGuarded(); break;
         case "undo": if (hasProject) undo(); break;
         case "redo": if (hasProject) redo(); break;
@@ -306,8 +329,8 @@ export function App() {
         case "export_formats": requestCloseProfileManager().then((ok) => { if (ok) openFormatManager(); }); break;
         case "profiles": requestCloseFormatManager().then((ok) => { if (ok) openProfileManager(); }); break;
         case "dark_mode": toggleTheme(); break;
-        case "about": aboutOpen.value = true; break;
-        case "feedback": bugReportOpen.value = true; break;
+        case "about": bugReportOpen.value = false; aboutOpen.value = true; break;
+        case "feedback": aboutOpen.value = false; bugReportOpen.value = true; break;
       }
     });
     return () => { unlisten.then((f) => f()); };
