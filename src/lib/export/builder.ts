@@ -277,7 +277,11 @@ export function formatTime(t: number, fmt: string): string {
     if (fmt.charAt(i) === "S") {
       let n = 0;
       while (i + n < fmt.length && fmt.charAt(i + n) === "S") n++;
-      out += String(Math.floor(fr * 10 ** n)).padStart(n, "0"); i += n;
+      // Sub-ULP epsilon absorbs the same drift guarded elsewhere — frac comes
+      // from nanosecond-snapped timeComponents, but e.g. 0.1 * 1000 in doubles
+      // is 99.99999999999999 and would floor to 99. 1e-6 is far below any
+      // realistic fractional tick (smallest legitimate n=9 gives 1ns per tick).
+      out += String(Math.floor(fr * 10 ** n + 1e-6)).padStart(n, "0"); i += n;
     } else if (c2 === "HH") {
       out += String(h).padStart(2, "0"); i += 2;
     } else if (c2 === "mm") {
@@ -285,7 +289,10 @@ export function formatTime(t: number, fmt: string): string {
     } else if (c2 === "ss") {
       out += String(sc).padStart(2, "0"); i += 2;
     } else if (fmt.charAt(i) === "X") {
-      out += String(Math.floor(t)); i += 1;
+      // Same sub-ULP epsilon as the SSS branch — a drifted t = 1 - ε would
+      // otherwise render as "0" instead of "1". 1e-6 s is well below any
+      // legitimate second boundary we'd truncate at.
+      out += String(Math.floor(t + 1e-6)); i += 1;
     } else if (fmt.charAt(i) === "H") {
       out += String(h); i += 1;
     } else if (fmt.charAt(i) === "m") {

@@ -274,6 +274,25 @@ describe("formatSmpte", () => {
     expect(formatSmpte(3661.0, 24, false)).toBe("01:01:01:00");
   });
 
+  // Regression: at 24fps, frac=0.0833333 (two frames) * 24 in doubles
+  // lands 1 ULP below 2.0, so naive floor used to map frame 2 to "01"
+  // (duplicating frame 1's label). Ticks near second 1 showed
+  // "01:01, 01:01, 01:03" with frame 2 eaten.
+  it("NDF 24fps labels every frame in a second uniquely", () => {
+    const labels = new Set<string>();
+    for (let frame = 0; frame < 24; frame++) {
+      labels.add(formatSmpte(1 + frame / 24, 24, false));
+    }
+    expect(labels.size).toBe(24);
+  });
+
+  // Regression: accumulated t values can drift 1 ULP below an exact
+  // second, leaving {s: 0, frac: 1.0} in the old timeComponents.
+  it("NDF handles sub-ULP drift at second boundaries", () => {
+    const driftedOne = 1 - Number.EPSILON;
+    expect(formatSmpte(driftedOne, 24, false)).toBe("00:00:01:00");
+  });
+
   // DF tests — 29.97fps
   it("DF at 29.97fps — zero", () => {
     expect(formatSmpte(0, 29.97, true)).toBe("00:00:00;00");
@@ -368,6 +387,21 @@ describe("formatDisplayTime", () => {
 
     it("zero", () => {
       expect(formatDisplayTime(0, "frames", 30)).toBe("0f");
+    });
+
+    // Regression: ruler ticks accumulate `t += 1/24` so frame 6 lands at
+    // 0.24999999999999997, where floor(t*24) used to give 5 — producing a
+    // sequence like "0 1 2 3 4 5 5 6 8 9 10f" instead of 0..10.
+    it("24fps labels every accumulated tick uniquely", () => {
+      const labels: string[] = [];
+      let t = 0;
+      for (let i = 0; i <= 24; i++) {
+        labels.push(formatDisplayTime(t, "frames", 24));
+        t += 1 / 24;
+      }
+      expect(labels).toEqual(
+        Array.from({ length: 25 }, (_, i) => `${i}f`)
+      );
     });
   });
 });

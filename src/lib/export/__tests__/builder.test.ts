@@ -241,6 +241,20 @@ describe("truncation rules", () => {
   it("no carry from fractional into seconds", () => {
     expect(formatTime(59.999, "HH:mm:ss,SSS")).toBe("00:00:59,999");
   });
+
+  // Regression: drifted t = 1 - ULP used to render X as "0" because floor
+  // ate the last second. Same bug class as the timeline frames-mode fix.
+  it("X handles sub-ULP drift at second boundaries", () => {
+    const drifted = 1 - Number.EPSILON;
+    expect(formatTime(drifted, "X")).toBe("1");
+  });
+
+  // Regression: 0.1 * 1000 in doubles is 99.99999999999999, which floors to
+  // 99 instead of 100. nanosecond-snapped timeComponents feeds clean frac,
+  // but builder adds its own sub-ULP epsilon as defence in depth.
+  it("SSS handles float drift in fractional scaling", () => {
+    expect(formatTime(0.1, "ss.SSS")).toBe("00.100");
+  });
 });
 
 // ── parseCff / serializeCff ─────────────────────────────────────────────────

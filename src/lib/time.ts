@@ -52,6 +52,20 @@ export function framesBetween(start: number, end: number, fps: number): number {
   return Math.round((end - start) * fps);
 }
 
+/**
+ * Truncate a time value to its integer frame index, absorbing sub-ULP float drift.
+ *
+ * Accumulated tick times like 6/24 can land at 0.24999999999999997, so a naive
+ * `Math.floor(t * fps)` eats a frame and produces a duplicate-then-skip sequence
+ * (e.g. "0 1 2 3 4 5 5 6 8 9 10f" on a 24fps ruler, or "01:01, 01:01, 01:03" in
+ * SMPTE labels). Adding 1e-6 in frame-count space — far below any real frame
+ * boundary (1e-6 frame at 1000fps is 1 ns) — keeps boundary-aligned frames on
+ * the correct side of floor without shifting mid-frame times across a boundary.
+ */
+export function toFrameIndex(t: number, fps: number): number {
+  return Math.floor(t * fps + 1e-6);
+}
+
 // ── Unit conversion ────────────────────────────────────────────────────────
 
 /** Convert a timed rule (seconds or frames) to seconds. */
@@ -61,12 +75,21 @@ export function toSeconds(rule: TimedRule, fps: number): number {
 
 // ── Precision-safe component extraction ────────────────────────────────────
 
-/** Extract hours, minutes, whole seconds, and fractional part with precision guard. */
+/** Extract hours, minutes, whole seconds, and fractional part with precision guard.
+ *  Snap t to nanosecond precision once, then derive every component from the same
+ *  snapped value so they stay mutually consistent. Without this, float-accumulation
+ *  drift can leave a value meant to be 1.0 arriving as 0.9999999999998, which the
+ *  old split-floor-and-round path mapped to `{s: 0, frac: 1.0}` — internally
+ *  contradictory and causing "00:00:00.1000" / "00:00:00:24" displays. Nanoseconds
+ *  are far below any frame boundary we'll ever display (1 frame at 1000fps = 1M ns). */
 export function timeComponents(t: number): { h: number; m: number; s: number; frac: number } {
-  const h = Math.floor(t / 3600);
-  const m = Math.floor((t % 3600) / 60);
-  const s = Math.floor(t % 60);
-  const frac = Math.round((t - Math.floor(t)) * 1e9) / 1e9;
+  const nanos = Math.round(t * 1e9);
+  const integerSeconds = Math.floor(nanos / 1e9);
+  const fracNanos = nanos - integerSeconds * 1e9;
+  const h = Math.floor(integerSeconds / 3600);
+  const m = Math.floor((integerSeconds % 3600) / 60);
+  const s = integerSeconds % 60;
+  const frac = fracNanos / 1e9;
   return { h, m, s, frac };
 }
 
@@ -94,7 +117,7 @@ export function formatSmpte(t: number, fps: number, dropFrame: boolean): string 
     dropFrame = false;
   }
 
-  const totalFrames = Math.floor(t * fps);
+  const totalFrames = toFrameIndex(t, fps);
 
   let h: number, m: number, s: number, f: number;
 
@@ -130,7 +153,7 @@ export function formatSmpte(t: number, fps: number, dropFrame: boolean): string 
     h = ch;
     m = cm;
     s = cs;
-    f = Math.floor(frac * fps);
+    f = toFrameIndex(frac, fps);
   }
 
   const sep = dropFrame ? ";" : ":";
@@ -166,6 +189,6 @@ export function formatDisplayTime(seconds: number, mode: DisplayMode, fps: numbe
     case "smpte-df":
       return formatSmpte(seconds, fps, true);
     case "frames":
-      return `${Math.floor(seconds * fps)}f`;
+      return `${toFrameIndex(seconds, fps)}f`;
   }
 }
