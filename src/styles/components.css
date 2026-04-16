@@ -1548,9 +1548,9 @@
   border-color: var(--color-accent);
 }
 
-.pe-number--error {
+.pe-number--error,
+.pe-number--error:focus {
   border-color: var(--color-danger);
-  color: var(--color-danger);
 }
 
 .pe-unit {

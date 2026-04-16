@@ -137,10 +137,23 @@ export function ProfileManager() {
     return () => { _guardLeave = null; };
   });
 
+  const getNameError = (name: string, id: string): string | null => {
+    const trimmed = name.trim();
+    if (!trimmed) return "Name can't be empty";
+    if (allProfiles.some((p) => p.id !== id && p.name === trimmed)) {
+      return `A profile named "${trimmed}" already exists`;
+    }
+    return null;
+  };
+
   const performSave = async (): Promise<boolean> => {
     if (!editor) return true;
     const profile = editor.profile;
     const oldName = editor.savedProfile.name;
+
+    if (getNameError(profile.name, profile.id)) return false;
+    profile.name = profile.name.trim();
+
     try {
       await saveProfileToDisk(profile);
       const loaded = await loadProfiles();
@@ -325,6 +338,7 @@ export function ProfileManager() {
   const builtins = allProfiles.filter((p) => p.builtIn);
   const custom = allProfiles.filter((p) => !p.builtIn);
   const dirty = isDirty();
+  const nameError = editor && !editor.readonly ? getNameError(editor.profile.name, editor.profile.id) : null;
 
   const renderListItem = (p: CaptionProfile) => (
     <button
@@ -399,13 +413,14 @@ export function ProfileManager() {
                     <label class="fb-label">Name</label>
                     <input
                       ref={nameRef}
-                      class="fb-input"
+                      class={`fb-input${nameError ? " fb-input--error" : ""}`}
                       type="text"
                       value={editor.profile.name}
                       placeholder="My Profile"
                       disabled={editor.readonly}
                       onInput={(e) => updateProfile((p) => { p.name = (e.target as HTMLInputElement).value; })}
                     />
+                    {nameError && <span class="fb-field-error">{nameError}</span>}
                   </div>
 
                   {/* Formatting */}
@@ -618,7 +633,7 @@ export function ProfileManager() {
                     <Copy size={12} /> Duplicate
                   </button>
                   {!editor.readonly && (
-                    <button class="btn btn-primary btn-sm" onClick={() => performSave()} disabled={!dirty}>
+                    <button class="btn btn-primary btn-sm" onClick={() => performSave()} disabled={!dirty || !!nameError}>
                       Save
                     </button>
                   )}

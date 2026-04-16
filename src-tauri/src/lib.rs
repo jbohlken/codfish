@@ -287,15 +287,15 @@ fn profiles_dir(app: &AppHandle) -> Result<PathBuf, String> {
 fn seed_profile_files(app: &AppHandle) -> Result<(), String> {
     let dir = profiles_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    // Always overwrite builtins so updates take effect. Built-in profiles are
+    // readonly in the UI, so any on-disk divergence is either stale or manual.
     for (name, content) in [
         ("default.cfp", PROFILE_DEFAULT),
         ("netflix.cfp", PROFILE_NETFLIX),
         ("bbc.cfp", PROFILE_BBC),
     ] {
         let dest = dir.join(name);
-        if !dest.exists() {
-            std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
-        }
+        std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
     }
     Ok(())
 }
@@ -1222,8 +1222,8 @@ pub fn run() {
                     .paste()
                     .select_all()
                     .separator()
-                    .item(&export_formats)
                     .item(&profiles_item)
+                    .item(&export_formats)
                     .build()?;
                 let view_menu = SubmenuBuilder::new(handle, "View")
                     .item(&dark_mode_item)
@@ -1252,8 +1252,8 @@ pub fn run() {
                     .item(&undo_item)
                     .item(&redo_item)
                     .separator()
-                    .item(&export_formats)
                     .item(&profiles_item)
+                    .item(&export_formats)
                     .build()?;
                 let view_menu = SubmenuBuilder::new(handle, "View")
                     .item(&dark_mode_item)
