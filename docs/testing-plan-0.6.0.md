@@ -243,58 +243,86 @@ Tick mark rounding -- noticed with a 24fps media item that when zoomed in to see
 
 ## Profiles
 
-- [ ] **P1** Switch profile -- captions re-validate against new rules
-- [ ] **P2** Profile with strict maxCharsPerLine -- warnings show as strict (red)
-- [ ] **P3** Profile with non-strict maxCharsPerLine -- warnings show as fuzzy (yellow)
-- [ ] **P4** Profile changes affect generated caption line-breaking
+- [X] **P1** Switch profile -- captions re-validate against new rules
+- [X] **P2** Profile with strict maxCharsPerLine -- warnings show as strict (red)
+- [X] **P3** Profile with non-strict maxCharsPerLine -- warnings show as fuzzy (yellow)
+- [X] **P4** Profile changes affect generated caption line-breaking
+- [X] **P5** Create a new custom profile -- appears in profile selector
+- [X] **P6** Duplicate a profile -- auto-named `(copy)`
+- [?] **P7** Edit a custom profile -- warnings update live
+   - Updates on save
+- [X] **P8** Delete a custom profile -- current project falls back to "Codfish"
+- [X] **P9** Cannot edit/delete built-in profiles (readonly UI)
+- [X] **P10** Import `.cfp` profile file
+- [X] **P11** Export `.cfp` profile file
+- [X] **P12** Open `.cod` with profile hash mismatch -- warning modal shows, local version is used anyway (intentional)
+- [X] **P13** Change profile settings while captions exist -- validation updates live, but caption line-wrapping does NOT re-flow (only pipeline re-wraps; existing captions keep their layout)
+- [X] **P14** Profile selection is project-scoped -- new project reverts to default "Codfish" (by design; not sticky across sessions)
 
 ---
 
 ## Format Builder
 
-- [ ] **FB1** Create a new custom format -- appears in export dropdown
-- [ ] **FB2** Edit a custom format template -- preview updates live
-- [ ] **FB3** Delete a custom format -- removed from dropdown
-- [ ] **FB4** Cannot edit/delete built-in formats
-- [ ] **FB5** Import a .cff file
-- [ ] **FB6** Export a .cff file
-- [ ] **FB7** Token autocomplete works in template editor
+- [X] **FB1** Create a new custom format -- appears in export dropdown
+- [X] **FB2** Edit a custom format template -- preview updates live
+- [X] **FB3** Delete a custom format -- removed from dropdown
+- [X] **FB4** Cannot edit/delete built-in formats
+- [X] **FB5** Import a .cff file
+- [X] **FB6** Export a .cff file
+- [X] **FB7** Token autocomplete works in template editor
+   - Can we drop punctuation from ends of template warnings?
 
 ---
 
 ## Project Management
 
-- [ ] **PM1** New project -- clears state, prompts for unsaved changes if dirty
-- [ ] **PM2** Open project (.cod file) -- loads correctly, media re-links
-- [ ] **PM3** Save / Save As -- writes .cod file, clears dirty flag
-- [ ] **PM4** Re-link media -- dialog opens, path updates, playback resumes
-- [ ] **PM5** Multiple media items in one project -- switching between them works
+- [X] **PM1** New project -- clears state, prompts for unsaved changes if dirty
+- [X] **PM2** Open project (.cod file) -- loads correctly, media paths resolve
+- [X] **PM3** Save -- writes .cod file, clears dirty flag, clears recovery
+- [X] **PM4** Save As -- writes to new path, title bar + recents update to new path, clears dirty
+- [?] **PM5** Revert -- dirty project reloads from disk, undo history resets, dirty flag clears; disabled when clean
+   - Should this clear recovery?
+- [X] **PM6** Close project -- clears state, timeline resets, recovery cleared; prompts if dirty
+- [X] **PM7** Re-link media -- dialog opens, path updates, fps re-probed, playback resumes
+- [X] **PM8** Multiple media items in one project -- switching between them works
+- [X] **PM9** Open Recent -- submenu populated, click opens with unsaved-check gate, missing file shows error + prunes list, Clear Recent empties submenu
+- [X] **PM10** Recovery -- force-quit with dirty project, next launch shows recovery prompt, restore recovers project with dirty flag, discard clears recovery file
+- [?] **PM11** File association -- double-click .cod in Explorer/Finder opens app (or raises existing instance) with project loaded
+   - How should this work if there's a recovery file?
+- [?] **PM12** Dirty state -- title bar asterisk when dirty, save clears it, next edit re-dirties, undo to initial state clears it
+   - Initial state does not clear dirty state
+- [X] **PM13** Format/profile compatibility on open -- missing format/profile falls back to default + shows warning; modified hash shows mismatch warning
 
-Revert project?
+Can we look at everything that touches/should touch active.json to make sure it's working correctly?
 
 ---
 
 ## Menus
 
-- [ ] **MN1** File > New / Open / Save / Save As -- all work
-- [ ] **MN2** Edit > Undo / Redo -- labels update, accelerators work
-- [ ] **MN3** View > Dark Mode -- toggles theme
-- [ ] **MN4** Help > Submit Feedback -- opens bug report modal
-- [ ] **MN5** Help > About (Windows) / App menu > About (Mac) -- opens About modal
-- [ ] **MN6** About modal shows version, sidecar version, copyright, log file button, acknowledgement links open browser
+- [X] **MN1** File > New / Open / Save / Save As -- all work
+- [X] **MN2** Edit > Undo / Redo -- labels update, accelerators work
+- [X] **MN3** View > Dark Mode -- toggles theme
+   - Does this persist between sessions?
+- [X] **MN4** Help > Submit Feedback -- opens bug report modal
+- [X] **MN5** Help > About (Windows) / App menu > About (Mac) -- opens About modal
+- [X] **MN6** About modal shows version, sidecar version, copyright, log file button, acknowledgement links open browser
+
+Submit Feedback and About modals can overlay.
 
 ---
 
 ## Edge Cases
 
-- [ ] **EC1** Open a project with no media -- empty state shown
-- [ ] **EC2** Import media, generate captions, close without saving -- unsaved changes prompt
-- [ ] **EC3** Very long media (1hr+) -- timeline and export handle large timestamps
-- [ ] **EC4** Rapid split/merge/undo sequences -- no state corruption
-- [ ] **EC5** Window resize -- panels and timeline reflow correctly
-- [ ] **EC6** Keyboard shortcuts don't fire while editing caption text (S, M, A, Delete, E)
-- [ ] **EC7** Click empty space in caption list -- deselects caption
-- [ ] **EC8** Click empty space in timeline blocks row -- deselects caption
-- [ ] **EC9** Select a caption, then Escape -- deselects
-- [ ] **EC10** Waveform loading spinner shows, then transitions to rendered waveform
-- [ ] **EC11** Dark mode -- all panels, modals, and timeline render correctly
+- [X] **EC1** Open a project with no media -- empty state shown
+- [X] **EC2** Import media, generate captions, close without saving -- unsaved changes prompt
+- [X] **EC3** Very long media (1hr+) -- timeline and export handle large timestamps
+- [X] **EC4** Rapid split/merge/undo sequences -- no state corruption
+- [X] **EC5** Window resize -- panels and timeline reflow correctly
+- [X] **EC6** Keyboard shortcuts don't fire while editing caption text (S, M, A, Delete, E)
+- [X] **EC7** Click empty space in caption list -- deselects caption
+- [X] **EC8** Click empty space in timeline blocks row -- deselects caption
+- [X] **EC9** Select a caption, then Escape -- deselects
+- [X] **EC10** Waveform loading spinner shows, then transitions to rendered waveform
+- [X] **EC11** Dark mode -- all panels, modals, and timeline render correctly
+
+Dial in profiles -- date last edited?
