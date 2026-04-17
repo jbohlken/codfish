@@ -47,6 +47,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+VERSION = "0.5.0"
+
 # ── stdout protocol setup ─────────────────────────────────────────────────────
 # Force UTF-8 so non-ASCII paths don't blow up on Windows.
 try:
@@ -193,41 +195,67 @@ def progress(rid: str, percent: int, message: str):
 
 
 # ── handlers ──────────────────────────────────────────────────────────────────
+def _parse_fps_fraction(s: str | None) -> float | None:
+    """Parse an ffprobe fraction like '30000/1001' into a float, or None."""
+    if not s:
+        return None
+    try:
+        parts = s.split("/")
+        num = float(parts[0])
+        den = float(parts[1]) if len(parts) > 1 else 1.0
+    except ValueError:
+        return None
+    if num == 0 or den == 0:
+        return None
+    return num / den
+
+
 def handle_probe_fps(params: dict) -> dict:
     file_path = params["path"]
     try:
         out = subprocess.check_output(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", "-select_streams", "v:0", file_path],
+             "-show_streams", file_path],
             stderr=subprocess.DEVNULL,
         ).decode()
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"fps": None}
+        return {"fps": None, "vfr": False, "hasAudio": False}
 
     try:
         data = json.loads(out)
     except json.JSONDecodeError:
-        return {"fps": None}
+        return {"fps": None, "vfr": False, "hasAudio": False}
 
-    streams = data.get("streams", [])
-    if not streams:
-        return {"fps": None}
+    all_streams = data.get("streams", [])
+    has_audio = any(s.get("codec_type") == "audio" for s in all_streams)
+    # Skip attached pictures (cover art in mp3/m4a shows up as a video
+    # stream at 90000 fps) — we only care about real video tracks.
+    video_streams = [
+        s for s in all_streams
+        if s.get("codec_type") == "video"
+        and not s.get("disposition", {}).get("attached_pic")
+    ]
+    if not video_streams:
+        return {"fps": None, "vfr": False, "hasAudio": has_audio}
 
-    fps_str = streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate")
-    if not fps_str:
-        return {"fps": None}
+    stream = video_streams[0]
+    avg_fps = _parse_fps_fraction(stream.get("avg_frame_rate"))
+    r_fps = _parse_fps_fraction(stream.get("r_frame_rate"))
 
-    try:
-        parts = fps_str.split("/")
-        num = float(parts[0])
-        den = float(parts[1]) if len(parts) > 1 else 1.0
-    except ValueError:
-        return {"fps": None}
+    fps = avg_fps or r_fps
+    if fps is None:
+        return {"fps": None, "vfr": False, "hasAudio": has_audio}
 
-    if num == 0 or den == 0:
-        return {"fps": None}
+    # VFR heuristic: r_frame_rate is a raw timebase (1000, 90000, etc.)
+    # or significantly different from avg_frame_rate
+    vfr = False
+    if avg_fps and r_fps:
+        if r_fps > 120 and abs(r_fps - avg_fps) > 1:
+            vfr = True
+        elif r_fps <= 120 and abs(r_fps - avg_fps) / max(r_fps, 1) > 0.05:
+            vfr = True
 
-    fps = num / den
+    # Snap known fractional rates to their conventional labels
     snaps = [(23.976, 24000 / 1001), (29.97, 30000 / 1001), (59.94, 60000 / 1001)]
     for label, exact in snaps:
         if abs(fps - exact) < 0.01:
@@ -236,7 +264,50 @@ def handle_probe_fps(params: dict) -> dict:
     else:
         fps = round(fps * 1000) / 1000
 
-    return {"fps": fps}
+    return {"fps": fps, "vfr": vfr, "hasAudio": has_audio}
+
+
+def handle_generate_peaks(params: dict) -> dict:
+    """Decode audio via ffmpeg, emit downsampled max-abs peaks.
+
+    Replaces WaveSurfer's whole-file fetch+WebAudio decode, which is
+    unreliable on Windows for the asset-protocol path and any codec that
+    WebAudio can't handle (HEVC containers, ProRes, etc.). Downmixes all
+    channels so stereo/5.1 content shows the full envelope instead of just L.
+    """
+    import numpy as np
+
+    file_path = params["path"]
+    bins_per_sec = int(params.get("binsPerSec", 100))
+    src_rate = 8000
+
+    # ffmpeg: downmix to mono, resample to 8kHz s16le, write to stdout
+    proc = subprocess.Popen(
+        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+         "-i", file_path, "-ac", "1", "-ar", str(src_rate),
+         "-f", "s16le", "-"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    raw, err = proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {err.decode(errors='replace').strip()}")
+
+    pcm = np.frombuffer(raw, dtype=np.int16)
+    if pcm.size == 0:
+        raise RuntimeError("no audio samples decoded")
+
+    bin_size = max(1, src_rate // bins_per_sec)
+    trim = pcm.size - (pcm.size % bin_size)
+    if trim == 0:
+        # File is shorter than one bin — fall back to a single bin
+        peaks = [float(np.abs(pcm).max()) / 32768.0] if pcm.size else [0.0]
+    else:
+        reshaped = pcm[:trim].reshape(-1, bin_size)
+        peaks = (np.abs(reshaped).max(axis=1).astype(np.float32) / 32768.0).tolist()
+
+    duration = pcm.size / src_rate
+    return {"peaks": peaks, "duration": duration}
 
 
 def _check_has_audio(file_path: str):
@@ -405,11 +476,16 @@ def handle_transcribe(rid: str, params: dict) -> dict:
 # ── request loop ──────────────────────────────────────────────────────────────
 HANDLERS = {
     "probe_fps": handle_probe_fps,
+    "generate_peaks": handle_generate_peaks,
     "transcribe": handle_transcribe,
 }
 
 
 def main():
+    if "--version" in sys.argv:
+        print(VERSION)
+        sys.exit(0)
+
     # Protocol-level side effects must NOT run at module level: on macOS,
     # PyTorch / pyannote multiprocessing workers use the "spawn" start method,
     # which re-imports this module from the top in each worker process. Anything
@@ -418,7 +494,7 @@ def main():
     emit({"event": "booting"})
     ensure_ffmpeg_on_path()
     log(
-        f"boot pid={os.getpid()} device={DEVICE} compute_type={COMPUTE_TYPE} "
+        f"boot v={VERSION} pid={os.getpid()} device={DEVICE} compute_type={COMPUTE_TYPE} "
         f"torch={torch.__version__} python={sys.version.split()[0]}",
         tag="boot",
     )

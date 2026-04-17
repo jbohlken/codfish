@@ -1,59 +1,65 @@
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save, open } from "@tauri-apps/plugin-dialog";
 import type { CaptionBlock } from "../../types/project";
+import { executeTemplate, parseCff, serializeCff } from "./builder";
+import { uniqueFormatName, randomFormatFilename } from "./validation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ExportFormat {
-  id: string;        // absolute path to the .js file
+  id: string;
   name: string;
   extension: string;
-  scriptPath: string;
+  /** Absolute path to the .cff file. */
+  formatPath: string;
+  /** "builtin" for seeded formats, "custom" for user-created .cff. */
+  source: "builtin" | "custom";
 }
 
-/** The shape passed into every transform(captions) call. */
+/** The shape passed into template execution. */
 export interface SerializedCaption {
   index: number;
   start: number;    // seconds
   end: number;      // seconds
   lines: string[];
-  speaker: string | null;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** Return all .js files from the user's export_formats directory. */
+/** Return all format files from the user's export_formats directory. */
 export async function listFormats(): Promise<ExportFormat[]> {
   try {
-    const meta = await invoke<Array<{ name: string; extension: string; path: string }>>(
+    const meta = await invoke<Array<{ name: string; extension: string; path: string; source: string }>>(
       "list_user_formats",
     );
     return meta.map((f) => ({
       id: f.name,
       name: f.name,
       extension: f.extension,
-      scriptPath: f.path,
+      formatPath: f.path,
+      source: (f.source === "builtin" ? "builtin" : "custom") as ExportFormat["source"],
     }));
   } catch {
     return [];
   }
 }
 
-/** Run the format's transform script and prompt the user for a save path. */
+/** Execute a format's template and prompt the user for a save path. */
 export async function exportCaptions(
   format: ExportFormat,
   captions: CaptionBlock[],
   baseName: string,
+  fps: number,
+  dropFrame = false,
 ): Promise<void> {
   const serialized: SerializedCaption[] = captions.map((c) => ({
     index: c.index,
     start: c.start,
     end: c.end,
     lines: c.lines,
-    speaker: c.speaker ?? null,
   }));
 
-  const content = await runScript(format.scriptPath, serialized);
+  const content = await runFormat(format.formatPath, serialized, fps, dropFrame);
 
   const savePath = await save({
     title: "Export Captions",
@@ -65,28 +71,69 @@ export async function exportCaptions(
   await invoke<void>("save_project", { path: savePath, json: content });
 }
 
-/** Return (and create) the user's export_formats directory path. */
-export async function getFormatsDir(): Promise<string> {
-  return invoke<string>("get_export_formats_dir");
+// ── Format file operations ──────────────────────────────────────────────────
+
+/** Save a .cff format file. Returns the absolute path of the written file. */
+export async function saveFormat(filename: string, content: string): Promise<string> {
+  return invoke<string>("save_user_format", { filename, content });
 }
 
-/** Open the export_formats directory in the system file manager. */
-export async function openFormatsDir(): Promise<void> {
-  const dir = await getFormatsDir();
-  await invoke<void>("open_in_explorer", { path: dir });
+/** Delete a .cff format file. */
+export async function deleteFormat(filename: string): Promise<void> {
+  await invoke<void>("delete_user_format", { filename });
 }
 
-// ── Script runner ─────────────────────────────────────────────────────────────
+/** Load the raw source of a format file. */
+export async function loadFormatSource(formatPath: string): Promise<string> {
+  return invoke<string>("load_project", { path: formatPath });
+}
 
-async function runScript(scriptPath: string, captions: SerializedCaption[]): Promise<string> {
-  const source = await invoke<string>("load_project", { path: scriptPath });
-  try {
-    // eslint-disable-next-line no-new-func
-    const transform = new Function(`${source}\nreturn transform;`)() as (
-      c: SerializedCaption[],
-    ) => string;
-    return transform(captions);
-  } catch (e) {
-    throw new Error(`Export script error in "${scriptPath}": ${e}`);
-  }
+// ── Import / export format files ────────────────────────────────────────────
+
+/**
+ * Import a .cff format file from disk.
+ * Deduplicates name and filename against existing formats.
+ * Returns the new format name, or null if cancelled.
+ */
+export async function importFormatFile(): Promise<string | null> {
+  const result = await open({
+    filters: [{ name: "Codfish Export Format", extensions: ["cff"] }],
+    multiple: false,
+  });
+  if (!result) return null;
+
+  const content = await invoke<string>("load_project", { path: result });
+  const config = parseCff(content);
+  if (!config) throw new Error("Invalid .cff format file.");
+
+  const existing = await listFormats();
+  const name = uniqueFormatName(config.name, existing);
+  const filename = randomFormatFilename(existing);
+  const cff = serializeCff({ ...config, name });
+  await saveFormat(filename, cff);
+  return name;
+}
+
+/** Export a .cff format file to a user-chosen location. */
+export async function exportFormatFile(formatPath: string): Promise<void> {
+  const source = await invoke<string>("load_project", { path: formatPath });
+  const config = parseCff(source);
+  if (!config) throw new Error("Invalid .cff format file.");
+
+  const savePath = await save({
+    defaultPath: `${config.name}.cff`,
+    filters: [{ name: "Codfish Export Format", extensions: ["cff"] }],
+  });
+  if (!savePath) return;
+
+  await invoke<void>("save_project", { path: savePath, json: source });
+}
+
+// ── Format execution ────────────────────────────────────────────────────────
+
+async function runFormat(formatPath: string, captions: SerializedCaption[], fps: number, dropFrame: boolean): Promise<string> {
+  const source = await invoke<string>("load_project", { path: formatPath });
+  const config = parseCff(source);
+  if (!config) throw new Error(`Invalid .cff format file: "${formatPath}"`);
+  return executeTemplate(config.template, captions, fps, dropFrame);
 }

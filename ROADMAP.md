@@ -1,13 +1,28 @@
 # Codfish Roadmap
 
-## 0.5.0 candidates
+## 0.6.0 candidates
 
 Features shortlisted for the next feature release. Current priority is bugfixes and stabilization.
 
-- **SRT/VTT import** — attach imported captions to a selected media item. Parse in TS, no pipeline pass, replace existing with confirmation (undoable). Requires media.
-- **Cancel transcription** — kill sidecar process mid-generation
-- **Recent projects list** — show recent .cod files on startup
-- **Merge captions** — combine adjacent captions (inverse of split)
+- ~~**Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export~~
+- ~~**Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid~~
+- ~~**Merge captions** — combine adjacent captions (inverse of split)~~
+- ~~**UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface~~
+- ~~**Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling~~
+- ~~**Audit undo/redo functionality** — make sure it's solid~~
+  - ~~Decide redo accelerator per platform: `Ctrl+Y` vs `Ctrl+Shift+Z` on Windows (currently menu shows `Ctrl+Shift+Z` on both; `Ctrl+Y` works via keydown fallback)~~
+  - ~~Decide whether the silent `Ctrl+Shift+Z` fallback on Windows should stay or be removed~~
+- ~~**Comprehensive test coverage** — make sure the app has reasonable and comprehensive test coverage (unit, component, integration)~~
+- ~~**Notarize apps** — get Windows and Mac apps signed~~
+
+## 0.7.0 candidates
+
+- **Caption styling** — preview, define, and export styling for captions, based on CSS under the hood; users should be able to load custom CSS rules to preview how they want for further flexibility. Must support currently offered export formats.
+- **Editor themeing**
+- **Standardize modals**
+- **Pipeline line-breaking improvements** — audit against published subtitle guidelines (BBC, Netflix, etc.) and add missing linguistic break penalties: pronoun+verb splits ("he | is"), complex verb splits ("have | eaten"), adjective+noun splits, prepositional verb+preposition splits. Also consider bottom-heavy pyramid preference (Netflix) and first+last name detection. Current scorer handles punctuation, articles, prepositions, and conjunctions.
+- **Validation-only gap warning threshold** — add a `minGapWarn` profile field so the validator can warn at a different (higher) threshold than the pipeline's anti-flicker `minGapSeconds`. Enables BBC's 1s minimum visible gap recommendation without changing pipeline behavior (which enforces at 0.4s for anti-flicker).
+- **Gap enforcement rework** — current pipeline closes flicker-zone gaps to seamless (0 frames), but Netflix requires a 2-frame minimum gap always. Rework so `minGapSeconds` is the true floor (gaps get pushed up to minGap, not down to 0). Seamless (0-gap) becomes the behavior when minGap = 0, not the default fallback.
 
 ---
 
@@ -42,7 +57,7 @@ Potential features and changes to consider. Not prioritized.
 
 ## Caption Editing
 
-- Merge adjacent captions (inverse of split)
+- ~~Merge adjacent captions (inverse of split)~~
 - Multi-select captions for batch delete/retime
 - Find and replace across all captions
 - Spell check
@@ -57,7 +72,7 @@ Potential features and changes to consider. Not prioritized.
 - "Open profiles folder" button (like export formats has)
 - "Reset to defaults" for built-in profiles (delete and re-seed)
 - Show profile description in the editor/selector
-- Import/export profile files (share with team)
+- ~~Import/export profile files (share with team)~~
 
 ## Validation
 
@@ -68,11 +83,11 @@ Potential features and changes to consider. Not prioritized.
 
 ## Project
 
-- Recent projects list on startup
+- ~~Recent projects list on startup~~
 - Auto-save on a timer or after N edits
-- Crash recovery (temp file written periodically)
+- ~~Crash recovery (temp file written periodically)~~
 - Project-level notes/metadata
-- File type associations (.cod files)
+- ~~File type associations (.cod files)~~
 
 ## Timeline
 

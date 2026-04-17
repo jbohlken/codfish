@@ -1,15 +1,11 @@
 import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
-import { project, isDirty, activeProfile, profiles, pushHistory, canUndo, canRedo, undo, redo, undoDescription, redoDescription } from "../../store/app";
+import { project, isDirty, profiles, selectedProfile } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { SunIcon as Sun, MoonIcon as Moon, QuestionIcon as Question, ArrowCounterClockwiseIcon as ArrowCounterClockwise, ArrowClockwiseIcon as ArrowClockwise, PencilSimpleIcon as PencilSimple, CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, BugIcon as Bug, UploadSimpleIcon as UploadSimple } from "@phosphor-icons/react";
-import { profileEditorOpen } from "../ProfileEditor";
-import { importProfile } from "../../lib/profiles";
-import { helpOpen } from "../HelpModal";
-import { bugReportOpen } from "../BugReportModal";
+import { CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, WrenchIcon as Wrench } from "@phosphor-icons/react";
+import { openProfileManager } from "../ProfileManager";
 import { hasUpdate, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
-import { theme, toggleTheme } from "../../store/theme";
 import { listModels } from "../../lib/transcription";
 
 const TRANSCRIPTION_MODELS: { id: TranscriptionModel; label: string; size: string }[] = [
@@ -43,10 +39,23 @@ async function loadModelCache() {
   } catch { /* leave as empty — all show as uncached */ }
 }
 
+function buildProfileOptions() {
+  const all = profiles.value;
+  const builtins = all.filter((p) => p.builtIn);
+  const custom = all.filter((p) => !p.builtIn);
+
+  const options: ({ value: string; label: string } | { separator: true })[] = [];
+  for (const p of builtins) options.push({ value: p.name, label: p.name });
+  if (builtins.length > 0 && custom.length > 0) {
+    options.push({ separator: true });
+  }
+  for (const p of custom) options.push({ value: p.name, label: p.name });
+  return options;
+}
+
 export function TitleBar() {
   const proj = project.value;
   const dirty = isDirty.value;
-  const profile = activeProfile.value;
   const cached = modelCached.value;
   const cacheLoaded = Object.keys(cached).length > 0;
 
@@ -81,51 +90,9 @@ export function TitleBar() {
             <UpdatePopover />
           </div>
         )}
-        <button
-          class="btn btn-ghost btn-icon"
-          data-tooltip={theme.value === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          onClick={toggleTheme}
-        >
-          {theme.value === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
-        <button
-          class="btn btn-ghost btn-icon"
-          data-tooltip="Submit feedback"
-          onClick={() => { bugReportOpen.value = true; }}
-        >
-          <Bug size={14} />
-        </button>
-        <button
-          class="btn btn-ghost btn-icon"
-          data-tooltip="Help"
-          onClick={() => { helpOpen.value = true; }}
-        >
-          <Question size={14} />
-        </button>
 
         {proj && (
           <>
-            <div class="titlebar-divider" />
-
-            <button
-              class="btn btn-ghost btn-icon"
-              onClick={undo}
-              disabled={!canUndo.value}
-              data-tooltip={undoDescription.value ? `Undo: ${undoDescription.value} (Ctrl+Z)` : "Nothing to undo"}
-            >
-              <ArrowCounterClockwise size={14} />
-            </button>
-            <button
-              class="btn btn-ghost btn-icon"
-              onClick={redo}
-              disabled={!canRedo.value}
-              data-tooltip={redoDescription.value ? `Redo: ${redoDescription.value} (Ctrl+Y)` : "Nothing to redo"}
-            >
-              <ArrowClockwise size={14} />
-            </button>
-
-            <div class="titlebar-divider" />
-
             <SelectButton
               icon={Waveform}
               tooltip="Transcription model"
@@ -136,14 +103,14 @@ export function TitleBar() {
                 badge: cacheLoaded ? !(cached[m.id] ?? true) : undefined,
               }))}
               value={proj.transcriptionModel}
-              onChange={(v) => pushHistory({ ...proj, transcriptionModel: v }, "Change model")}
+              onChange={(v) => { project.value = { ...proj, transcriptionModel: v }; isDirty.value = true; }}
             />
             <SelectButton
               icon={Translate}
               tooltip="Language"
               options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
               value={proj.language}
-              onChange={(v) => pushHistory({ ...proj, language: v }, "Change language")}
+              onChange={(v) => { project.value = { ...proj, language: v }; isDirty.value = true; }}
             />
 
             <div class="titlebar-divider" />
@@ -151,32 +118,18 @@ export function TitleBar() {
             <SelectButton
               icon={Sliders}
               tooltip="Caption profile"
-              options={profiles.value.map((p) => ({ value: p.id, label: p.name }))}
-              value={profile.id}
-              onChange={(v) => pushHistory({ ...proj, profileId: v }, "Change profile")}
+              options={buildProfileOptions()}
+              value={selectedProfile.value}
+              onChange={(v) => {
+                selectedProfile.value = v;
+                isDirty.value = true;
+              }}
               footer={(close) => (
-                <button
-                  class="titlebar-select-option"
-                  onClick={async () => {
-                    close();
-                    const imported = await importProfile();
-                    if (imported) {
-                      profiles.value = [...profiles.value, imported];
-                      pushHistory({ ...proj, profileId: imported.id }, "Import profile");
-                    }
-                  }}
-                >
-                  <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><UploadSimple size={12} /> Import profile...</span>
+                <button class="titlebar-select-option" onClick={() => { close(); openProfileManager(); }}>
+                  <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage caption profiles…</span>
                 </button>
               )}
             />
-            <button
-              class="btn btn-ghost btn-icon"
-              data-tooltip="Edit profile"
-              onClick={() => { profileEditorOpen.value = true; }}
-            >
-              <PencilSimple size={14} />
-            </button>
           </>
         )}
       </div>

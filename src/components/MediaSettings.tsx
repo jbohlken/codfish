@@ -1,6 +1,7 @@
 import { signal } from "@preact/signals";
 import { XIcon as X } from "@phosphor-icons/react";
-import { project } from "../store/app";
+import { project, pushHistory } from "../store/app";
+import { isDropFrameRate } from "../lib/time";
 
 export const mediaSettingsId = signal<string | null>(null);
 
@@ -12,7 +13,18 @@ export function MediaSettings() {
   const item = proj.media.find((m) => m.id === id);
   if (!item) return null;
 
+  const canDropFrame = item.fps != null && isDropFrameRate(item.fps);
+
   const close = () => { mediaSettingsId.value = null; };
+
+  const toggleDropFrame = () => {
+    pushHistory({
+      ...proj,
+      media: proj.media.map((m) =>
+        m.id !== id ? m : { ...m, dropFrame: !m.dropFrame }
+      ),
+    }, item.dropFrame ? "Switch to NDF" : "Switch to DF");
+  };
 
   return (
     <div class="modal-backdrop" onClick={close}>
@@ -33,6 +45,14 @@ export function MediaSettings() {
               {item.fps != null ? `${item.fps} fps (detected)` : "None"}
             </span>
           </div>
+          {canDropFrame && (
+            <div class="ms-row">
+              <label class="ms-label">Timecode</label>
+              <button class="btn btn-secondary btn-sm" onClick={toggleDropFrame}>
+                {item.dropFrame ? "Drop-Frame" : "Non-Drop-Frame"}
+              </button>
+            </div>
+          )}
         </div>
 
         <div class="media-settings-footer">

@@ -1,13 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
-// Tauri + dialog APIs are noops here; withUnsavedCheck doesn't touch them
-// directly but the module's imports would explode without these stubs.
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn(),
-  save: vi.fn(),
-}));
+// Tauri APIs are globally mocked in test-setup.ts.
+
 vi.mock("../../../components/ErrorModal", () => ({
   showError: vi.fn(),
 }));
@@ -33,10 +28,8 @@ function makeProject(): CodProject {
   return {
     version: 1,
     name: "test",
-    profileId: "default",
     transcriptionModel: "base",
     language: "",
-    exportFormatId: "SRT",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     media: [],

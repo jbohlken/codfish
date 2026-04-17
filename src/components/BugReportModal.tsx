@@ -46,13 +46,13 @@ export function BugReportModal() {
 
   return (
     <div class="modal-backdrop" onClick={close}>
-      <div class="help-modal" onClick={(e) => e.stopPropagation()}>
-        <div class="help-modal-header">
-          <span class="help-modal-title">Submit Feedback</span>
+      <div class="modal-panel" onClick={(e) => e.stopPropagation()}>
+        <div class="modal-panel-header">
+          <span class="modal-panel-title">Submit Feedback</span>
           <button class="btn btn-ghost btn-icon" onClick={close}><X size={14} /></button>
         </div>
 
-        <div class="help-modal-body">
+        <div class="modal-panel-body">
           {result ? (
             <div class="bug-report-success">
               <CheckCircle size={32} weight="fill" />

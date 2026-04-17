@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// ── Mocks for UpdateNotice's transitive imports ──────────────────────────────
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
-vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
-vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
+// Tauri APIs are globally mocked in test-setup.ts.
 vi.mock("../Splash", () => ({ startDaemon: vi.fn() }));
 vi.mock("../ErrorModal", () => ({ showError: vi.fn() }));
 vi.mock("../../lib/recovery", () => ({ clearRecovery: vi.fn(async () => {}) }));
@@ -27,10 +23,8 @@ function makeProject(): CodProject {
   return {
     version: 1,
     name: "test",
-    profileId: "default",
     transcriptionModel: "base",
     language: "",
-    exportFormatId: "SRT",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     media: [],

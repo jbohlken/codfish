@@ -1,18 +1,19 @@
 import { useRef, useEffect } from "preact/hooks";
 import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { selectedMedia, playbackTime, isPlaying, mediaDuration } from "../../store/app";
+import { selectedMedia, playbackTime, isPlaying, mediaDuration, activeProfile } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
+import { AUDIO_EXTS } from "../../lib/project";
 
-const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg"]);
 function isAudioOnly(path: string): boolean {
   const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
-  return AUDIO_EXTS.has(ext);
+  return AUDIO_EXTS.includes(ext);
 }
 
 export function VideoPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const rafRef = useRef<number>(0);
+  const rafLastWrittenRef = useRef<number>(0);
 
   // Read signals — subscribes this component to re-render when they change
   const media = selectedMedia.value;
@@ -42,9 +43,21 @@ export function VideoPanel() {
 
     if (playing) {
       video.play().catch(() => { isPlaying.value = false; });
+      rafLastWrittenRef.current = video.currentTime;
 
       const tick = () => {
-        playbackTime.value = video.currentTime;
+        // If playbackTime has drifted from what rAF last wrote, an external
+        // seek landed — write through to the video instead of clobbering the
+        // user's seek with a stale video.currentTime read.
+        const pt = playbackTime.value;
+        if (Math.abs(pt - rafLastWrittenRef.current) > 1 / (2 * fps)) {
+          video.currentTime = pt;
+          rafLastWrittenRef.current = pt;
+        } else {
+          const vt = video.currentTime;
+          playbackTime.value = vt;
+          rafLastWrittenRef.current = vt;
+        }
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
@@ -56,15 +69,18 @@ export function VideoPanel() {
     }
   }, [playing]);
 
-  // Sync external seeks (timeline click, caption click) → video element.
-  // The threshold avoids fighting with onTimeUpdate feedback.
+  // Sync external seeks (timeline click, caption click) → video element
+  // while paused. During playback the rAF loop owns video sync; running
+  // this effect then would micro-seek every tick (the half-frame threshold
+  // is tighter than the vt-vs-currentTime drift between rAF writes).
+  const fps = media?.fps ?? activeProfile.value.timing.defaultFps;
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
-    if (Math.abs(video.currentTime - currentTime) > 0.25) {
+    if (!video || playing) return;
+    if (Math.abs(video.currentTime - currentTime) > 1 / (2 * fps)) {
       video.currentTime = currentTime;
     }
-  }, [currentTime]);
+  }, [currentTime, fps, playing]);
 
   return (
     <div class="panel video-panel">

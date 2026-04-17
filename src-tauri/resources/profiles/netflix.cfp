@@ -1,22 +1,23 @@
 # @name Netflix
 # @description Netflix Timed Text Style Guide compliance
 # @builtIn true
+# @updated 2026-04-17
 
 [formatting]
 maxCharsPerLine = 42
 maxCharsPerLine.strict = false
 maxLines = 2
-maxLines.strict = false
+maxLines.strict = true
 
 [timing]
-minDuration = 20
+minDuration = 0.8
 minDuration.strict = false
-minDuration.unit = fr
+minDuration.unit = s
 maxDuration = 7.0
 maxDuration.strict = false
 maxDuration.unit = s
 maxCps = 20.0
-maxCps.strict = false
+maxCps.strict = true
 extendToFill = true
 extendToFillMax = 0.5
 gapCloseThreshold = 0.5

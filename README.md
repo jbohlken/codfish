@@ -10,7 +10,7 @@ A desktop caption editor built with Tauri v2 + Preact. Transcribes audio/video u
 - **Sidecar** (Python/PyInstaller) — the transcription engine, downloaded on first launch
 - The app and sidecar are versioned independently (`v*` and `sidecar-v*` tags)
 - The sidecar ships in three variants: CPU (Windows), CPU (macOS arm64), and CUDA (Windows)
-- GPU detection happens at install time — users with Nvidia GPUs get the CUDA variant
+- Users choose CPU or CUDA variant during sidecar setup
 
 ## Development
 
@@ -51,6 +51,8 @@ python sidecar/fetch_ffmpeg.py
 python sidecar/build.py --cuda
 ```
 
+Verify a build with `sidecar/dist/transcribe/transcribe --version`. The version is defined in `sidecar/transcribe.py` (`VERSION` constant) and should match the tag passed to `make_manifest.py` at release time.
+
 ## Releasing
 
 ### App release
@@ -82,7 +84,7 @@ Release the sidecar before the app so new sidecar features are available when us
 
 ### Workflows
 
-- **Release App** (`.github/workflows/release-app.yml`) — triggered by `v*` tags, builds Windows + macOS
+- **Release App** (`.github/workflows/release-app.yml`) — triggered by `v*` tags, builds Windows + macOS, signs both (Azure Trusted Signing on Windows, Apple notarization on macOS)
 - **Release Sidecar** (`.github/workflows/release-sidecar.yml`) — triggered by `sidecar-v*` tags, builds CPU variants
 
 ### Required secrets
@@ -92,16 +94,29 @@ Release the sidecar before the app so new sidecar features are available when us
 | `TAURI_SIGNING_PRIVATE_KEY` | Minisign private key for update signing |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the signing key |
 | `CODFISH_GH_PAT` | Fine-grained PAT (Issues: read/write) for in-app bug reporter |
+| `AZURE_CLIENT_ID` | Azure service principal for Windows code signing |
+| `AZURE_TENANT_ID` | Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `APPLE_CERTIFICATE` | Apple Developer certificate (.p12 base64) |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for the .p12 certificate |
+| `APPLE_SIGNING_IDENTITY` | Apple signing identity (Developer ID Application) |
+| `APPLE_ID` | Apple ID for notarization |
+| `APPLE_PASSWORD` | App-specific password for notarization |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
 
 ### Build-time environment
 
 The app reads `CODFISH_GH_PAT` at compile time (via `src-tauri/.env` locally, or the CI secret). It is XOR-encoded into the binary — never stored as plaintext in source.
 
-## macOS notes
+## Code signing
 
-- Unsigned builds require `xattr -cr /Applications/Codfish.app` or System Settings > Privacy & Security > Open Anyway
+- **Windows** — Release builds are signed via [Azure Trusted Signing](https://azure.microsoft.com/en-us/products/trusted-signing) using OIDC federated credentials (no secrets to rotate). Signed installers get immediate SmartScreen trust.
+- **macOS** — Release builds are signed and notarized via Apple Developer ID. No quarantine warnings on install.
+
+### macOS development notes
+
+- Dev builds (unsigned) require `xattr -cr /Applications/Codfish.app` or System Settings > Privacy & Security > Open Anyway
 - macOS Sequoia removed the right-click > Open workaround for unsigned apps
-- An Apple Developer account ($99/yr) eliminates these warnings via code signing and notarization
 - ffmpeg is fetched as a prebuilt LGPL binary (from the `ffmpeg-*-codfish.*` release) and bundled into the sidecar — no Homebrew ffmpeg needed
 
 ## License

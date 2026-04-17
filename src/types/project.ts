@@ -13,6 +13,10 @@ export interface CaptionBlock {
   lines: string[];
   speaker?: string;
   words?: Word[];   // populated during pipeline, not persisted to .cod file
+  /// True when the caption's text was manually edited or the caption was
+  /// manually added. Split/merge fall back to text-only operations on edited
+  /// captions so user edits aren't overwritten by rawWords-derived text.
+  edited?: boolean;
 }
 
 export interface ExportRecord {
@@ -26,6 +30,9 @@ export interface MediaItem {
   name: string;
   path: string;
   fps: number | null;  // probed from file; null = audio-only or unknown (use profile default)
+  vfr?: boolean;       // true if variable frame rate detected (frame-snapping may be imprecise)
+  hasAudio?: boolean;  // probed from file; false = no audio stream, so transcription is blocked
+  dropFrame?: boolean; // true = DF, false = NDF; auto-set for 29.97/59.94, user-overridable
   captions: CaptionBlock[];
   rawWords?: Word[];              // persisted for future re-pipeline without re-transcribing
   generatedAt?: string;
@@ -44,11 +51,13 @@ export type TranscriptionModel = "tiny" | "base" | "small" | "medium" | "large-v
 export interface CodProject {
   version: number;
   name: string;
-  profileId: string;
   transcriptionModel: TranscriptionModel;
   language: string;
-  exportFormatId?: string;
   createdAt: string;
   updatedAt: string;
   media: MediaItem[];
+  exportFormatName?: string;
+  exportFormatHash?: string;
+  profileName?: string;
+  profileHash?: string;
 }

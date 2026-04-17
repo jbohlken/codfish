@@ -14,18 +14,26 @@ import {
   pushHistory,
   activeProfile,
 } from "../../store/app";
+import { editingIndex, editText, commitActiveEdit } from "./CaptionPanel";
 import type { CaptionBlock } from "../../types/project";
 import { snapToFrame } from "../../lib/pipeline";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
+import { formatDisplayTime, type DisplayMode } from "../../lib/time";
 
-type TimecodeMode = "time" | "smpte" | "frames";
-const timecodeMode = signal<TimecodeMode>("time");
+type TimecodeCycle = "time" | "smpte" | "frames";
+const VALID_MODES: TimecodeCycle[] = ["time", "smpte", "frames"];
+const stored = localStorage.getItem("codfish:timecodeMode") as TimecodeCycle;
+const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored : "time");
 const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 const zoomLevel = signal(1);
-type WaveformState = "idle" | "loading" | "ready";
+
+export function resetTimelineView(): void {
+  zoomLevel.value = 1;
+}
+type WaveformState = "idle" | "loading" | "ready" | "failed" | "no-audio";
 const waveformState = signal<WaveformState>("idle");
 
 const SNAP_THRESHOLD_PX = 8;
@@ -37,6 +45,20 @@ function trySnap(value: number, snapPoints: number[], thresholdSec: number): num
   return null;
 }
 
+/** Wait for the video element to report a duration via loadedmetadata.
+ *  Resolves with null on timeout so callers can fall back to sidecar data
+ *  rather than hang forever if the element never fires the event. */
+function waitForMediaDuration(timeoutMs: number): Promise<number | null> {
+  const current = mediaDuration.peek();
+  if (current > 0) return Promise.resolve(current);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { unsub(); resolve(null); }, timeoutMs);
+    const unsub = mediaDuration.subscribe((v) => {
+      if (v > 0) { clearTimeout(timer); unsub(); resolve(v); }
+    });
+  });
+}
+
 export function Timeline() {
   const media = selectedMedia.value;
   const currentTime = playbackTime.value;
@@ -44,6 +66,10 @@ export function Timeline() {
   const profileDefaultFps = activeProfile.value.timing.defaultFps;
   const effectiveFps = media?.fps ?? profileDefaultFps;
   const fpsIsDetected = media != null && media.fps != null;
+  // Resolve "smpte" cycle mode to the actual DisplayMode based on media's DF setting
+  const smpteMode: DisplayMode = timecodeMode.value === "smpte" && media?.dropFrame
+    ? "smpte-df"
+    : timecodeMode.value;
 
   const playingIndex = media?.captions.find(
     (c) => currentTime >= c.start && currentTime < c.end
@@ -70,6 +96,13 @@ export function Timeline() {
       return;
     }
 
+    // No audio stream — don't spin up WaveSurfer at all. The peaks pipeline
+    // would just fail on ffmpeg stream-missing and spam a traceback.
+    if (media.hasAudio === false) {
+      waveformState.value = "no-audio";
+      return;
+    }
+
     waveformState.value = "loading";
 
     const ws = WaveSurfer.create({
@@ -89,29 +122,81 @@ export function Timeline() {
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
 
-    // Try loading from cache first, fall back to full decode
-    flog(`init path=${media.path}`);
-    getCachedPeaks(media.path).then((cached) => {
-      if (cancelled) return;
-      const url = convertFileSrc(media.path);
-      flog(`loading url=${url} cached=${!!cached}`);
-      if (cached) {
-        // Load with pre-computed peaks — skips the expensive Web Audio decode
-        ws.load(url, cached.peaks, cached.duration)
-          .then(() => flog("cached load resolved"))
-          .catch((e) => flog(`cached load failed: ${(e as any)?.message ?? String(e)}`));
-      } else {
-        ws.load(url)
-          .then(() => flog("fresh load resolved"))
-          .catch((e) => flog(`fresh load failed: ${(e as any)?.message ?? String(e)}`));
+    // Peaks come from the sidecar's ffmpeg, not from WaveSurfer's fetch+decode.
+    // The browser-side path is unreliable for the Tauri asset protocol
+    // (whole-file fetch fails for many files even though playback via range
+    // requests works fine) and can't handle codecs WebAudio doesn't support.
+    // On failure (no sidecar, no audio stream, codec error) drop the spinner
+    // so "Generating waveform…" doesn't hang forever.
+    const markFailed = (reason: string) => {
+      flog(reason);
+      // Don't clobber a rendered waveform. WaveSurfer sets up its own
+      // media element for playback even when peaks are pre-computed, and
+      // that element can error after `ready` for codecs WebView2 doesn't
+      // like (m4a, etc.). We drive playback from VideoPanel, so those
+      // post-ready errors don't affect the user.
+      if (!cancelled && waveformState.value !== "ready") {
+        waveformState.value = "failed";
       }
-    });
+    };
+    flog(`init path=${media.path}`);
+    (async () => {
+      const mtime = await invoke<number>("file_mtime", { path: media.path });
+      if (cancelled) return;
+      let peaks: Float32Array;
+      let audioDuration: number;
+      const cached = await getCachedPeaks(media.path, mtime);
+      if (cancelled) return;
+      if (cached) {
+        flog(`cache hit bins=${cached.peaks.length}`);
+        peaks = cached.peaks;
+        audioDuration = cached.duration;
+      } else {
+        flog("cache miss → generate_peaks");
+        const r = await invoke<{ peaks: number[]; duration: number }>(
+          "generate_peaks",
+          { path: media.path },
+        );
+        if (cancelled) return;
+        peaks = new Float32Array(r.peaks);
+        audioDuration = r.duration;
+        cachePeaks(media.path, mtime, peaks, audioDuration);
+        flog(`generated bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
+      }
+      // Align the waveform with the <video> element's duration so the
+      // ruler, caption blocks, playhead, and waveform all share one axis.
+      // For VFR media the ffmpeg-reported audio duration can diverge from
+      // what <video>.duration reports — using the audio duration here makes
+      // the waveform and the seek bar drift apart as playback progresses.
+      const layoutDuration = await waitForMediaDuration(5000) ?? audioDuration;
+      if (cancelled) return;
+      // Pad or trim the peaks to the layout duration at the original bins/sec.
+      // If we just passed layoutDuration to ws.load() without resizing, WaveSurfer
+      // would stretch (or compress) the peaks to fill that duration — so audio
+      // that ends at t=193s in a 232s container would still visually draw out
+      // to the right edge. Padding with silence lets the waveform end where the
+      // audio actually ends while caption blocks stay on the video-clock axis.
+      if (audioDuration > 0) {
+        const binsPerSec = peaks.length / audioDuration;
+        const targetBins = Math.max(1, Math.round(binsPerSec * layoutDuration));
+        if (targetBins > peaks.length) {
+          const padded = new Float32Array(targetBins);
+          padded.set(peaks);
+          peaks = padded;
+        } else if (targetBins < peaks.length) {
+          peaks = peaks.slice(0, targetBins);
+        }
+      }
+      const url = convertFileSrc(media.path);
+      await ws.load(url, [peaks], layoutDuration);
+      if (!cancelled) flog(`load resolved layoutDuration=${layoutDuration.toFixed(2)}s audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
+    })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     ws.on("error", (e) => {
-      flog(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
+      markFailed(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
     });
 
-    // Sync zoom once audio is decoded and duration is known
+    // Sync zoom once peaks are in and duration is known
     ws.on("ready", () => {
       flog(`ready duration=${ws.getDuration()}`);
       waveformState.value = "ready";
@@ -119,16 +204,6 @@ export function Timeline() {
       if (!dur) return;
       const visibleWidth = scrollRef.current?.clientWidth ?? 800;
       ws.zoom((visibleWidth * zoomLevel.peek()) / dur);
-
-      // Cache peaks for next time (only if we decoded fresh)
-      const decoded = ws.getDecodedData();
-      if (decoded) {
-        const peaks: Float32Array[] = [];
-        for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-          peaks.push(decoded.getChannelData(ch));
-        }
-        cachePeaks(media.path, peaks, dur);
-      }
     });
 
     wsRef.current = ws;
@@ -140,12 +215,14 @@ export function Timeline() {
     };
   }, [media?.path]);
 
-  // Sync zoomLevel → WaveSurfer pxPerSec, then re-sync its internal scroll
+  // Sync zoomLevel → WaveSurfer pxPerSec, then re-sync its internal scroll.
+  // Skip when ws hasn't decoded audio yet — the "ready" handler does the
+  // initial zoom. Calling ws.zoom() pre-decode throws "No audio loaded".
   useSignalEffect(() => {
     const ws = wsRef.current;
     const zoom = zoomLevel.value;
     const dur = mediaDuration.value;
-    if (!ws || !dur) return;
+    if (!ws || !dur || !ws.getDuration()) return;
     const visibleWidth = scrollRef.current?.clientWidth ?? 800;
     ws.zoom((visibleWidth * zoom) / dur);
     requestAnimationFrame(() => syncWsScroll());
@@ -200,29 +277,39 @@ export function Timeline() {
     }
   });
 
-  // Ctrl+Wheel → zoom (non-passive so preventDefault works)
+  // Wheel: Ctrl → zoom, plain → horizontal scroll (vertical wheel maps to
+  // horizontal since the timeline's primary axis is time). Non-passive so
+  // preventDefault works for both.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
+      if (e.ctrlKey) {
+        e.preventDefault();
 
-      const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
-      const oldZoom = zoomLevel.peek();
-      const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
-      if (newZoom === oldZoom) return;
+        const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
+        const oldZoom = zoomLevel.peek();
+        const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
+        if (newZoom === oldZoom) return;
 
-      // Zoom around cursor position
-      const rect = el.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const fraction = (el.scrollLeft + mouseX) / el.scrollWidth;
+        // Zoom around cursor position
+        const rect = el.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const fraction = (el.scrollLeft + mouseX) / el.scrollWidth;
 
-      zoomLevel.value = newZoom;
+        zoomLevel.value = newZoom;
 
-      requestAnimationFrame(() => {
-        el.scrollLeft = Math.max(0, fraction * el.scrollWidth - mouseX);
-      });
+        requestAnimationFrame(() => {
+          el.scrollLeft = Math.max(0, fraction * el.scrollWidth - mouseX);
+        });
+        return;
+      }
+      // Plain wheel → horizontal scroll. Most mice only have vertical wheel
+      // and there's nothing useful to scroll vertically here.
+      if (e.deltaY !== 0 && el.scrollWidth > el.clientWidth) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -250,32 +337,6 @@ export function Timeline() {
     window.addEventListener("mouseup", onUp);
   };
 
-  // Live-update caption timing during drag (no history entry yet)
-  const handleResizeLive = (index: number, newStart: number, newEnd: number) => {
-    const proj = project.value;
-    if (!proj || !media) return;
-    project.value = {
-      ...proj,
-      media: proj.media.map((m) =>
-        m.id !== media.id ? m : {
-          ...m,
-          captions: m.captions.map((c) =>
-            c.index !== index ? c : {
-              ...c,
-              start: Math.max(0, newStart),
-              end: Math.max(newStart + 0.1, newEnd),
-            }
-          ),
-        }
-      ),
-    };
-  };
-
-  // Commit caption timing after drag ends → push to undo history
-  const handleResizeCommit = () => {
-    if (project.value) pushHistory(project.value, "Resize caption");
-  };
-
   const zoom = zoomLevel.value;
 
   const profile = activeProfile.value;
@@ -293,6 +354,32 @@ export function Timeline() {
       warningsByIndex.set(w.blockIndex, arr);
     }
   }
+
+  // Live-update caption timing during drag (no history entry yet)
+  const handleResizeLive = (index: number, newStart: number, newEnd: number) => {
+    const proj = project.value;
+    if (!proj || !media) return;
+    project.value = {
+      ...proj,
+      media: proj.media.map((m) =>
+        m.id !== media.id ? m : {
+          ...m,
+          captions: m.captions.map((c) =>
+            c.index !== index ? c : {
+              ...c,
+              start: Math.max(0, newStart),
+              end: Math.max(newStart + 1 / fps, newEnd),
+            }
+          ),
+        }
+      ),
+    };
+  };
+
+  // Commit caption timing after drag ends → push to undo history
+  const handleResizeCommit = () => {
+    if (project.value) pushHistory(project.value, "Resize caption");
+  };
 
   // Zoom in/out keeping the playhead visually stationary.
   // If the playhead is off-screen, anchors to the center of the visible area instead.
@@ -343,27 +430,34 @@ export function Timeline() {
         </button>
         <span class="timeline-mode-label">
           {timecodeMode.value === "time" && "Time"}
-          {timecodeMode.value === "smpte" && "SMPTE"}
+          {timecodeMode.value === "smpte" && (media?.dropFrame ? "SMPTE DF" : "SMPTE")}
           {timecodeMode.value === "frames" && "Frames"}
         </span>
         <button
           class="timeline-btn timeline-btn--timecode"
           onClick={() => {
-            const modes: TimecodeMode[] = ["time", "smpte", "frames"];
+            const modes: TimecodeCycle[] = ["time", "smpte", "frames"];
             const next = modes[(modes.indexOf(timecodeMode.value) + 1) % modes.length];
             timecodeMode.value = next;
+            localStorage.setItem("codfish:timecodeMode", next);
           }}
           data-tooltip="Click to cycle timecode mode"
         >
-          {formatTime(currentTime, timecodeMode.value, effectiveFps)}
-          {duration > 0 ? ` / ${formatTime(duration, timecodeMode.value, effectiveFps)}` : ""}
+          {formatDisplayTime(currentTime, smpteMode, effectiveFps)}
+          {duration > 0 ? ` / ${formatDisplayTime(duration, smpteMode, effectiveFps)}` : ""}
         </button>
         {media && (
           <span
-            class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}`}
-            data-tooltip={fpsIsDetected ? "Detected from file" : `No framerate detected — using profile default (${profileDefaultFps} fps)`}
+            class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}${media.vfr ? " timeline-fps-badge--vfr" : ""}`}
+            data-tooltip={
+              media.vfr
+                ? "Variable frame rate detected — frame-snapping may be imprecise"
+                : fpsIsDetected
+                  ? "Detected from file"
+                  : `No framerate detected — using profile default (${profileDefaultFps} fps)`
+            }
           >
-            {effectiveFps} fps{fpsIsDetected ? "" : "*"}
+            {effectiveFps} fps{fpsIsDetected ? "" : "*"}{media.vfr ? " VFR" : ""}
           </span>
         )}
 
@@ -420,7 +514,7 @@ export function Timeline() {
                   duration={duration}
                   zoom={zoom}
                   visibleWidth={scrollRef.current?.clientWidth ?? 800}
-                  mode={timecodeMode.value}
+                  mode={smpteMode}
                   fps={effectiveFps}
                 />
               )}
@@ -436,6 +530,16 @@ export function Timeline() {
                   <div class="timeline-waveform-loading">
                     <div class="timeline-waveform-loading-spinner" />
                     <span>Generating waveform…</span>
+                  </div>
+                )}
+                {waveformState.value === "failed" && (
+                  <div class="timeline-waveform-loading">
+                    <span>No waveform available</span>
+                  </div>
+                )}
+                {waveformState.value === "no-audio" && (
+                  <div class="timeline-waveform-loading">
+                    <span>No audio track</span>
                   </div>
                 )}
                 {duration > 0 && (
@@ -464,8 +568,8 @@ export function Timeline() {
                     block={block}
                     duration={duration}
                     fps={effectiveFps}
-                    prevEnd={media.captions[i - 1]?.end ?? 0}
-                    nextStart={media.captions[i + 1]?.start ?? duration}
+                    prevEnd={media.captions[i - 1]?.end ?? null}
+                    nextStart={media.captions[i + 1]?.start ?? null}
                     snapEnabled={snapEnabled.value}
                     minGap={minGap}
                     blocksRowRef={blocksRowRef}
@@ -477,6 +581,12 @@ export function Timeline() {
                     onClick={() => {
                       selectedCaptionIndex.value = block.index;
                       playbackTime.value = block.start;
+                    }}
+                    onDblClick={() => {
+                      selectedCaptionIndex.value = block.index;
+                      isPlaying.value = false;
+                      editingIndex.value = block.index;
+                      editText.value = block.lines.join("\n");
                     }}
                   />
                 ))}
@@ -504,12 +614,13 @@ function ResizableCaptionBlock({
   onResizeLive,
   onResizeCommit,
   onClick,
+  onDblClick,
 }: {
   block: CaptionBlock;
   duration: number;
   fps: number;
-  prevEnd: number;
-  nextStart: number;
+  prevEnd: number | null;
+  nextStart: number | null;
   snapEnabled: boolean;
   minGap: number | null;
   blocksRowRef: { current: HTMLDivElement | null };
@@ -519,6 +630,7 @@ function ResizableCaptionBlock({
   onResizeLive: (index: number, start: number, end: number) => void;
   onResizeCommit: () => void;
   onClick: () => void;
+  onDblClick: () => void;
 }) {
   const left = (block.start / duration) * 100;
   const width = ((block.end - block.start) / duration) * 100;
@@ -532,6 +644,15 @@ function ResizableCaptionBlock({
 
   const startEdgeDrag = (e: MouseEvent, edge: "left" | "right") => {
     e.stopPropagation();
+    // stopPropagation prevents the textarea's click-outside listener from
+    // firing, so an active edit would linger through the drag and corrupt
+    // state (resize history pushed with phantom caption still present, then
+    // cancel reverts to pre-add and loses the resize). Commit the edit and
+    // abort this drag — indices may have shifted, so require a fresh click.
+    if (editingIndex.value !== null) {
+      commitActiveEdit();
+      return;
+    }
     const rowEl = blocksRowRef.current;
     if (!rowEl) return;
 
@@ -542,58 +663,74 @@ function ResizableCaptionBlock({
     const originX = e.clientX;
     const originStart = block.start;
     const originEnd = block.end;
+    let lastStart = originStart;
+    let lastEnd = originEnd;
 
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - originX;
       if (edge === "left") {
         let rawTime = originStart + dx * secPerPx;
         let snapped: number | null = null;
+        const lowerBound = prevEnd ?? 0;
         if (snapEnabled) {
-          // Dead zone exclusion: push values in (prevEnd, prevEnd+minGap) to nearest valid boundary
-          if (minGap !== null && minGap > 0) {
+          // Dead zone + snap only when there's an actual preceding caption;
+          // at the media start (prevEnd === null) the first caption can begin
+          // at 0 without a minGap buffer.
+          if (prevEnd !== null && minGap !== null && minGap > 0) {
             const gap = rawTime - prevEnd;
             if (gap > 0 && gap < minGap) {
               rawTime = gap < minGap / 2 ? prevEnd : snapToFrame(prevEnd + minGap, fps);
             }
           }
-          const snapPoints = [prevEnd];
-          if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(prevEnd + minGap, fps));
-          snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          if (prevEnd !== null) {
+            const snapPoints = [prevEnd];
+            if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(prevEnd + minGap, fps));
+            snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          }
         }
         const newStart = snapped !== null
-          ? Math.max(prevEnd, Math.min(snapped, originEnd - minDuration))
-          : snapToFrame(Math.max(prevEnd, Math.min(rawTime, originEnd - minDuration)), fps);
+          ? Math.max(lowerBound, Math.min(snapped, originEnd - minDuration))
+          : snapToFrame(Math.max(lowerBound, Math.min(rawTime, originEnd - minDuration)), fps);
         resizeIndicator.value = newStart;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, newStart, originEnd);
+        lastStart = newStart;
       } else {
         let rawTime = originEnd + dx * secPerPx;
         let snapped: number | null = null;
+        const upperBound = nextStart ?? duration;
         if (snapEnabled) {
-          // Dead zone exclusion: push values in (nextStart-minGap, nextStart) to nearest valid boundary
-          if (minGap !== null && minGap > 0) {
+          // Dead zone + snap only when there's an actual following caption;
+          // at the media end (nextStart === null) the last caption can run
+          // all the way to duration without a minGap buffer.
+          if (nextStart !== null && minGap !== null && minGap > 0) {
             const gap = nextStart - rawTime;
             if (gap > 0 && gap < minGap) {
               rawTime = gap < minGap / 2 ? nextStart : snapToFrame(nextStart - minGap, fps);
             }
           }
-          const snapPoints = [nextStart];
-          if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(nextStart - minGap, fps));
-          snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          if (nextStart !== null) {
+            const snapPoints = [nextStart];
+            if (minGap !== null && minGap > 0) snapPoints.push(snapToFrame(nextStart - minGap, fps));
+            snapped = trySnap(rawTime, snapPoints, snapThresholdSec);
+          }
         }
         const newEnd = snapped !== null
-          ? Math.max(originStart + minDuration, Math.min(snapped, nextStart))
-          : snapToFrame(Math.max(originStart + minDuration, Math.min(rawTime, nextStart)), fps);
+          ? Math.max(originStart + minDuration, Math.min(snapped, upperBound))
+          : snapToFrame(Math.max(originStart + minDuration, Math.min(rawTime, upperBound)), fps);
         resizeIndicator.value = newEnd;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);
+        lastEnd = newEnd;
       }
     };
 
     const onUp = () => {
       resizeIndicator.value = null;
       resizeSnapped.value = false;
-      onResizeCommit();
+      // Skip commit if the final snapped values land back on the origin —
+      // a drag that snaps into its starting position produced no net change.
+      if (lastStart !== originStart || lastEnd !== originEnd) onResizeCommit();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -607,6 +744,7 @@ function ResizableCaptionBlock({
       class={`timeline-block${selected ? " timeline-block--selected" : ""}${playing ? " timeline-block--playing" : ""}${warnClass ? ` ${warnClass}` : ""}`}
       style={{ left: `${left}%`, width: `${width}%` }}
       onClick={onClick}
+      onDblClick={onDblClick}
     >
       <div
         class="timeline-block-handle timeline-block-handle--left"
@@ -627,7 +765,7 @@ function RulerRow({ duration, zoom, visibleWidth, mode, fps }: {
   duration: number;
   zoom: number;
   visibleWidth: number;
-  mode: TimecodeMode;
+  mode: DisplayMode;
   fps: number;
 }) {
   const pxPerSec = (visibleWidth * zoom) / duration;
@@ -647,34 +785,10 @@ function RulerRow({ duration, zoom, visibleWidth, mode, fps }: {
           class="timeline-ruler-tick"
           style={{ left: `${(t / duration) * 100}%` }}
         >
-          <span class="timeline-ruler-label">{formatTime(t, mode, fps)}</span>
+          <span class="timeline-ruler-label">{formatDisplayTime(t, mode, fps)}</span>
         </div>
       ))}
     </div>
   );
 }
 
-function formatTime(seconds: number, mode: TimecodeMode, fps: number): string {
-  switch (mode) {
-    case "time": {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const ms = Math.floor((seconds % 1) * 1000);
-      if (h > 0) {
-        return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
-      }
-      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
-    }
-    case "smpte": {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const f = Math.floor((seconds % 1) * fps);
-      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(f).padStart(2, "0")}`;
-    }
-    case "frames": {
-      return `${Math.floor(seconds * fps)}f`;
-    }
-  }
-}

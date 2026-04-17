@@ -2,23 +2,33 @@ import { useEffect, useRef } from "preact/hooks";
 import { signal, useSignalEffect } from "@preact/signals";
 import {
   selectedMedia,
+  selectedMediaId,
   selectedCaptionIndex,
   playbackTime,
   project,
   activeProfile,
   pushHistory,
+  beginPendingAdd,
+  commitPendingAdd,
+  cancelPendingAdd,
+  getPendingAddIndex,
   mediaDuration,
   isPlaying,
+  exportFormats,
+  selectedExportFormat,
+  isDirty,
 } from "../../store/app";
-import { snapToFrame, runPipeline, formatPhraseToCaptionLines } from "../../lib/pipeline";
-import { makePhrase } from "../../lib/pipeline/types";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, XIcon as X, FolderOpenIcon as FolderOpen, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
+import { snapToFrame, runPipeline, breakTextIntoLines } from "../../lib/pipeline";
+import { framesBetween } from "../../lib/time";
+import { formatDisplayTime } from "../../lib/time";
+import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
+import { openFormatManager } from "../FormatManager";
 import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
 import { transcribeMedia, type TranscriptionProgress, type TranscriptionResult } from "../../lib/transcription";
-import { listFormats, exportCaptions, openFormatsDir, type ExportFormat } from "../../lib/export";
+import { listFormats, exportCaptions } from "../../lib/export";
 import { showError } from "../ErrorModal";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
 
@@ -28,8 +38,6 @@ const generateProgress = signal<TranscriptionProgress | null>(null);
 const confirmingRegenerate = signal(false);
 const editingIndex = signal<number | null>(null);
 const editText = signal("");
-const exportFormats = signal<ExportFormat[]>([]);
-
 export { editingIndex, editText };
 
 // Flag to suppress onBlur commit when Escape is pressed in the textarea
@@ -39,7 +47,24 @@ let _editCancelled = false;
 
 
 async function loadFormats() {
-  exportFormats.value = await listFormats();
+  const fmts = await listFormats();
+  exportFormats.value = fmts;
+}
+
+function buildFormatOptions() {
+  const formats = exportFormats.value;
+  const builtins = formats.filter((f) => f.source === "builtin");
+  const custom = formats.filter((f) => f.source === "custom");
+
+  const options: ({ value: string; label: string } | { separator: true; label?: string })[] = [];
+
+  for (const f of builtins) options.push({ value: f.id, label: f.name });
+  if (builtins.length > 0 && custom.length > 0) {
+    options.push({ separator: true });
+  }
+  for (const f of custom) options.push({ value: f.id, label: f.name });
+
+  return options;
 }
 
 // ── Caption operations ────────────────────────────────────────────────────────
@@ -50,19 +75,26 @@ function deleteCaption(index: number) {
   if (!proj || !media) return;
 
   const pos = media.captions.findIndex((c) => c.index === index);
+  if (pos < 0) return;
   const newCaptions = media.captions
     .filter((c) => c.index !== index)
     .map((c, i) => ({ ...c, index: i + 1 }));
 
   const next = newCaptions[pos] ?? newCaptions[pos - 1] ?? null;
-  selectedCaptionIndex.value = next?.index ?? null;
 
+  // Push while selection still points at the deleted caption so undo lands
+  // there; pass the neighbor as post-op selection so redo settles naturally.
   pushHistory({
     ...proj,
     media: proj.media.map((m) =>
       m.id !== media.id ? m : { ...m, captions: newCaptions }
     ),
-  }, "Delete caption");
+  }, "Delete caption", {
+    selectedMediaId: selectedMediaId.value,
+    selectedCaptionIndex: next?.index ?? null,
+  });
+
+  selectedCaptionIndex.value = next?.index ?? null;
 }
 
 function splitCaption(index: number) {
@@ -77,37 +109,60 @@ function splitCaption(index: number) {
   if (t <= block.start || t >= block.end) return;
 
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
-  const splitPoint = snapToFrame(t, fps);
+
+  // Caption must be at least 2 frames long to produce two non-empty halves.
+  const totalFrames = framesBetween(block.start, block.end, fps);
+  if (totalFrames < 2) return;
+
+  // Splitting a single-word caption would always leave one half empty.
+  const wordCount = block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length;
+  if (wordCount < 2) return;
+
+  // Snap to nearest frame, then round inward if we landed on a boundary so
+  // both halves are guaranteed to be at least 1 frame long.
+  let splitPoint = snapToFrame(t, fps);
+  const leftFrames = framesBetween(block.start, splitPoint, fps);
+  if (leftFrames < 1) {
+    splitPoint = snapToFrame(block.start + 1 / fps, fps);
+  } else if (leftFrames >= totalFrames) {
+    splitPoint = snapToFrame(block.end - 1 / fps, fps);
+  }
 
   const profile = activeProfile.value;
   const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
   const maxLines = profile.formatting.maxLines.value;
 
-  // Words source: rawWords filtered to this block's time range.
-  // Not available for manually added captions.
-  const sourceWords = media.rawWords?.filter((w) => w.start < block.end && w.end > block.start) ?? [];
+  // Text is the source of truth — the user sees block.lines and expects the
+  // split to divide exactly those words, never lose or duplicate any. rawWords
+  // are consulted only to pick a timing-aware split index when they align 1:1
+  // with the displayed tokens; otherwise fall back to a proportional ratio.
+  const textTokens = block.lines.join(" ").split(/\s+/).filter(Boolean);
+  const wordsInBlock = block.edited
+    ? []
+    : media.rawWords?.filter((w) => {
+        const mid = (w.start + w.end) / 2;
+        return mid >= block.start && mid <= block.end;
+      }) ?? [];
 
-  let linesA: string[];
-  let linesB: string[];
+  // Timing-aware path requires rawWords to align with displayed tokens in
+  // both count AND content — matching counts alone could be coincidental if
+  // something mutated block.lines without flipping edited=true.
+  const tokensAlign =
+    wordsInBlock.length === textTokens.length &&
+    wordsInBlock.map((w) => w.text).join(" ") === textTokens.join(" ");
 
-  if (sourceWords.length > 0) {
-    const wordsA = sourceWords.filter((w) => w.start < splitPoint && (w.end <= splitPoint || (w.start + w.end) / 2 < splitPoint));
-    const wordsB = sourceWords.filter((w) => !wordsA.includes(w));
-
-    linesA = wordsA.length > 0
-      ? formatPhraseToCaptionLines(makePhrase(wordsA), maxCharsPerLine, maxLines)
-      : [""];
-    linesB = wordsB.length > 0
-      ? formatPhraseToCaptionLines(makePhrase(wordsB), maxCharsPerLine, maxLines)
-      : [""];
+  let splitIdx: number;
+  if (tokensAlign) {
+    const firstAfter = wordsInBlock.findIndex((w) => (w.start + w.end) / 2 >= splitPoint);
+    splitIdx = firstAfter < 0 ? textTokens.length - 1 : firstAfter;
   } else {
-    // No word timing — split text proportionally at a word boundary
     const ratio = (splitPoint - block.start) / (block.end - block.start);
-    const textWords = block.lines.join(" ").split(" ").filter(Boolean);
-    const splitIdx = Math.max(1, Math.min(textWords.length - 1, Math.round(textWords.length * ratio)));
-    linesA = [textWords.slice(0, splitIdx).join(" ")];
-    linesB = [textWords.slice(splitIdx).join(" ")];
+    splitIdx = Math.round(textTokens.length * ratio);
   }
+  splitIdx = Math.max(1, Math.min(textTokens.length - 1, splitIdx));
+
+  const linesA = breakTextIntoLines(textTokens.slice(0, splitIdx).join(" "), maxCharsPerLine, maxLines);
+  const linesB = breakTextIntoLines(textTokens.slice(splitIdx).join(" "), maxCharsPerLine, maxLines);
 
   const blockA: CaptionBlock = { ...block, end: splitPoint, lines: linesA };
   const blockB: CaptionBlock = { ...block, start: splitPoint, lines: linesB };
@@ -126,7 +181,58 @@ function splitCaption(index: number) {
     ),
   }, "Split caption");
 
-  selectedCaptionIndex.value = blockA.index;
+  selectedCaptionIndex.value = index;
+}
+
+function mergeCaption(index: number) {
+  const proj = project.value;
+  const media = selectedMedia.value;
+  if (!proj || !media) return;
+
+  const pos = media.captions.findIndex((c) => c.index === index);
+  if (pos < 0 || pos >= media.captions.length - 1) return;
+
+  const blockA = media.captions[pos];
+  const blockB = media.captions[pos + 1];
+
+  const speaker = blockA.speaker === blockB.speaker ? blockA.speaker : undefined;
+
+  const profile = activeProfile.value;
+  const maxCharsPerLine = profile.formatting.maxCharsPerLine.value;
+  const maxLines = profile.formatting.maxLines.value;
+
+  // Text is the source of truth — concatenate the displayed lines and wrap.
+  // rawWords would produce the same result via a more fragile route and can
+  // silently drop or pull in neighbor words when midpoints disagree.
+  const combined = [...blockA.lines, ...blockB.lines].join(" ").trim();
+  const mergedLines = combined.length > 0
+    ? breakTextIntoLines(combined, maxCharsPerLine, maxLines)
+    : [""];
+
+  const eitherEdited = blockA.edited || blockB.edited;
+  const merged: CaptionBlock = {
+    index: 0,
+    start: blockA.start,
+    end: blockB.end,
+    lines: mergedLines,
+    speaker,
+    ...(eitherEdited ? { edited: true } : {}),
+  };
+
+  const newCaptions = [
+    ...media.captions.slice(0, pos),
+    merged,
+    ...media.captions.slice(pos + 2),
+  ].map((c, i) => ({ ...c, index: i + 1 }));
+
+  pushHistory({
+    ...proj,
+    media: proj.media.map((m) =>
+      m.id !== media.id ? m : { ...m, captions: newCaptions }
+    ),
+  }, "Merge captions");
+
+  selectedCaptionIndex.value = pos + 1;
 }
 
 function addCaption() {
@@ -134,26 +240,28 @@ function addCaption() {
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
-  const t = playbackTime.value;
-
-  // Can't add inside an existing caption
-  if (media.captions.some((c) => t >= c.start && t < c.end)) return;
-
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
-  const start = snapToFrame(t, fps);
-  const nextCaption = media.captions.find((c) => c.start > t);
-  const maxEnd = nextCaption?.start ?? (mediaDuration.value || start + 5);
+  const start = snapToFrame(playbackTime.value, fps);
+
+  // Can't add inside an existing caption. Check on the snapped start, not the
+  // raw playhead — snapping can round into a caption if its end isn't frame-
+  // aligned (possible with imports / pre-frame-snap project files).
+  if (media.captions.some((c) => start >= c.start && start < c.end)) return;
+
+  const nextCaption = media.captions.find((c) => c.start > start);
+  const maxEnd = nextCaption?.start ?? mediaDuration.value ?? Infinity;
   const end = snapToFrame(Math.min(start + 2, maxEnd), fps);
 
   if (end <= start) return;
 
-  const insertPos = media.captions.filter((c) => c.end <= t).length;
+  const insertPos = media.captions.filter((c) => c.end <= start).length;
 
   const newBlock: CaptionBlock = {
     index: 0,
     start,
     end,
     lines: [""],
+    edited: true,
   };
 
   const newCaptions = [
@@ -162,14 +270,18 @@ function addCaption() {
     ...media.captions.slice(insertPos),
   ].map((c, i) => ({ ...c, index: i + 1 }));
 
-  pushHistory({
+  const newIndex = insertPos + 1;
+
+  // Tentatively add to project state only — no history entry until the user
+  // commits non-empty text. Escape / empty commit reverts cleanly via
+  // cancelPendingAdd, so history never accumulates Add+Delete phantom pairs.
+  beginPendingAdd({
     ...proj,
     media: proj.media.map((m) =>
       m.id !== media.id ? m : { ...m, captions: newCaptions }
     ),
-  }, "Add caption");
+  }, newIndex);
 
-  const newIndex = insertPos + 1;
   _editCancelled = false;
   selectedCaptionIndex.value = newIndex;
   editingIndex.value = newIndex;
@@ -203,6 +315,9 @@ export function CaptionPanel() {
       } else if (e.key === "s" && !e.ctrlKey && !e.metaKey && idx !== null) {
         e.preventDefault();
         splitCaption(idx);
+      } else if (e.key === "m" && !e.ctrlKey && !e.metaKey && idx !== null) {
+        e.preventDefault();
+        mergeCaption(idx);
       } else if (e.key === "a" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         addCaption();
@@ -252,6 +367,9 @@ export function CaptionPanel() {
   const generating = isGenerating.value;
   const progress = generateProgress.value;
   const hasCaptions = (media?.captions.length ?? 0) > 0;
+  // Undefined = unprobed (old projects) or probe failed — allow the attempt.
+  // Only block when we explicitly know there's no audio stream.
+  const canGenerate = media?.hasAudio ?? true;
   const currentTime = playbackTime.value;
   const playingCaption = media?.captions.find(
     (c) => currentTime >= c.start && currentTime < c.end
@@ -306,7 +424,8 @@ export function CaptionPanel() {
             {hasCaptions && (
               <button
                 class="btn btn-ghost btn-icon"
-                data-tooltip="Regenerate captions"
+                disabled={!canGenerate}
+                data-tooltip={!canGenerate ? "No audio track — nothing to transcribe" : "Regenerate captions"}
                 onClick={(e) => { e.stopPropagation(); confirmingRegenerate.value = true; }}
               >
                 <ArrowsClockwise size={14} />
@@ -353,7 +472,11 @@ export function CaptionPanel() {
         ) : media.captions.length === 0 ? (
           <div class="empty-state">
             <span class="empty-state-title">No captions yet</span>
-            <button class="btn btn-primary btn-sm" onClick={handleGenerate}><ArrowsClockwise size={13} /> Generate</button>
+            {!canGenerate ? (
+              <span class="empty-state-body">This file has no audio track.</span>
+            ) : (
+              <button class="btn btn-primary btn-sm" onClick={handleGenerate}><ArrowsClockwise size={13} /> Generate</button>
+            )}
           </div>
         ) : (
           <div class="caption-list" onClick={(e) => { if (e.target === e.currentTarget) selectedCaptionIndex.value = null; }}>
@@ -361,11 +484,30 @@ export function CaptionPanel() {
               <CaptionRow
                 key={block.index}
                 block={block}
+                fps={fps}
                 selected={selectedCaptionIndex.value === block.index}
                 playing={playingIndex === block.index}
                 editing={editingIndex.value === block.index}
                 warnings={warningsByIndex.get(block.index) ?? []}
-                splitEnabled={currentTime > block.start && currentTime < block.end}
+                splitEnabled={
+                  currentTime > block.start &&
+                  currentTime < block.end &&
+                  framesBetween(block.start, block.end, fps) >= 2 &&
+                  block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length >= 2
+                }
+                splitTooltip={
+                  // Playhead-outside takes priority — it's the actionable hint.
+                  // Only after the playhead is inside do the structural reasons
+                  // (single-word, too-short) become relevant.
+                  !(currentTime > block.start && currentTime < block.end)
+                    ? "Position playhead inside this caption to split"
+                    : block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length < 2
+                      ? "Can't split a single-word caption"
+                      : framesBetween(block.start, block.end, fps) < 2
+                        ? "Caption too short to split"
+                        : "Split at playhead (S)"
+                }
+                mergeEnabled={block.index < media.captions.length}
                 onMouseDown={() => {
                   if (editingIndex.value !== null && editingIndex.value !== block.index) {
                     handleEdit(editingIndex.value, editText.value);
@@ -384,6 +526,7 @@ export function CaptionPanel() {
                 }}
                 onEdit={(text) => handleEdit(block.index, text)}
                 onSplit={() => splitCaption(block.index)}
+                onMerge={() => mergeCaption(block.index)}
                 onDelete={() => deleteCaption(block.index)}
               />
             ))}
@@ -393,20 +536,18 @@ export function CaptionPanel() {
 
       {media && !generating && hasCaptions && (
         <div class="caption-panel-footer">
-          <button
-            class="btn btn-ghost btn-icon"
-            data-tooltip="Open export formats folder"
-            onClick={openFormatsDir}
-          >
-            <FolderOpen size={14} />
-          </button>
           <SelectButton
             icon={FileText}
             tooltip="Export format"
             direction="up"
-            options={exportFormats.value.map((f) => ({ value: f.id, label: f.name }))}
-            value={project.value?.exportFormatId ?? exportFormats.value[0]?.id ?? ""}
-            onChange={(v) => { if (project.value) pushHistory({ ...project.value, exportFormatId: v }, "Change export format"); }}
+            options={buildFormatOptions()}
+            value={selectedExportFormat.value}
+            onChange={(v) => { selectedExportFormat.value = v; isDirty.value = true; }}
+            footer={(close) => (
+              <button class="titlebar-select-option" onClick={() => { close(); openFormatManager(); }}>
+                <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage export formats…</span>
+              </button>
+            )}
           />
           <div style="flex:1" />
           <button class="btn btn-primary btn-sm" onClick={() => handleExport(media.name)}>
@@ -422,29 +563,37 @@ export function CaptionPanel() {
 
 function CaptionRow({
   block,
+  fps,
   selected,
   playing,
   editing,
   warnings,
   splitEnabled,
+  splitTooltip,
+  mergeEnabled,
   onMouseDown,
   onClick,
   onDblClick,
   onEdit,
   onSplit,
+  onMerge,
   onDelete,
 }: {
   block: CaptionBlock;
+  fps: number;
   selected: boolean;
   playing: boolean;
   editing: boolean;
   warnings: ValidationWarning[];
   splitEnabled: boolean;
+  splitTooltip: string;
+  mergeEnabled: boolean;
   onMouseDown: () => void;
   onClick: () => void;
   onDblClick: () => void;
   onEdit: (text: string) => void;
   onSplit: () => void;
+  onMerge: () => void;
   onDelete: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -452,10 +601,28 @@ function CaptionRow({
     if (editing) textareaRef.current?.focus();
   }, [editing]);
 
+  // Click-outside commit: native blur only fires when focus moves to another
+  // focusable element. Clicks on non-focusable areas (video panel, timeline
+  // body, empty list space) would otherwise leave the editor open. The row's
+  // own mousedown handler runs first (bubble phase) and may have already
+  // committed for row-to-row clicks, so guard against double-commit.
+  useEffect(() => {
+    if (!editing) return;
+    const handler = (e: MouseEvent) => {
+      if (editingIndex.value !== block.index) return;
+      const target = e.target as Node | null;
+      if (target && textareaRef.current && !textareaRef.current.contains(target)) {
+        onEdit(editText.value);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [editing, onEdit, block.index]);
+
   if (editing) {
     return (
       <div class="caption-row caption-row--selected" data-caption-index={block.index}>
-        <div class="caption-row-meta">#{block.index} · {formatTime(block.start)} → {formatTime(block.end)}</div>
+        <div class="caption-row-meta">#{block.index} · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}</div>
         <textarea
           ref={textareaRef}
           class="caption-row-editor"
@@ -465,7 +632,10 @@ function CaptionRow({
             if (e.key === "Escape") {
               _editCancelled = true;
               editingIndex.value = null;
-              if (!block.lines.join("").trim()) {
+              if (getPendingAddIndex() === block.index) {
+                // A-then-Escape: roll back the tentative add entirely.
+                cancelPendingAdd();
+              } else if (!block.lines.join("").trim()) {
                 onDelete();
               }
             }
@@ -497,7 +667,7 @@ function CaptionRow({
       onKeyDown={(e) => { if (e.key === "Enter") onClick(); }}
     >
       <div class="caption-row-meta">
-        #{block.index} · {formatTime(block.start)} → {formatTime(block.end)}
+        #{block.index} · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}
         {warnings.length > 0 && (
           <WarningBadge warnings={warnings} />
         )}
@@ -519,10 +689,18 @@ function CaptionRow({
           <button
             class="btn-caption-action"
             disabled={!splitEnabled}
-            data-tooltip={splitEnabled ? "Split at playhead (S)" : "Position playhead inside this caption to split"}
+            data-tooltip={splitTooltip}
             onClick={onSplit}
           >
             <Scissors size={14} />
+          </button>
+          <button
+            class="btn-caption-action"
+            disabled={!mergeEnabled}
+            data-tooltip={mergeEnabled ? "Merge with next (M)" : "No next caption to merge with"}
+            onClick={onMerge}
+          >
+            <ArrowsMerge size={14} />
           </button>
           <button
             class="btn-caption-action btn-caption-action--delete"
@@ -573,11 +751,28 @@ function formatFullTimestamp(iso: string): string {
   });
 }
 
-function formatTime(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  const ms = Math.floor((s % 1) * 1000);
-  return `${m}:${String(sec).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
+
+/** Commit any active caption edit. Called from forward-moving menu actions
+ * (save, new, open) so the user's typed text is preserved. Native menu clicks
+ * don't produce a DOM mousedown, so they bypass the textarea's click-outside
+ * commit. */
+export function commitActiveEdit() {
+  const idx = editingIndex.value;
+  if (idx === null) return;
+  handleEdit(idx, editText.value);
+}
+
+/** Discard any active caption edit without committing. Called from backward-
+ * moving menu actions (undo, redo) where auto-committing would insert a new
+ * history entry that the menu label promised would be undone. Mirrors the
+ * Escape-in-textarea behavior. */
+export function cancelActiveEdit() {
+  if (editingIndex.value === null) return;
+  _editCancelled = true;
+  editingIndex.value = null;
+  if (getPendingAddIndex() !== null) {
+    cancelPendingAdd();
+  }
 }
 
 function handleEdit(index: number, text: string) {
@@ -587,23 +782,50 @@ function handleEdit(index: number, text: string) {
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
+  const isPendingAdd = getPendingAddIndex() === index;
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+
   if (!lines.length) {
-    deleteCaption(index);
+    // Empty commit: cancel a pending add (no history), otherwise delete.
+    if (isPendingAdd) {
+      cancelPendingAdd();
+    } else {
+      deleteCaption(index);
+    }
     return;
   }
 
-  pushHistory({
+  // Identity commit: user opened the editor but didn't change the text. Skip
+  // pushing a history entry so Undo operates on the prior real change instead
+  // of this no-op. Pending adds never hit this path — an unchanged pending add
+  // means empty text, which is handled above.
+  const existing = media.captions.find((c) => c.index === index);
+  if (
+    !isPendingAdd &&
+    existing &&
+    existing.lines.length === lines.length &&
+    existing.lines.every((l, i) => l === lines[i])
+  ) {
+    return;
+  }
+
+  const newProject = {
     ...proj,
     media: proj.media.map((m) =>
       m.id !== media.id ? m : {
         ...m,
         captions: m.captions.map((c) =>
-          c.index !== index ? c : { ...c, lines }
+          c.index !== index ? c : { ...c, lines, edited: true }
         ),
       }
     ),
-  }, "Edit caption");
+  };
+
+  if (isPendingAdd) {
+    commitPendingAdd(newProject);
+  } else {
+    pushHistory(newProject, "Edit caption");
+  }
 }
 
 async function handleGenerate() {
@@ -653,15 +875,15 @@ async function handleGenerate() {
 
 async function handleExport(baseName: string) {
   const media = selectedMedia.value;
-  const proj = project.value;
-  if (!media || media.captions.length === 0 || !proj) return;
+  if (!media || media.captions.length === 0) return;
 
-  const formatId = proj.exportFormatId ?? exportFormats.value[0]?.id;
-  const format = exportFormats.value.find((f) => f.id === formatId);
+  const format = exportFormats.value.find((f) => f.id === selectedExportFormat.value);
   if (!format) return;
 
+  const fps = media.fps ?? activeProfile.value.timing.defaultFps;
+
   try {
-    await exportCaptions(format, media.captions, baseName);
+    await exportCaptions(format, media.captions, baseName, fps, media.dropFrame ?? false);
   } catch (e) {
     showError(String(e));
   }

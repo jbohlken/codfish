@@ -5,12 +5,19 @@ import { showError } from "../../components/ErrorModal";
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
 import { addRecent, loadRecent } from "../recent";
+import { hashContent } from "../hash";
+import { selectedExportFormat, exportFormats, selectedProfile, profiles } from "../../store/app";
+import { loadFormatSource, listFormats } from "../export";
+import { loadProfiles, loadProfileSource } from "../profiles";
 import type { CodProject, MediaItem } from "../../types/project";
+import { isDropFrameRate } from "../time";
+import { cancelActiveEdit } from "../../components/layout/CaptionPanel";
+import { resetTimelineView } from "../../components/layout/Timeline";
 
 const PROJECT_VERSION = 1;
 
-const VIDEO_EXTS = ["mp4", "mov", "mkv", "avi", "webm"];
-const AUDIO_EXTS = ["mp3", "wav", "m4a", "aac", "flac", "ogg"];
+export const VIDEO_EXTS = ["mp4", "mov", "webm"];
+export const AUDIO_EXTS = ["mp3", "wav", "aac", "flac", "ogg"];
 const MEDIA_EXTS = [...VIDEO_EXTS, ...AUDIO_EXTS];
 
 // ── Public actions ────────────────────────────────────────────────────────────
@@ -50,6 +57,8 @@ export function closeProjectGuarded(): Promise<boolean> {
 
 /** Clear the current project from the store. Does not touch disk. */
 function closeProject(): void {
+  cancelActiveEdit();
+  resetTimelineView();
   resetHistory();
   project.value = null;
   projectPath.value = null;
@@ -82,10 +91,8 @@ export async function newProject(): Promise<boolean> {
   const proj: CodProject = {
     version: PROJECT_VERSION,
     name,
-    profileId: "default",
     transcriptionModel: "base",
     language: "",
-    exportFormatId: "SRT",
     createdAt: now,
     updatedAt: now,
     media: [],
@@ -114,7 +121,11 @@ export async function openRecent(filePath: string): Promise<boolean> {
   }
   return withUnsavedCheck(async () => {
     try { await loadProjectFromPath(filePath); return true; }
-    catch (err) { console.error(err); return false; }
+    catch (err) {
+      console.error(err);
+      showError(`Could not open project:\n${filePath}`);
+      return false;
+    }
   });
 }
 
@@ -127,6 +138,32 @@ async function openProject(): Promise<boolean> {
   const filePath = flattenDialogResult(result);
   if (!filePath) return false;
   return loadProjectFromPath(filePath);
+}
+
+/** Discard unsaved changes and reload the project from disk. Prompts for
+ *  confirmation first — reloading clobbers in-memory state that the undo
+ *  history can't recover. No-op without a path + dirty state (the menu
+ *  item is also gated on both, but guard here for keyboard/programmatic
+ *  callers). */
+export async function revertProject(): Promise<boolean> {
+  const path = projectPath.value;
+  if (!path || !isDirty.value) return false;
+
+  const choice = await confirmUnsavedChanges(
+    "Revert will reload the saved version from disk and discard your unsaved changes.",
+    { title: "Revert project?", hideDiscard: true, confirmLabel: "Revert" },
+  );
+  if (choice !== "save") return false;
+
+  try {
+    await loadProjectFromPath(path);
+    await clearRecovery();
+    return true;
+  } catch (err) {
+    console.error(err);
+    showError("Could not reload the project from disk.");
+    return false;
+  }
 }
 
 export async function saveCurrentProject(): Promise<boolean> {
@@ -186,7 +223,11 @@ export async function importMedia(): Promise<void> {
   const newItems = await Promise.all(
     paths.map(async (p) => {
       const item = makeMediaItem(p);
-      item.fps = await probeFps(p);
+      const probe = await probeFps(p);
+      item.fps = probe.fps;
+      if (probe.vfr) item.vfr = true;
+      if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
+      if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
       return item;
     })
   );
@@ -212,12 +253,20 @@ export async function relinkMediaItem(mediaId: string): Promise<void> {
   const newPath = flattenDialogResult(result);
   if (!newPath) return;
 
-  const fps = await probeFps(newPath);
+  const probe = await probeFps(newPath);
 
   pushHistory({
     ...proj,
     media: proj.media.map((m) =>
-      m.id !== mediaId ? m : { ...m, path: newPath, name: pathToBasename(newPath), fps }
+      m.id !== mediaId ? m : {
+        ...m,
+        path: newPath,
+        name: pathToBasename(newPath),
+        fps: probe.fps,
+        vfr: probe.vfr || undefined,
+        hasAudio: probe.hasAudio,
+        dropFrame: probe.fps != null && isDropFrameRate(probe.fps) ? true : undefined,
+      }
     ),
   }, "Re-link media");
 }
@@ -230,13 +279,22 @@ export async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-export async function probeFps(path: string): Promise<number | null> {
+interface ProbeResult {
+  fps: number | null;
+  vfr: boolean;
+  // Undefined when the probe itself failed — we don't want to bake a
+  // transient sidecar failure into the media item and permanently block
+  // transcription. A real "no audio" finding comes back as false.
+  hasAudio?: boolean;
+}
+
+export async function probeFps(path: string): Promise<ProbeResult> {
   try {
-    return await invoke<number | null>("probe_fps", { path });
+    return await invoke<ProbeResult>("probe_fps", { path });
   } catch (e: any) {
     const msg = typeof e === "string" ? e : e?.message || "Unknown error probing frame rate";
     showError(msg);
-    return null;
+    return { fps: null, vfr: false };
   }
 }
 
@@ -253,17 +311,112 @@ export function makeMediaItem(filePath: string): MediaItem {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+async function getFormatReference(): Promise<{ name: string; hash: string } | null> {
+  try {
+    const name = selectedExportFormat.value;
+    const format = exportFormats.value.find((f) => f.name === name);
+    if (!format) return null;
+    const source = await loadFormatSource(format.formatPath);
+    const hash = await hashContent(source);
+    return { name: format.name, hash };
+  } catch {
+    return null;
+  }
+}
+
+async function getProfileReference(): Promise<{ name: string; hash: string } | null> {
+  try {
+    const name = selectedProfile.value;
+    const profile = profiles.value.find((p) => p.name === name);
+    if (!profile) return null;
+    const source = await loadProfileSource(profile.id);
+    const hash = await hashContent(source);
+    return { name: profile.name, hash };
+  } catch {
+    return null;
+  }
+}
+
 async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
+  const formatRef = await getFormatReference();
+  const profileRef = await getProfileReference();
   const toSave: CodProject = {
     ...proj,
     updatedAt: new Date().toISOString(),
+    exportFormatName: formatRef?.name,
+    exportFormatHash: formatRef?.hash,
+    profileName: profileRef?.name,
+    profileHash: profileRef?.hash,
     // Strip `words` arrays — they are runtime-only
     media: proj.media.map((m) => ({
       ...m,
       captions: m.captions.map(({ words: _w, ...c }) => c),
     })),
   };
+  // Remove ref fields entirely if no valid reference, so we never
+  // serialize null into the JSON (which would persist as a bogus value).
+  if (!toSave.exportFormatName) {
+    delete toSave.exportFormatName;
+    delete toSave.exportFormatHash;
+  }
+  if (!toSave.profileName) {
+    delete toSave.profileName;
+    delete toSave.profileHash;
+  }
   await invoke<void>("save_project", { path: filePath, json: JSON.stringify(toSave, null, 2) });
+}
+
+export async function checkFormatCompatibility(proj: CodProject): Promise<void> {
+  try {
+    const formats = await listFormats();
+    if (!proj.exportFormatName) {
+      // Old project with no format reference — default to SRT or first available.
+      selectedExportFormat.value = formats.find((f) => f.name === "SRT")?.name ?? formats[0]?.name ?? "SRT";
+      return;
+    }
+    const match = formats.find((f) => f.name === proj.exportFormatName);
+    if (!match) {
+      selectedExportFormat.value = formats.find((f) => f.name === "SRT")?.name ?? formats[0]?.name ?? "SRT";
+      showError(`This project uses export format "${proj.exportFormatName}", which isn't installed.`);
+      return;
+    }
+    // Format exists — select it.
+    selectedExportFormat.value = match.name;
+    if (!proj.exportFormatHash) return;
+    const source = await loadFormatSource(match.formatPath);
+    const hash = await hashContent(source);
+    if (hash !== proj.exportFormatHash) {
+      showError(`This project uses export format "${proj.exportFormatName}", but your local version differs.`);
+    }
+  } catch {
+    // Format check is best-effort — never block project loading.
+  }
+}
+
+export async function checkProfileCompatibility(proj: CodProject): Promise<void> {
+  try {
+    const loaded = await loadProfiles();
+    profiles.value = loaded;
+    if (!proj.profileName) {
+      selectedProfile.value = loaded.find((p) => p.name === "Codfish")?.name ?? loaded[0]?.name ?? "Codfish";
+      return;
+    }
+    const match = loaded.find((p) => p.name === proj.profileName);
+    if (!match) {
+      selectedProfile.value = loaded.find((p) => p.name === "Codfish")?.name ?? loaded[0]?.name ?? "Codfish";
+      showError(`This project uses profile "${proj.profileName}", which isn't installed.`);
+      return;
+    }
+    selectedProfile.value = match.name;
+    if (!proj.profileHash) return;
+    const source = await loadProfileSource(match.id);
+    const hash = await hashContent(source);
+    if (hash !== proj.profileHash) {
+      showError(`This project uses profile "${proj.profileName}", but your local version differs.`);
+    }
+  } catch {
+    // Best-effort — never block project loading.
+  }
 }
 
 function loadIntoStore(proj: CodProject, filePath: string): void {
@@ -279,6 +432,8 @@ function loadIntoStore(proj: CodProject, filePath: string): void {
   // association, open-recent, recovery restore) flows through here, so this
   // is the single place to update the recent list.
   void addRecent(filePath);
+  void checkFormatCompatibility(proj);
+  void checkProfileCompatibility(proj);
 }
 
 function flattenDialogResult(result: string | string[] | null): string | null {

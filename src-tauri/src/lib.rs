@@ -6,7 +6,7 @@ mod transcription;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
+use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State, Window, Wry};
 use tokio::sync::Mutex as AsyncMutex;
 use transcription::{ModelInfo, ProgressPayload, TranscribedWord, TranscriptionResult};
@@ -22,7 +22,15 @@ struct MenuItems {
     open_project: MenuItem<Wry>,
     save_project: MenuItem<Wry>,
     save_project_as: MenuItem<Wry>,
+    revert_project: MenuItem<Wry>,
     close_project: MenuItem<Wry>,
+    undo: MenuItem<Wry>,
+    redo: MenuItem<Wry>,
+    dark_mode: CheckMenuItem<Wry>,
+    export_formats: MenuItem<Wry>,
+    profiles: MenuItem<Wry>,
+    about: MenuItem<Wry>,
+    feedback: MenuItem<Wry>,
     /// "Open Recent" submenu — its items are rebuilt whenever the recent
     /// list changes via `set_recent_menu`.
     recent_submenu: Submenu<Wry>,
@@ -71,26 +79,57 @@ fn frontend_log(app: AppHandle, message: String) {
 
 #[tauri::command]
 fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Result<(), String> {
+    // open_recent (Submenu) and dark_mode (CheckMenuItem) are different types
+    // from the regular MenuItems, so they can't go through the match arm.
     if id == "open_recent" {
         return items.recent_submenu.set_enabled(enabled).map_err(|e| e.to_string());
+    }
+    if id == "dark_mode" {
+        return items.dark_mode.set_enabled(enabled).map_err(|e| e.to_string());
     }
     let item = match id.as_str() {
         "new_project" => &items.new_project,
         "open_project" => &items.open_project,
         "save_project" => &items.save_project,
         "save_project_as" => &items.save_project_as,
+        "revert_project" => &items.revert_project,
         "close_project" => &items.close_project,
+        "undo" => &items.undo,
+        "redo" => &items.redo,
+        "export_formats" => &items.export_formats,
+        "profiles" => &items.profiles,
+        "about" => &items.about,
+        "feedback" => &items.feedback,
         other => return Err(format!("unknown menu id: {other}")),
     };
     item.set_enabled(enabled).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn set_menu_text(items: State<MenuItems>, id: String, text: String) -> Result<(), String> {
+    let item = match id.as_str() {
+        "undo" => &items.undo,
+        "redo" => &items.redo,
+        other => return Err(format!("unknown menu id: {other}")),
+    };
+    item.set_text(text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_menu_checked(items: State<MenuItems>, id: String, checked: bool) -> Result<(), String> {
+    let item = match id.as_str() {
+        "dark_mode" => &items.dark_mode,
+        other => return Err(format!("unknown menu id: {other}")),
+    };
+    item.set_checked(checked).map_err(|e| e.to_string())
+}
+
 // ── Default resources (embedded at compile time) ────────────────────────────
 
-const SRT_JS:  &str = include_str!("../resources/export_formats/srt.js");
-const VTT_JS:  &str = include_str!("../resources/export_formats/vtt.js");
-const JSON_JS: &str = include_str!("../resources/export_formats/json.js");
-const TXT_JS:  &str = include_str!("../resources/export_formats/txt.js");
+const SRT_CFF:  &str = include_str!("../resources/export_formats/srt.cff");
+const VTT_CFF:  &str = include_str!("../resources/export_formats/vtt.cff");
+const JSON_CFF: &str = include_str!("../resources/export_formats/json.cff");
+const TXT_CFF:  &str = include_str!("../resources/export_formats/txt.cff");
 
 const PROFILE_DEFAULT: &str = include_str!("../resources/profiles/default.cfp");
 const PROFILE_NETFLIX: &str = include_str!("../resources/profiles/netflix.cfp");
@@ -103,16 +142,26 @@ fn export_formats_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("could not resolve app data dir: {e}"))
 }
 
-/// Write the default format scripts into export_formats/ if they aren't there yet.
+/// Seed .cff format files and clean up legacy .js formats.
 fn seed_format_files(app: &AppHandle) -> Result<(), String> {
     let dir = export_formats_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
-    for (name, content) in [("srt.js", SRT_JS), ("vtt.js", VTT_JS), ("json.js", JSON_JS), ("txt.js", TXT_JS)] {
+
+    // 1. Write .cff seeds — always overwrite builtins so updates (renames etc.) take effect
+    for (name, content) in [("srt.cff", SRT_CFF), ("vtt.cff", VTT_CFF), ("json.cff", JSON_CFF), ("txt.cff", TXT_CFF)] {
         let dest = dir.join(name);
-        if !dest.exists() {
-            std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
+        std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
+    }
+
+    // 2. Delete all .js files — JS execution is no longer supported
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().and_then(|x| x.to_str()) == Some("js") {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
     }
+
     Ok(())
 }
 
@@ -123,6 +172,8 @@ struct UserFormatMeta {
     name: String,
     extension: String,
     path: String,
+    /// "builtin" for seeded formats, "custom" for user-created .cff.
+    source: String,
 }
 
 #[tauri::command]
@@ -142,7 +193,9 @@ fn list_user_formats(app: AppHandle) -> Result<Vec<UserFormatMeta>, String> {
     let mut formats: Vec<UserFormatMeta> = std::fs::read_dir(&dir)
         .map_err(|e| format!("read_dir error: {e}"))?
         .flatten()
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("js"))
+        .filter(|e| {
+            e.path().extension().and_then(|x| x.to_str()) == Some("cff")
+        })
         .map(|entry| {
             let path = entry.path();
             let stem = path
@@ -150,26 +203,71 @@ fn list_user_formats(app: AppHandle) -> Result<Vec<UserFormatMeta>, String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
                 .to_string();
-
             let content = std::fs::read_to_string(&path).unwrap_or_default();
             let mut name = stem.clone();
             let mut extension = "txt".to_string();
+            let mut source = "custom".to_string();
 
-            for line in content.lines().take(10) {
-                let line = line.trim();
-                if let Some(val) = line.strip_prefix("// @name ") {
+            // Parse .cff metadata (key: value lines before first blank line)
+            for line in content.lines() {
+                if line.trim().is_empty() { break; }
+                if let Some(val) = line.strip_prefix("name: ") {
                     name = val.trim().to_string();
-                } else if let Some(val) = line.strip_prefix("// @ext ") {
+                } else if let Some(val) = line.strip_prefix("ext: ") {
                     extension = val.trim().to_string();
+                } else if line.trim() == "source: builtin" {
+                    source = "builtin".to_string();
                 }
             }
 
-            UserFormatMeta { name, extension, path: path.to_string_lossy().into_owned() }
+            UserFormatMeta { name, extension, path: path.to_string_lossy().into_owned(), source }
         })
         .collect();
 
     formats.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(formats)
+}
+
+/// Save a .cff format file. `filename` is the bare name (e.g. "my-format.cff").
+/// Refuses to overwrite builtin formats.
+#[tauri::command]
+fn save_user_format(app: AppHandle, filename: String, content: String) -> Result<String, String> {
+    let dir = export_formats_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let dest = dir.join(&filename);
+
+    // Safety: refuse to overwrite a builtin format.
+    if dest.exists() {
+        let existing = std::fs::read_to_string(&dest).unwrap_or_default();
+        let is_builtin = existing.lines()
+            .take_while(|l| !l.trim().is_empty())
+            .any(|l| l.trim() == "source: builtin");
+        if is_builtin {
+            return Err(format!("Cannot overwrite built-in format \"{filename}\". Duplicate it instead."));
+        }
+    }
+
+    std::fs::write(&dest, &content).map_err(|e| format!("write error: {e}"))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// Delete a user-created .cff format. Refuses to delete builtin formats.
+#[tauri::command]
+fn delete_user_format(app: AppHandle, filename: String) -> Result<(), String> {
+    let dir = export_formats_dir(&app)?;
+    let dest = dir.join(&filename);
+    if !dest.exists() {
+        return Ok(());
+    }
+    let existing = std::fs::read_to_string(&dest).unwrap_or_default();
+    let is_builtin = existing.lines()
+        .take_while(|l| !l.trim().is_empty())
+        .any(|l| l.trim() == "source: builtin");
+    if is_builtin {
+        return Err(format!("Cannot delete built-in format \"{filename}\"."));
+    }
+    std::fs::remove_file(&dest).map_err(|e| format!("delete error: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -204,15 +302,15 @@ fn profiles_dir(app: &AppHandle) -> Result<PathBuf, String> {
 fn seed_profile_files(app: &AppHandle) -> Result<(), String> {
     let dir = profiles_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    // Always overwrite builtins so updates take effect. Built-in profiles are
+    // readonly in the UI, so any on-disk divergence is either stale or manual.
     for (name, content) in [
         ("default.cfp", PROFILE_DEFAULT),
         ("netflix.cfp", PROFILE_NETFLIX),
         ("bbc.cfp", PROFILE_BBC),
     ] {
         let dest = dir.join(name);
-        if !dest.exists() {
-            std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
-        }
+        std::fs::write(&dest, content).map_err(|e| format!("write {name}: {e}"))?;
     }
     Ok(())
 }
@@ -473,6 +571,13 @@ fn get_profiles_dir(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn load_profile_source(app: AppHandle, id: String) -> Result<String, String> {
+    let dir = profiles_dir(&app)?;
+    let path = dir.join(format!("{id}.cfp"));
+    std::fs::read_to_string(&path).map_err(|e| format!("read error: {e}"))
+}
+
+#[tauri::command]
 fn export_profile(app: AppHandle, id: String) -> Result<String, String> {
     let dir = profiles_dir(&app)?;
     let src = dir.join(format!("{id}.cfp"));
@@ -548,6 +653,19 @@ fn load_project(path: String) -> Result<String, String> {
 #[tauri::command]
 fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).is_file()
+}
+
+/// Modification time in unix seconds. Used by the peaks cache to invalidate
+/// entries when a file is edited or replaced (rename alone changes the path
+/// key, but an in-place edit keeps the path and needs the mtime to differ).
+#[tauri::command]
+fn file_mtime(path: String) -> Result<u64, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| format!("stat: {e}"))?;
+    let mtime = meta.modified().map_err(|e| format!("modified: {e}"))?;
+    mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| format!("epoch: {e}"))
 }
 
 // ── Recent projects ──────────────────────────────────────────────────────────
@@ -741,26 +859,60 @@ fn clear_recovery(app: AppHandle) -> Result<(), String> {
 // ── Model commands ───────────────────────────────────────────────────────────
 
 /// Probe a media file for its frame rate via the running daemon.
-/// Returns null for audio-only files.
+/// Returns null fps for audio-only files, and vfr=true if variable frame rate detected.
 #[tauri::command]
 async fn probe_fps(
     app: AppHandle,
     path: String,
     state: State<'_, DaemonState>,
-) -> Result<Option<f64>, String> {
+) -> Result<ProbeResult, String> {
     let daemon = {
         let guard = state.lock().await;
         guard.clone().ok_or_else(|| "transcription engine not running".to_string())?
     };
 
-    #[derive(serde::Deserialize)]
-    struct R { fps: Option<f64> }
-
-    let r: R = daemon
+    let r: ProbeResult = daemon
         .request("probe_fps", serde_json::json!({ "path": path }))
         .await?;
-    log(&app, &format!("probe_fps: {:?}", r.fps));
-    Ok(r.fps)
+    log(&app, &format!("probe_fps: {:?} vfr: {} hasAudio: {}", r.fps, r.vfr, r.has_audio));
+    Ok(r)
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+struct ProbeResult {
+    fps: Option<f64>,
+    #[serde(default)]
+    vfr: bool,
+    #[serde(default, rename = "hasAudio")]
+    has_audio: bool,
+}
+
+/// Generate downsampled waveform peaks via the sidecar's bundled ffmpeg.
+/// Replaces WaveSurfer's browser-side fetch+decode, which is unreliable
+/// for the Tauri asset-protocol path on Windows and chokes on any codec
+/// WebAudio can't handle.
+#[tauri::command]
+async fn generate_peaks(
+    app: AppHandle,
+    path: String,
+    state: State<'_, DaemonState>,
+) -> Result<PeaksResult, String> {
+    let daemon = {
+        let guard = state.lock().await;
+        guard.clone().ok_or_else(|| "transcription engine not running".to_string())?
+    };
+
+    let r: PeaksResult = daemon
+        .request("generate_peaks", serde_json::json!({ "path": path }))
+        .await?;
+    log(&app, &format!("generate_peaks: bins={} duration={:.2}s", r.peaks.len(), r.duration));
+    Ok(r)
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+struct PeaksResult {
+    peaks: Vec<f32>,
+    duration: f64,
 }
 
 // ── Daemon commands ──────────────────────────────────────────────────────────
@@ -970,22 +1122,31 @@ pub fn run() {
             let new_proj = MenuItemBuilder::new("New Project")
                 .id("menu_new_project")
                 .accelerator("CmdOrCtrl+N")
+                .enabled(false)
                 .build(handle)?;
             let open_proj = MenuItemBuilder::new("Open Project…")
                 .id("menu_open_project")
                 .accelerator("CmdOrCtrl+O")
+                .enabled(false)
                 .build(handle)?;
             let save_proj = MenuItemBuilder::new("Save")
                 .id("menu_save_project")
                 .accelerator("CmdOrCtrl+S")
+                .enabled(false)
                 .build(handle)?;
             let save_as = MenuItemBuilder::new("Save As…")
                 .id("menu_save_project_as")
                 .accelerator("CmdOrCtrl+Shift+S")
+                .enabled(false)
+                .build(handle)?;
+            let revert_proj = MenuItemBuilder::new("Revert")
+                .id("menu_revert_project")
+                .enabled(false)
                 .build(handle)?;
             let close_proj = MenuItemBuilder::new("Close Project")
                 .id("menu_close_project")
                 .accelerator("CmdOrCtrl+W")
+                .enabled(false)
                 .build(handle)?;
 
             // Exit lives in the File menu on Windows/Linux per platform
@@ -1006,6 +1167,7 @@ pub fn run() {
                 .build(handle)?;
             let recent_submenu = SubmenuBuilder::new(handle, "Open Recent")
                 .item(&recent_placeholder)
+                .enabled(false)
                 .build()?;
 
             let file_menu_builder = SubmenuBuilder::new(handle, "File")
@@ -1015,6 +1177,7 @@ pub fn run() {
                 .separator()
                 .item(&save_proj)
                 .item(&save_as)
+                .item(&revert_proj)
                 .separator()
                 .item(&close_proj);
 
@@ -1023,12 +1186,25 @@ pub fn run() {
 
             let file_menu = file_menu_builder.build()?;
 
+            let about_item = MenuItemBuilder::new("About Codfish")
+                .id("menu_about")
+                .enabled(false)
+                .build(handle)?;
+            let feedback_item = MenuItemBuilder::new("Submit Feedback…")
+                .id("menu_feedback")
+                .enabled(false)
+                .build(handle)?;
+
             let mut menu_builder = MenuBuilder::new(handle);
 
             #[cfg(target_os = "macos")]
             {
+                let quit_item = MenuItemBuilder::new("Quit Codfish")
+                    .id("menu_quit")
+                    .accelerator("Cmd+Q")
+                    .build(handle)?;
                 let app_menu = SubmenuBuilder::new(handle, "Codfish")
-                    .about(None)
+                    .item(&about_item)
                     .separator()
                     .services()
                     .separator()
@@ -1036,23 +1212,60 @@ pub fn run() {
                     .hide_others()
                     .show_all()
                     .separator()
-                    .quit()
+                    .item(&quit_item)
                     .build()?;
                 menu_builder = menu_builder.item(&app_menu);
             }
+
+            let undo_item = MenuItemBuilder::new("Undo")
+                .id("menu_undo")
+                .accelerator("CmdOrCtrl+Z")
+                .enabled(false)
+                .build(handle)?;
+            let redo_accel = if cfg!(target_os = "macos") { "Cmd+Shift+Z" } else { "Ctrl+Y" };
+            let redo_item = MenuItemBuilder::new("Redo")
+                .id("menu_redo")
+                .accelerator(redo_accel)
+                .enabled(false)
+                .build(handle)?;
+
+            // Non-project items also start disabled: pre-splash and splash
+            // should have a uniformly inert menu (Exit is the only escape
+            // hatch). The frontend flips them on once sidecar + daemon are
+            // ready.
+            let export_formats = MenuItemBuilder::new("Export Formats…")
+                .id("menu_export_formats")
+                .enabled(false)
+                .build(handle)?;
+            let profiles_item = MenuItemBuilder::new("Caption Profiles…")
+                .id("menu_profiles")
+                .enabled(false)
+                .build(handle)?;
+
+            let dark_mode_item = CheckMenuItemBuilder::new("Dark Mode")
+                .id("menu_dark_mode")
+                .checked(true)
+                .enabled(false)
+                .build(handle)?;
 
             menu_builder = menu_builder.item(&file_menu);
 
             #[cfg(target_os = "macos")]
             {
                 let edit_menu = SubmenuBuilder::new(handle, "Edit")
-                    .undo()
-                    .redo()
+                    .item(&undo_item)
+                    .item(&redo_item)
                     .separator()
                     .cut()
                     .copy()
                     .paste()
                     .select_all()
+                    .separator()
+                    .item(&profiles_item)
+                    .item(&export_formats)
+                    .build()?;
+                let view_menu = SubmenuBuilder::new(handle, "View")
+                    .item(&dark_mode_item)
                     .build()?;
                 // Note: deliberately omitting .close_window() so Close Project
                 // (File menu, Cmd+W) owns the Cmd+W binding — matches Adobe and
@@ -1062,7 +1275,37 @@ pub fn run() {
                 let window_menu = SubmenuBuilder::new(handle, "Window")
                     .minimize()
                     .build()?;
-                menu_builder = menu_builder.item(&edit_menu).item(&window_menu);
+                let help_menu = SubmenuBuilder::new(handle, "Help")
+                    .item(&feedback_item)
+                    .build()?;
+                menu_builder = menu_builder
+                    .item(&edit_menu)
+                    .item(&view_menu)
+                    .item(&window_menu)
+                    .item(&help_menu);
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let edit_menu = SubmenuBuilder::new(handle, "Edit")
+                    .item(&undo_item)
+                    .item(&redo_item)
+                    .separator()
+                    .item(&profiles_item)
+                    .item(&export_formats)
+                    .build()?;
+                let view_menu = SubmenuBuilder::new(handle, "View")
+                    .item(&dark_mode_item)
+                    .build()?;
+                let help_menu = SubmenuBuilder::new(handle, "Help")
+                    .item(&feedback_item)
+                    .separator()
+                    .item(&about_item)
+                    .build()?;
+                menu_builder = menu_builder
+                    .item(&edit_menu)
+                    .item(&view_menu)
+                    .item(&help_menu);
             }
 
             handle.manage(MenuItems {
@@ -1070,7 +1313,15 @@ pub fn run() {
                 open_project: open_proj.clone(),
                 save_project: save_proj.clone(),
                 save_project_as: save_as.clone(),
+                revert_project: revert_proj.clone(),
                 close_project: close_proj.clone(),
+                undo: undo_item.clone(),
+                redo: redo_item.clone(),
+                dark_mode: dark_mode_item.clone(),
+                export_formats: export_formats.clone(),
+                profiles: profiles_item.clone(),
+                about: about_item.clone(),
+                feedback: feedback_item.clone(),
                 recent_submenu: recent_submenu.clone(),
             });
             handle.manage(RecentPaths(StdMutex::new(Vec::new())));
@@ -1081,9 +1332,14 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let id = event.id().0.as_str();
             if id == "menu_exit" {
-                // Route through ExitRequested so the unsaved-changes gate fires.
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.close();
+                }
+                return;
+            }
+            if id == "menu_quit" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("app://quit-requested", ());
                 }
                 return;
             }
@@ -1143,10 +1399,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_export_formats_dir,
             list_user_formats,
+            save_user_format,
+            delete_user_format,
             open_in_explorer,
             save_project,
             load_project,
             file_exists,
+            file_mtime,
+            generate_peaks,
             save_recovery,
             load_recovery,
             clear_recovery,
@@ -1154,6 +1414,8 @@ pub fn run() {
             get_log_path,
             frontend_log,
             set_menu_enabled,
+            set_menu_text,
+            set_menu_checked,
             get_recent_projects,
             add_recent_project,
             clear_recent_projects,
@@ -1170,6 +1432,7 @@ pub fn run() {
             get_profiles_dir,
             export_profile,
             import_profile,
+            load_profile_source,
             sidecar::get_sidecar_status,
             sidecar::detect_gpu,
             sidecar::check_sidecar_update,

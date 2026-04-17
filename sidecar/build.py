@@ -12,7 +12,7 @@ Dev builds (placed in src-tauri/binaries/transcribe-{triple}/ for local Tauri):
 Release builds (zipped in sidecar/dist/ for distribution):
     python sidecar/build.py --release        # CPU release
     python sidecar/build.py --release --cuda # CUDA release
-    python sidecar/make_manifest.py --version X.Y.Z --dir sidecar/dist/
+    python sidecar/make_manifest.py --dir sidecar/dist/
 
 For a CUDA build, first install the CUDA requirements:
     pip install -r sidecar/requirements-cuda.txt

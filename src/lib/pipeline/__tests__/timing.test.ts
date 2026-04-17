@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { snapToFrame, framesBetween, enforceTiming } from "../timing";
+import { enforceTiming } from "../timing";
+import { snapToFrame, framesBetween, EPSILON } from "../../time";
+import { validate } from "../validate";
 import { makeWords, makeBlock } from "./helpers";
 import type { TimingConfig } from "../../../types/profile";
+import type { CaptionProfile } from "../../../types/profile";
 
 const baseConfig: TimingConfig = {
   minDuration: { value: 0.0, strict: false, unit: "s" },
@@ -151,5 +154,78 @@ describe("enforceTiming", () => {
       extendToFill: false,
     });
     expect(result[0].end - result[0].start).toBeLessThan(0.6);
+  });
+
+  it("snaps correctly at 29.97fps", () => {
+    const words = makeWords("Test");
+    const block = makeBlock(1, 0.0, 0.5, ["Test"], words);
+    const result = enforceTiming([block], baseConfig, 29.97);
+    // Verify frame-aligned
+    const startFrame = Math.round(result[0].start * 29.97);
+    const endFrame = Math.round(result[0].end * 29.97);
+    expect(result[0].start).toBeCloseTo(startFrame / 29.97, 10);
+    expect(result[0].end).toBeCloseTo(endFrame / 29.97, 10);
+  });
+
+  it("produces no phantom overlaps at 29.97fps (stress test)", () => {
+    // Generate 100+ tightly-spaced blocks at 29.97fps
+    const blocks = [];
+    for (let i = 0; i < 120; i++) {
+      const start = i * 1.5;
+      const end = start + 1.2;
+      const words = makeWords(`Caption ${i}`, { start });
+      blocks.push(makeBlock(i + 1, start, end, [`Caption ${i}`], words));
+    }
+
+    const result = enforceTiming(blocks, {
+      ...baseConfig,
+      minGapEnabled: true,
+      minGapSeconds: { value: 2, strict: true, unit: "fr" },
+      extendToFill: true,
+      extendToFillMax: 0.3,
+    }, 29.97);
+
+    // No overlaps: every block's end must be <= next block's start (within epsilon)
+    for (let i = 0; i < result.length - 1; i++) {
+      const gap = result[i + 1].start - result[i].end;
+      expect(gap).toBeGreaterThanOrEqual(-EPSILON);
+    }
+
+    // Every block has positive duration
+    for (const block of result) {
+      expect(block.end - block.start).toBeGreaterThan(0);
+    }
+  });
+
+  it("enforceTiming → validate produces no overlap warnings at 29.97fps", () => {
+    const blocks = [];
+    for (let i = 0; i < 50; i++) {
+      const start = i * 2.0;
+      const end = start + 1.5;
+      const words = makeWords(`Block number ${i}`, { start });
+      blocks.push(makeBlock(i + 1, start, end, [`Block number ${i}`], words));
+    }
+
+    const config29: TimingConfig = {
+      ...baseConfig,
+      defaultFps: 29.97,
+      extendToFill: true,
+      extendToFillMax: 0.5,
+    };
+
+    const profile: CaptionProfile = {
+      id: "test",
+      name: "Test",
+      description: "",
+      builtIn: false,
+      timing: config29,
+      formatting: { maxCharsPerLine: { value: 42, strict: false }, maxLines: { value: 2, strict: false } },
+      merge: { enabled: false, phraseBreakGap: 0.7, minSegmentWords: 3, mergeGapThreshold: 0.5 },
+    };
+
+    const result = enforceTiming(blocks, config29, 29.97);
+    const report = validate(result, profile, 29.97);
+    const overlaps = report.warnings.filter((w) => w.rule === "overlap");
+    expect(overlaps).toHaveLength(0);
   });
 });

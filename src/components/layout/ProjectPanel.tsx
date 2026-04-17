@@ -9,6 +9,7 @@ import {
   importMedia,
   relinkMediaItem,
   fileExists,
+  VIDEO_EXTS,
 } from "../../lib/project";
 import { recentProjects } from "../../lib/recent";
 import { showContextMenu } from "../ContextMenu";
@@ -143,7 +144,9 @@ function MediaRow({ item, selected, missing, onClick, onContextMenu }: {
       ? `${item.captions.length} captions`
       : "No captions";
 
-  const fpsLabel = item.fps != null ? `${item.fps} fps` : null;
+  const fpsLabel = item.fps != null
+    ? `${item.fps} fps${item.dropFrame != null ? (item.dropFrame ? " DF" : " NDF") : ""}`
+    : null;
 
   return (
     <button
@@ -167,7 +170,7 @@ function MediaRow({ item, selected, missing, onClick, onContextMenu }: {
 
 function getMediaIcon(path: string) {
   const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
-  return ["mp4", "mov", "mkv", "avi", "webm"].includes(ext)
+  return VIDEO_EXTS.includes(ext)
     ? <FilmSlate size={14} />
     : <MusicNote size={14} />;
 }
