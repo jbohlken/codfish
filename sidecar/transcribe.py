@@ -47,7 +47,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.6.0"
+VERSION = "0.5.0"
 
 # ── stdout protocol setup ─────────────────────────────────────────────────────
 # Force UTF-8 so non-ASCII paths don't blow up on Windows.

@@ -17,10 +17,10 @@ const SIDECAR_BIN_NAME: &str = if cfg!(windows) {
 };
 
 /// Minimum sidecar version this build of the app is compatible with.
-/// 0.2.0 introduced the daemon JSON-Lines protocol. 0.6.0 added the
+/// 0.2.0 introduced the daemon JSON-Lines protocol. 0.5.0 added the
 /// generate_peaks op that the waveform pipeline now depends on — older
 /// sidecars can't render waveforms.
-pub const MIN_SIDECAR_VERSION: &str = "0.6.0";
+pub const MIN_SIDECAR_VERSION: &str = "0.5.0";
 
 /// Compare two semver-ish version strings ("a.b.c"). Returns true if `a >= b`.
 pub fn version_at_least(a: &str, b: &str) -> bool {
