@@ -1,0 +1,2 @@
+This file is generated at release time by license-checker-rspack.
+Run: node scripts/collect-npm-licenses.js src-tauri/resources/THIRD_PARTY_LICENSES_NPM.txt

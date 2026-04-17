@@ -1,0 +1,18 @@
+THIRD-PARTY SOFTWARE LICENSES
+=============================
+
+The Codfish desktop app includes the following Rust crates.
+Each crate's license text is reproduced below.
+
+{{#each overview.used}}
+========================================================================
+{{name}} {{version}}
+License: {{#each licenses}}{{id}}{{#unless @last}}, {{/unless}}{{/each}}
+{{#if authors}}Authors: {{authors}}{{/if}}
+------------------------------------------------------------------------
+
+{{#each licenses}}
+{{text}}
+
+{{/each}}
+{{/each}}

@@ -1,0 +1,22 @@
+# cargo-about configuration
+# Generate with: cargo about generate -c src-tauri/about.toml src-tauri/about.hbs > src-tauri/THIRD_PARTY_LICENSES.txt
+
+# Accept common permissive licenses
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+]
+
+# Ignore dev-only / build-only crates that don't ship in the binary
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

@@ -1,0 +1,2 @@
+This file is generated at release time by cargo-about.
+Run: cargo about generate -c src-tauri/about.toml src-tauri/about.hbs > src-tauri/resources/THIRD_PARTY_LICENSES_RUST.txt

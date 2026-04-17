@@ -36,6 +36,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Collect Rust dependency licenses
+        run: |
+          cargo install cargo-about
+          cd src-tauri && cargo about generate -c about.toml about.hbs > resources/THIRD_PARTY_LICENSES_RUST.txt
+
+      - name: Collect npm dependency licenses
+        run: node scripts/collect-npm-licenses.js src-tauri/resources/THIRD_PARTY_LICENSES_NPM.txt
+
       - name: Build Tauri app (no release upload)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -100,6 +108,14 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Collect Rust dependency licenses
+        run: |
+          cargo install cargo-about
+          cd src-tauri && cargo about generate -c about.toml about.hbs > resources/THIRD_PARTY_LICENSES_RUST.txt
+
+      - name: Collect npm dependency licenses
+        run: node scripts/collect-npm-licenses.js src-tauri/resources/THIRD_PARTY_LICENSES_NPM.txt
 
       - name: Build and notarize Tauri app
         uses: tauri-apps/tauri-action@v0
