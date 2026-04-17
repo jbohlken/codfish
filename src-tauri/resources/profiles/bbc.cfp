@@ -1,6 +1,7 @@
 # @name BBC
 # @description BBC Subtitle Guidelines compliance
 # @builtIn true
+# @updated 2026-04-17
 
 [formatting]
 maxCharsPerLine = 37

@@ -1,16 +1,17 @@
 # @name Codfish
 # @description General-purpose captioning profile
 # @builtIn true
+# @updated 2026-04-17
 
 [formatting]
 maxCharsPerLine = 42
 maxCharsPerLine.strict = false
 maxLines = 2
-maxLines.strict = false
+maxLines.strict = true
 
 [timing]
 minDuration = 1.0
-minDuration.strict = false
+minDuration.strict = true
 minDuration.unit = s
 maxDuration = 6.0
 maxDuration.strict = false
