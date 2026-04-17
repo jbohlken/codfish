@@ -1199,6 +1199,10 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
+                let quit_item = MenuItemBuilder::new("Quit Codfish")
+                    .id("menu_quit")
+                    .accelerator("Cmd+Q")
+                    .build(handle)?;
                 let app_menu = SubmenuBuilder::new(handle, "Codfish")
                     .item(&about_item)
                     .separator()
@@ -1208,7 +1212,7 @@ pub fn run() {
                     .hide_others()
                     .show_all()
                     .separator()
-                    .quit()
+                    .item(&quit_item)
                     .build()?;
                 menu_builder = menu_builder.item(&app_menu);
             }
@@ -1328,9 +1332,14 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let id = event.id().0.as_str();
             if id == "menu_exit" {
-                // Route through ExitRequested so the unsaved-changes gate fires.
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.close();
+                }
+                return;
+            }
+            if id == "menu_quit" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("app://quit-requested", ());
                 }
                 return;
             }
