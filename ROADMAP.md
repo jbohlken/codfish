@@ -22,6 +22,9 @@ Features shortlisted for the next feature release. Current priority is bugfixes 
 - **Caption styling** — preview, define, and export styling for captions, based on CSS under the hood; users should be able to load custom CSS rules to preview how they want for further flexibility. Must support currently offered export formats.
 - **Editor themeing**
 - **Standardize modals**
+- **Pipeline line-breaking improvements** — audit against published subtitle guidelines (BBC, Netflix, etc.) and add missing linguistic break penalties: pronoun+verb splits ("he | is"), complex verb splits ("have | eaten"), adjective+noun splits, prepositional verb+preposition splits. Also consider bottom-heavy pyramid preference (Netflix) and first+last name detection. Current scorer handles punctuation, articles, prepositions, and conjunctions.
+- **Validation-only gap warning threshold** — add a `minGapWarn` profile field so the validator can warn at a different (higher) threshold than the pipeline's anti-flicker `minGapSeconds`. Enables BBC's 1s minimum visible gap recommendation without changing pipeline behavior (which enforces at 0.4s for anti-flicker).
+- **Gap enforcement rework** — current pipeline closes flicker-zone gaps to seamless (0 frames), but Netflix requires a 2-frame minimum gap always. Rework so `minGapSeconds` is the true floor (gaps get pushed up to minGap, not down to 0). Seamless (0-gap) becomes the behavior when minGap = 0, not the default fallback.
 
 ---
 
