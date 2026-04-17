@@ -5,7 +5,7 @@
 Features shortlisted for the next feature release. Current priority is bugfixes and stabilization.
 
 - ~~**Format Builder v2** — refactor export format to tokenized `.cff` files that can be built and managed in-editor, including import/export~~
-- **Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid
+- ~~**Stabilize editor** — ensure the bread-and-butter editing/timeline features are solid~~
 - ~~**Merge captions** — combine adjacent captions (inverse of split)~~
 - ~~**UI/UX cleanup** — streamline editor UI/UX and move items under the menu bar to ensure a clean, working interface~~
 - ~~**Timing consistency** — ensure all time calculations are consistent throughout the entire captioning workflow, including timeline snapping, validation, export, SMPTE and drop-frame support where needed, VFR handling~~
@@ -13,9 +13,7 @@ Features shortlisted for the next feature release. Current priority is bugfixes 
   - ~~Decide redo accelerator per platform: `Ctrl+Y` vs `Ctrl+Shift+Z` on Windows (currently menu shows `Ctrl+Shift+Z` on both; `Ctrl+Y` works via keydown fallback)~~
   - ~~Decide whether the silent `Ctrl+Shift+Z` fallback on Windows should stay or be removed~~
 - ~~**Comprehensive test coverage** — make sure the app has reasonable and comprehensive test coverage (unit, component, integration)~~
-- **Notarize apps** — get Windows and Mac apps signed
-  - Mac ready for testing
-  - Windows TBD
+- ~~**Notarize apps** — get Windows and Mac apps signed~~
 
 ## 0.7.0 candidates
 
@@ -59,7 +57,7 @@ Potential features and changes to consider. Not prioritized.
 
 ## Caption Editing
 
-- Merge adjacent captions (inverse of split)
+- ~~Merge adjacent captions (inverse of split)~~
 - Multi-select captions for batch delete/retime
 - Find and replace across all captions
 - Spell check
@@ -74,7 +72,7 @@ Potential features and changes to consider. Not prioritized.
 - "Open profiles folder" button (like export formats has)
 - "Reset to defaults" for built-in profiles (delete and re-seed)
 - Show profile description in the editor/selector
-- Import/export profile files (share with team)
+- ~~Import/export profile files (share with team)~~
 
 ## Validation
 
@@ -85,11 +83,11 @@ Potential features and changes to consider. Not prioritized.
 
 ## Project
 
-- Recent projects list on startup
+- ~~Recent projects list on startup~~
 - Auto-save on a timer or after N edits
-- Crash recovery (temp file written periodically)
+- ~~Crash recovery (temp file written periodically)~~
 - Project-level notes/metadata
-- File type associations (.cod files)
+- ~~File type associations (.cod files)~~
 
 ## Timeline
 
