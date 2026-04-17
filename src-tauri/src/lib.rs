@@ -1186,6 +1186,15 @@ pub fn run() {
 
             let file_menu = file_menu_builder.build()?;
 
+            let about_item = MenuItemBuilder::new("About Codfish")
+                .id("menu_about")
+                .enabled(false)
+                .build(handle)?;
+            let feedback_item = MenuItemBuilder::new("Submit Feedback…")
+                .id("menu_feedback")
+                .enabled(false)
+                .build(handle)?;
+
             let mut menu_builder = MenuBuilder::new(handle);
 
             #[cfg(target_os = "macos")]
@@ -1232,15 +1241,6 @@ pub fn run() {
             let dark_mode_item = CheckMenuItemBuilder::new("Dark Mode")
                 .id("menu_dark_mode")
                 .checked(true)
-                .enabled(false)
-                .build(handle)?;
-
-            let about_item = MenuItemBuilder::new("About Codfish")
-                .id("menu_about")
-                .enabled(false)
-                .build(handle)?;
-            let feedback_item = MenuItemBuilder::new("Submit Feedback…")
-                .id("menu_feedback")
                 .enabled(false)
                 .build(handle)?;
 
