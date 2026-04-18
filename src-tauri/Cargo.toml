@@ -4,6 +4,7 @@ version = "0.6.0"
 description = "Caption generation and editing for media producers"
 authors = ["Jared Bohlken"]
 edition = "2021"
+license = "Apache-2.0"
 
 [lib]
 name = "codfish_lib"
