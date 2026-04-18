@@ -4,9 +4,9 @@
  * Writes a single THIRD_PARTY_LICENSES.txt file.
  *
  * Usage:
- *   npx license-checker-rspack --production --plainVertical --out THIRD_PARTY_LICENSES_NPM.txt
+ *   node scripts/collect-npm-licenses.js [outputPath]
  *
- * This script is a thin wrapper that adds a header and runs the tool.
+ * Wraps license-checker-rseidelsohn and prepends a header.
  */
 
 import { execSync } from "node:child_process";
@@ -18,11 +18,11 @@ const tmpPath = outPath + ".tmp";
 
 try {
   execSync(
-    `npx license-checker-rspack --production --plainVertical --out "${tmpPath}"`,
+    `npx --yes license-checker-rseidelsohn --production --plainVertical --out "${tmpPath}"`,
     { stdio: ["pipe", "pipe", "inherit"] },
   );
 } catch (e) {
-  console.error("license-checker-rspack failed:", e.message);
+  console.error("license-checker failed:", e.message);
   process.exit(1);
 }
 

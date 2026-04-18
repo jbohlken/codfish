@@ -39,7 +39,7 @@ jobs:
       - name: Collect Rust dependency licenses
         run: |
           cargo install cargo-about
-          cd src-tauri && cargo about generate -c about.toml about.hbs > resources/THIRD_PARTY_LICENSES_RUST.txt
+          cd src-tauri && cargo about generate -c about.toml -o resources/THIRD_PARTY_LICENSES_RUST.txt about.hbs
 
       - name: Collect npm dependency licenses
         run: node scripts/collect-npm-licenses.js src-tauri/resources/THIRD_PARTY_LICENSES_NPM.txt
@@ -112,7 +112,7 @@ jobs:
       - name: Collect Rust dependency licenses
         run: |
           cargo install cargo-about
-          cd src-tauri && cargo about generate -c about.toml about.hbs > resources/THIRD_PARTY_LICENSES_RUST.txt
+          cd src-tauri && cargo about generate -c about.toml -o resources/THIRD_PARTY_LICENSES_RUST.txt about.hbs
 
       - name: Collect npm dependency licenses
         run: node scripts/collect-npm-licenses.js src-tauri/resources/THIRD_PARTY_LICENSES_NPM.txt
