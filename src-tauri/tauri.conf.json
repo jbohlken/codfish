@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Jared Bohlken",
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
