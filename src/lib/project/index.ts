@@ -106,8 +106,27 @@ export async function newProject(): Promise<boolean> {
 export async function loadProjectFromPath(filePath: string): Promise<boolean> {
   const json = await invoke<string>("load_project", { path: filePath });
   const proj = JSON.parse(json) as CodProject;
+  await resolveRelativeMediaPaths(proj, filePath);
   loadIntoStore(proj, filePath);
   return true;
+}
+
+/** Rewrite `media.path` to match the resolution of `media.relativePath`
+ *  when that resolves to an existing file. Portable-share win: the
+ *  collaborator on machine B can open the same .cod as long as their
+ *  synced folder contains the same relative layout, even though their
+ *  absolute root differs from machine A's. Falls back to the stored
+ *  absolute path (unchanged behavior for old .cod files). */
+async function resolveRelativeMediaPaths(proj: CodProject, projectFilePath: string): Promise<void> {
+  await Promise.all(proj.media.map(async (m) => {
+    if (!m.relativePath) return;
+    const resolved = await invoke<string | null>("resolve_relative_path", {
+      baseFile: projectFilePath,
+      relative: m.relativePath,
+    });
+    if (!resolved) return;
+    if (await fileExists(resolved)) m.path = resolved;
+  }));
 }
 
 /** Open a project from the recent list. If the file no longer exists,
@@ -340,6 +359,18 @@ async function getProfileReference(): Promise<{ name: string; hash: string } | n
 async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
   const formatRef = await getFormatReference();
   const profileRef = await getProfileReference();
+  // Recompute relativePath at every save so it tracks the project file's
+  // current location — important for Save As, which moves the anchor.
+  // Returns null when the media lives on a different drive (Windows),
+  // in which case we strip the stale field rather than persist a lie.
+  const mediaWithRel = await Promise.all(proj.media.map(async (m) => {
+    const rel = await invoke<string | null>("compute_relative_path", {
+      baseFile: filePath,
+      target: m.path,
+    });
+    const { relativePath: _old, ...rest } = m;
+    return rel ? { ...rest, relativePath: rel } : rest;
+  }));
   const toSave: CodProject = {
     ...proj,
     updatedAt: new Date().toISOString(),
@@ -348,7 +379,7 @@ async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
     profileName: profileRef?.name,
     profileHash: profileRef?.hash,
     // Strip `words` arrays — they are runtime-only
-    media: proj.media.map((m) => ({
+    media: mediaWithRel.map((m) => ({
       ...m,
       captions: m.captions.map(({ words: _w, ...c }) => c),
     })),
