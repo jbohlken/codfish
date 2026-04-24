@@ -4,6 +4,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   sidecarStatus,
   isDirty,
@@ -305,6 +306,14 @@ export function UpdatePopover() {
           <div class="update-popover-info">
             <span class="update-popover-label">Codfish</span>
             <span class="update-popover-version">v{app.version}</span>
+            <a
+              href="#"
+              class="update-popover-link"
+              onClick={(e) => {
+                e.preventDefault();
+                openUrl(`https://github.com/jbohlken/codfish/releases/tag/v${app.version}`);
+              }}
+            >See what's new</a>
           </div>
           <button class="btn btn-primary btn-sm" onClick={handleAppInstall}>Update</button>
         </div>

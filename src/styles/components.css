@@ -2036,6 +2036,19 @@
   color: var(--color-text-secondary);
 }
 
+.update-popover-link {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.update-popover-link:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
 .update-popover-progress {
   width: 100%;
   display: flex;

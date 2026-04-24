@@ -668,6 +668,90 @@ fn file_mtime(path: String) -> Result<u64, String> {
         .map_err(|e| format!("epoch: {e}"))
 }
 
+/// Windows filesystems are case-insensitive (and case-preserving), so
+/// `C:\Users\...` and `c:\users\...` name the same ancestor. Compare with
+/// case folded on Windows only; keep byte-exact on Unix where filesystems
+/// are case-sensitive. Output paths use the *target*'s original casing
+/// either way — we only relax comparison, not preservation.
+#[cfg(target_os = "windows")]
+fn path_component_eq(a: &std::path::Component, b: &std::path::Component) -> bool {
+    a.as_os_str().to_string_lossy().to_lowercase()
+        == b.as_os_str().to_string_lossy().to_lowercase()
+}
+#[cfg(not(target_os = "windows"))]
+fn path_component_eq(a: &std::path::Component, b: &std::path::Component) -> bool {
+    a.as_os_str() == b.as_os_str()
+}
+
+/// Compute a path relative to the directory containing `base_file` that
+/// resolves to `target`. Returns None when no useful relative path exists
+/// (e.g. different Windows drive letters) so the caller can fall back to
+/// the absolute path. Output always uses forward slashes so the .cod is
+/// portable across platforms.
+#[tauri::command]
+fn compute_relative_path(base_file: String, target: String) -> Option<String> {
+    use std::path::{Component, Path};
+    let base_dir = Path::new(&base_file).parent()?;
+    let target_path = Path::new(&target);
+    if !base_dir.is_absolute() || !target_path.is_absolute() {
+        return None;
+    }
+
+    let base_comps: Vec<Component> = base_dir.components().collect();
+    let targ_comps: Vec<Component> = target_path.components().collect();
+
+    // Require matching prefix + root (drive letter on Windows must match).
+    let is_root = |c: &Component| matches!(c, Component::Prefix(_) | Component::RootDir);
+    let base_root = base_comps.iter().take_while(|c| is_root(c)).count();
+    let targ_root = targ_comps.iter().take_while(|c| is_root(c)).count();
+    if base_root != targ_root {
+        return None;
+    }
+    for i in 0..base_root {
+        if !path_component_eq(&base_comps[i], &targ_comps[i]) {
+            return None;
+        }
+    }
+
+    // Walk past the shared ancestor directories.
+    let mut common = base_root;
+    while common < base_comps.len().min(targ_comps.len())
+        && path_component_eq(&base_comps[common], &targ_comps[common])
+    {
+        common += 1;
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common..base_comps.len() {
+        parts.push("..".into());
+    }
+    for c in &targ_comps[common..] {
+        parts.push(c.as_os_str().to_string_lossy().into_owned());
+    }
+    Some(if parts.is_empty() { ".".into() } else { parts.join("/") })
+}
+
+/// Resolve `relative` against the directory containing `base_file`.
+/// Accepts either forward or backward slashes in `relative` so a .cod saved
+/// on one OS loads correctly on the other. Does not require the resulting
+/// file to exist — the caller decides how to handle a missing target.
+#[tauri::command]
+fn resolve_relative_path(base_file: String, relative: String) -> Option<String> {
+    use std::path::PathBuf;
+    let base_dir = std::path::Path::new(&base_file).parent()?;
+    let mut p = PathBuf::from(base_dir);
+    for part in relative.replace('\\', "/").split('/') {
+        if part == ".." {
+            p.pop();
+        } else if part.is_empty() || part == "." {
+            continue;
+        } else {
+            p.push(part);
+        }
+    }
+    Some(p.to_string_lossy().into_owned())
+}
+
 // ── Recent projects ──────────────────────────────────────────────────────────
 
 const RECENT_LIMIT: usize = 10;
@@ -1406,6 +1490,8 @@ pub fn run() {
             load_project,
             file_exists,
             file_mtime,
+            compute_relative_path,
+            resolve_relative_path,
             generate_peaks,
             save_recovery,
             load_recovery,

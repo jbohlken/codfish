@@ -284,7 +284,7 @@ export function Timeline() {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (e.ctrlKey) {
+      if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
 
         const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
@@ -383,18 +383,24 @@ export function Timeline() {
 
   // Zoom in/out keeping the playhead visually stationary.
   // If the playhead is off-screen, anchors to the center of the visible area instead.
+  // Reads signals via .peek() so a stable reference works from an effect-registered
+  // handler — no render-scope captures to go stale.
   const zoomAroundPlayhead = (factor: number) => {
     const scroll = scrollRef.current;
     const oldZoom = zoomLevel.peek();
     const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
     if (newZoom === oldZoom) return;
 
-    if (!scroll || !duration) {
+    const m = selectedMedia.peek();
+    const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
+    const liveDuration = mediaDuration.peek() || capDur;
+
+    if (!scroll || !liveDuration) {
       zoomLevel.value = newZoom;
       return;
     }
 
-    const playheadFraction = currentTime / duration;
+    const playheadFraction = playbackTime.peek() / liveDuration;
     const playheadPx = playheadFraction * scroll.scrollWidth;
     const visibleWidth = scroll.clientWidth;
     const scrollLeft = scroll.scrollLeft;
@@ -411,6 +417,31 @@ export function Timeline() {
       scroll.scrollLeft = Math.max(0, anchorFraction * scroll.scrollWidth - anchorScreen);
     });
   };
+
+  // Ctrl/Cmd +/- → zoom around playhead. Gated like the caption editor
+  // shortcuts in CaptionPanel: skipped in text inputs, no media, or an
+  // active caption edit. "=" covers unshifted; "+"/"_" cover shifted/numpad.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) return;
+      if (!selectedMedia.value) return;
+      if (editingIndex.value !== null) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomAroundPlayhead(1.5);
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomAroundPlayhead(1 / 1.5);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   return (
     <div class="timeline">
@@ -474,7 +505,7 @@ export function Timeline() {
           <button
             class="timeline-btn timeline-btn--sm"
             onClick={() => zoomAroundPlayhead(1 / 1.5)}
-            data-tooltip="Zoom out (Ctrl+Scroll)"
+            data-tooltip="Zoom out (Ctrl/Cmd −, Ctrl/Cmd+Scroll)"
             disabled={zoom <= 1}
           ><Minus size={12} /></button>
           <button
@@ -490,7 +521,7 @@ export function Timeline() {
           <button
             class="timeline-btn timeline-btn--sm"
             onClick={() => zoomAroundPlayhead(1.5)}
-            data-tooltip="Zoom in (Ctrl+Scroll)"
+            data-tooltip="Zoom in (Ctrl/Cmd +, Ctrl/Cmd+Scroll)"
           ><Plus size={12} /></button>
         </div>
       </div>

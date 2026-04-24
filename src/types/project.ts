@@ -29,6 +29,11 @@ export interface MediaItem {
   id: string;
   name: string;
   path: string;
+  /// Path relative to the .cod file's directory. Stored on save when the
+  /// media lives on the same drive as the project; used on load to resolve
+  /// back to an absolute `path`. Lets .cod + media survive being shared via
+  /// a cloud folder that syncs to different absolute roots on each machine.
+  relativePath?: string;
   fps: number | null;  // probed from file; null = audio-only or unknown (use profile default)
   vfr?: boolean;       // true if variable frame rate detected (frame-snapping may be imprecise)
   hasAudio?: boolean;  // probed from file; false = no audio stream, so transcription is blocked
