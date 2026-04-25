@@ -17,6 +17,8 @@ import {
   exportFormats,
   selectedExportFormat,
   isDirty,
+  playingCaptionIndex,
+  warningsByCaption,
 } from "../../store/app";
 import { snapToFrame, runPipeline, breakTextIntoLines } from "../../lib/pipeline";
 import { framesBetween } from "../../lib/time";
@@ -24,7 +26,6 @@ import { formatDisplayTime } from "../../lib/time";
 import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
 import { SelectButton } from "../SelectButton";
 import { openFormatManager } from "../FormatManager";
-import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
 import { transcribeMedia, type TranscriptionProgress, type TranscriptionResult } from "../../lib/transcription";
@@ -106,7 +107,10 @@ function splitCaption(index: number) {
   if (!block) return;
 
   const t = playbackTime.value;
-  if (t <= block.start || t >= block.end) return;
+  // Allow t === block.start (playhead landed exactly on the start, e.g. just
+  // after clicking a block to seek). Downstream snap logic shifts the split
+  // point to block.start + 1/fps in that case.
+  if (t < block.start || t >= block.end) return;
 
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
 
@@ -370,24 +374,14 @@ export function CaptionPanel() {
   // Undefined = unprobed (old projects) or probe failed — allow the attempt.
   // Only block when we explicitly know there's no audio stream.
   const canGenerate = media?.hasAudio ?? true;
-  const currentTime = playbackTime.value;
-  const playingCaption = media?.captions.find(
-    (c) => currentTime >= c.start && currentTime < c.end
-  ) ?? null;
-  const playingIndex = playingCaption?.index ?? null;
-  const canAddCaption = !playingCaption;
+  // Subscribes only to caption-boundary crossings, not every rAF tick.
+  // Per-row "playhead inside this caption" derives from the same index.
+  const playingIndex = playingCaptionIndex.value;
+  const canAddCaption = playingIndex === null;
 
   const profile = activeProfile.value;
   const fps = media?.fps ?? profile.timing.defaultFps;
-  const warningsByIndex = new Map<number, ValidationWarning[]>();
-  if (media?.captions.length) {
-    const report = validate(media.captions, profile, fps);
-    for (const w of report.warnings) {
-      const list = warningsByIndex.get(w.blockIndex) ?? [];
-      list.push(w);
-      warningsByIndex.set(w.blockIndex, list);
-    }
-  }
+  const warningsByIndex = warningsByCaption.value;
 
   const confirming = confirmingRegenerate.value;
 
@@ -490,8 +484,7 @@ export function CaptionPanel() {
                 editing={editingIndex.value === block.index}
                 warnings={warningsByIndex.get(block.index) ?? []}
                 splitEnabled={
-                  currentTime > block.start &&
-                  currentTime < block.end &&
+                  playingIndex === block.index &&
                   framesBetween(block.start, block.end, fps) >= 2 &&
                   block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length >= 2
                 }
@@ -499,7 +492,7 @@ export function CaptionPanel() {
                   // Playhead-outside takes priority — it's the actionable hint.
                   // Only after the playhead is inside do the structural reasons
                   // (single-word, too-short) become relevant.
-                  !(currentTime > block.start && currentTime < block.end)
+                  playingIndex !== block.index
                     ? "Position playhead inside this caption to split"
                     : block.lines.join(" ").trim().split(/\s+/).filter(Boolean).length < 2
                       ? "Can't split a single-word caption"

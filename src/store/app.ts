@@ -2,6 +2,9 @@ import { signal, computed } from "@preact/signals";
 import type { CodProject, MediaItem, CaptionBlock } from "../types/project";
 import type { CaptionProfile } from "../types/profile";
 import type { ExportFormat } from "../lib/export";
+import { validate } from "../lib/pipeline/validate";
+import { findCaptionAt } from "../lib/pipeline";
+import type { ValidationWarning } from "../lib/pipeline/types";
 
 // ── Project ────────────────────────────────────────────────────────────────
 export const project = signal<CodProject | null>(null);
@@ -201,6 +204,36 @@ export const redoDescription = computed<string | null>(() => {
 export const selectedMedia = computed((): MediaItem | null => {
   if (!project.value || !selectedMediaId.value) return null;
   return project.value.media.find((m) => m.id === selectedMediaId.value) ?? null;
+});
+
+/** Index of the caption the playhead is currently inside, or null. Computed
+ * from playbackTime + selectedMedia. Only emits change notifications when the
+ * index actually changes, so subscribers re-render on caption boundary
+ * crossings (a few times/sec at most) rather than every rAF tick. */
+export const playingCaptionIndex = computed((): number | null => {
+  const time = playbackTime.value;
+  const media = selectedMedia.value;
+  if (!media) return null;
+  return findCaptionAt(media.captions, time)?.index ?? null;
+});
+
+/** Validation warnings for the selected media's captions, grouped by caption
+ * index. Cached: only re-runs validate() when captions, profile, or fps
+ * changes — not on playback ticks or unrelated re-renders. Both Timeline and
+ * CaptionPanel read this, so the validate pass and the by-index grouping
+ * happen once per change instead of twice per render. */
+export const warningsByCaption = computed((): Map<number, ValidationWarning[]> => {
+  const media = selectedMedia.value;
+  const profile = activeProfile.value;
+  const map = new Map<number, ValidationWarning[]>();
+  if (!media || !media.captions.length) return map;
+  const report = validate(media.captions, profile, media.fps ?? undefined);
+  for (const w of report.warnings) {
+    const arr = map.get(w.blockIndex) ?? [];
+    arr.push(w);
+    map.set(w.blockIndex, arr);
+  }
+  return map;
 });
 
 export const selectedCaption = computed((): CaptionBlock | null => {

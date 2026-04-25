@@ -2,7 +2,7 @@ import { useRef, useEffect } from "preact/hooks";
 import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet } from "@phosphor-icons/react";
 import { useSignalEffect, signal } from "@preact/signals";
 import WaveSurfer from "wavesurfer.js";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks } from "../../lib/peaks-cache";
 import {
   selectedMedia,
@@ -13,11 +13,12 @@ import {
   project,
   pushHistory,
   activeProfile,
+  playingCaptionIndex,
+  warningsByCaption,
 } from "../../store/app";
 import { editingIndex, editText, commitActiveEdit } from "./CaptionPanel";
 import type { CaptionBlock } from "../../types/project";
 import { snapToFrame } from "../../lib/pipeline";
-import { validate } from "../../lib/pipeline/validate";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { formatDisplayTime, type DisplayMode } from "../../lib/time";
 
@@ -61,7 +62,6 @@ function waitForMediaDuration(timeoutMs: number): Promise<number | null> {
 
 export function Timeline() {
   const media = selectedMedia.value;
-  const currentTime = playbackTime.value;
   const playing = isPlaying.value;
   const profileDefaultFps = activeProfile.value.timing.defaultFps;
   const effectiveFps = media?.fps ?? profileDefaultFps;
@@ -71,9 +71,10 @@ export function Timeline() {
     ? "smpte-df"
     : timecodeMode.value;
 
-  const playingIndex = media?.captions.find(
-    (c) => currentTime >= c.start && currentTime < c.end
-  )?.index ?? null;
+  // Subscribes only to caption-boundary crossings, not every rAF tick. The
+  // playhead position itself is rendered by <TimelinePlayhead> below, which
+  // owns the per-tick playbackTime subscription locally.
+  const playingIndex = playingCaptionIndex.value;
 
   const waveCanvasRef = useRef<HTMLDivElement>(null);
   const blocksRowRef = useRef<HTMLDivElement>(null);
@@ -105,19 +106,8 @@ export function Timeline() {
 
     waveformState.value = "loading";
 
-    const ws = WaveSurfer.create({
-      container,
-      waveColor: "#374151",
-      progressColor: "#4b5563",
-      height: "auto" as any,
-      normalize: true,
-      interact: false,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
-    });
-
     let cancelled = false;
+    let ws: WaveSurfer | null = null;
 
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
@@ -126,15 +116,10 @@ export function Timeline() {
     // The browser-side path is unreliable for the Tauri asset protocol
     // (whole-file fetch fails for many files even though playback via range
     // requests works fine) and can't handle codecs WebAudio doesn't support.
-    // On failure (no sidecar, no audio stream, codec error) drop the spinner
-    // so "Generating waveform…" doesn't hang forever.
+    // On failure (no sidecar, no audio stream) drop the spinner so
+    // "Generating waveform…" doesn't hang forever.
     const markFailed = (reason: string) => {
       flog(reason);
-      // Don't clobber a rendered waveform. WaveSurfer sets up its own
-      // media element for playback even when peaks are pre-computed, and
-      // that element can error after `ready` for codecs WebView2 doesn't
-      // like (m4a, etc.). We drive playback from VideoPanel, so those
-      // post-ready errors don't affect the user.
       if (!cancelled && waveformState.value !== "ready") {
         waveformState.value = "failed";
       }
@@ -171,11 +156,11 @@ export function Timeline() {
       const layoutDuration = await waitForMediaDuration(5000) ?? audioDuration;
       if (cancelled) return;
       // Pad or trim the peaks to the layout duration at the original bins/sec.
-      // If we just passed layoutDuration to ws.load() without resizing, WaveSurfer
-      // would stretch (or compress) the peaks to fill that duration — so audio
-      // that ends at t=193s in a 232s container would still visually draw out
-      // to the right edge. Padding with silence lets the waveform end where the
-      // audio actually ends while caption blocks stay on the video-clock axis.
+      // Without this WaveSurfer would stretch (or compress) the peaks to fill
+      // the duration we hand it, so audio that ends at t=193s in a 232s
+      // container would still visually draw out to the right edge. Padding
+      // with silence lets the waveform end where the audio actually ends
+      // while caption blocks stay on the video-clock axis.
       if (audioDuration > 0) {
         const binsPerSec = peaks.length / audioDuration;
         const targetBins = Math.max(1, Math.round(binsPerSec * layoutDuration));
@@ -187,37 +172,54 @@ export function Timeline() {
           peaks = peaks.slice(0, targetBins);
         }
       }
-      const url = convertFileSrc(media.path);
-      await ws.load(url, [peaks], layoutDuration);
-      if (!cancelled) flog(`load resolved layoutDuration=${layoutDuration.toFixed(2)}s audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
-    })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
-    ws.on("error", (e) => {
-      markFailed(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
-    });
+      // Construct WaveSurfer with peaks + duration directly so its internal
+      // audio element never gets a src. Avoids a second media decoder
+      // competing with <video> at startup, and seekTo writes become inert
+      // (no buffering work, no range fetches).
+      ws = WaveSurfer.create({
+        container,
+        // Match progressColor to waveColor and zero the cursor: with no
+        // backing media, WaveSurfer's cursor sits at 0 and would otherwise
+        // paint a sliver of "progress fill" at the start. Our own
+        // .timeline-playhead is the real position indicator.
+        waveColor: "#374151",
+        progressColor: "#374151",
+        cursorWidth: 0,
+        height: "auto" as any,
+        normalize: true,
+        interact: false,
+        barWidth: 2,
+        barGap: 1,
+        barRadius: 2,
+        peaks: [peaks],
+        duration: layoutDuration,
+      });
 
-    // Sync zoom once peaks are in and duration is known
-    ws.on("ready", () => {
-      flog(`ready duration=${ws.getDuration()}`);
+      ws.on("error", (e) => {
+        markFailed(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
+      });
+
+      wsRef.current = ws;
       waveformState.value = "ready";
-      const dur = ws.getDuration();
-      if (!dur) return;
-      const visibleWidth = scrollRef.current?.clientWidth ?? 800;
-      ws.zoom((visibleWidth * zoomLevel.peek()) / dur);
-    });
+      flog(`peaks-only init layoutDuration=${layoutDuration.toFixed(2)}s audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
 
-    wsRef.current = ws;
+      // No async load to wait on — apply the initial zoom now. (This used
+      // to live in the `ready` event handler.)
+      const visibleWidth = scrollRef.current?.clientWidth ?? 800;
+      ws.zoom((visibleWidth * zoomLevel.peek()) / layoutDuration);
+    })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     return () => {
       cancelled = true;
-      ws.destroy();
+      ws?.destroy();
       wsRef.current = null;
     };
   }, [media?.path]);
 
   // Sync zoomLevel → WaveSurfer pxPerSec, then re-sync its internal scroll.
-  // Skip when ws hasn't decoded audio yet — the "ready" handler does the
-  // initial zoom. Calling ws.zoom() pre-decode throws "No audio loaded".
+  // Skip until the peaks pipeline has constructed ws — the post-construct
+  // block in the media effect applies the initial zoom in that case.
   useSignalEffect(() => {
     const ws = wsRef.current;
     const zoom = zoomLevel.value;
@@ -243,15 +245,6 @@ export function Timeline() {
     el.addEventListener("scroll", syncWsScroll, { passive: true });
     return () => el.removeEventListener("scroll", syncWsScroll);
   }, [media?.path]);
-
-  // Sync playbackTime → WaveSurfer visual cursor
-  useSignalEffect(() => {
-    const ws = wsRef.current;
-    if (!ws) return;
-    const dur = ws.getDuration();
-    if (!dur) return;
-    ws.seekTo(playbackTime.value / dur);
-  });
 
   // Auto-scroll to keep playhead in view during playback
   useSignalEffect(() => {
@@ -315,10 +308,16 @@ export function Timeline() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [media?.path]);
 
-  // Mousedown on waveform → seek immediately, then drag to scrub
+  // Mousedown on waveform → seek immediately, then drag to scrub.
+  // Pauses playback for the duration of the drag and resumes on release if
+  // we were playing — without this, "stop moving but don't release" would
+  // leave the rAF loop advancing past the scrub position.
   const handleWaveMouseDown = (e: MouseEvent) => {
     if (e.button !== 0 || !duration) return;
     const el = e.currentTarget as HTMLElement;
+
+    const wasPlaying = isPlaying.peek();
+    if (wasPlaying) isPlaying.value = false;
 
     const seek = (ev: MouseEvent) => {
       const rect = el.getBoundingClientRect();
@@ -332,6 +331,7 @@ export function Timeline() {
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      if (wasPlaying) isPlaying.value = true;
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -345,15 +345,7 @@ export function Timeline() {
   const minGap = profile.timing.minGapEnabled
     ? (minGapRule.unit === "fr" ? minGapRule.value / fps : minGapRule.value)
     : null;
-  const warningsByIndex = new Map<number, ValidationWarning[]>();
-  if (media) {
-    const report = validate(media.captions, profile, media.fps ?? undefined);
-    for (const w of report.warnings) {
-      const arr = warningsByIndex.get(w.blockIndex) ?? [];
-      arr.push(w);
-      warningsByIndex.set(w.blockIndex, arr);
-    }
-  }
+  const warningsByIndex = warningsByCaption.value;
 
   // Live-update caption timing during drag (no history entry yet)
   const handleResizeLive = (index: number, newStart: number, newEnd: number) => {
@@ -474,8 +466,7 @@ export function Timeline() {
           }}
           data-tooltip="Click to cycle timecode mode"
         >
-          {formatDisplayTime(currentTime, smpteMode, effectiveFps)}
-          {duration > 0 ? ` / ${formatDisplayTime(duration, smpteMode, effectiveFps)}` : ""}
+          <TransportTimecode mode={smpteMode} fps={effectiveFps} duration={duration} />
         </button>
         {media && (
           <span
@@ -573,12 +564,7 @@ export function Timeline() {
                     <span>No audio track</span>
                   </div>
                 )}
-                {duration > 0 && (
-                  <div
-                    class="timeline-playhead"
-                    style={{ left: `${(currentTime / duration) * 100}%` }}
-                  />
-                )}
+                {duration > 0 && <TimelinePlayhead duration={duration} />}
                 {duration > 0 && resizeIndicator.value !== null && (
                   <div
                     class={`timeline-resize-indicator${resizeSnapped.value ? " timeline-resize-indicator--snapped" : ""}`}
@@ -789,6 +775,34 @@ function ResizableCaptionBlock({
         onMouseDown={(e) => startEdgeDrag(e, "right")}
       />
     </div>
+  );
+}
+
+/** Reads playbackTime locally so the parent Timeline doesn't have to
+ *  subscribe to the rAF tick — only this 1-div component re-renders 60×/s. */
+function TimelinePlayhead({ duration }: { duration: number }) {
+  const currentTime = playbackTime.value;
+  return (
+    <div
+      class="timeline-playhead"
+      style={{ left: `${(currentTime / duration) * 100}%` }}
+    />
+  );
+}
+
+/** Same isolation pattern as TimelinePlayhead — owns the per-tick
+ *  playbackTime read so the surrounding transport bar stays static. */
+function TransportTimecode({ mode, fps, duration }: {
+  mode: DisplayMode;
+  fps: number;
+  duration: number;
+}) {
+  const currentTime = playbackTime.value;
+  return (
+    <>
+      {formatDisplayTime(currentTime, mode, fps)}
+      {duration > 0 ? ` / ${formatDisplayTime(duration, mode, fps)}` : ""}
+    </>
   );
 }
 
