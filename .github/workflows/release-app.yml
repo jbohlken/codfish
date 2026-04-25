@@ -71,6 +71,21 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      - name: Re-sign installer with Tauri minisign
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # Azure Trusted Signing modifies the .exe in place to embed the
+          # Authenticode signature, which invalidates the minisign .sig
+          # produced during `tauri build`. Regenerate the .sig against the
+          # post-codesigned binary so the in-app updater verifies on install.
+          for f in src-tauri/target/release/bundle/nsis/*.exe; do
+            [ -f "$f" ] || continue
+            npx tauri signer sign "$f"
+          done
+
       - name: Upload signed artifacts to release
         shell: bash
         env:
