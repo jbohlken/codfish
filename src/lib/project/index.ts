@@ -106,6 +106,12 @@ export async function newProject(): Promise<boolean> {
 export async function loadProjectFromPath(filePath: string): Promise<boolean> {
   const json = await invoke<string>("load_project", { path: filePath });
   const proj = JSON.parse(json) as CodProject;
+  // Sync the displayed name to the current filename. The .cod's `name` field
+  // is a cache of the filename (saveAs writes it that way), so if the file
+  // was renamed externally the persisted name is stale and the TitleBar
+  // would mismatch the OS window title. Update silently — next legitimate
+  // save will persist the corrected name to disk.
+  proj.name = pathToBasename(filePath);
   await resolveRelativeMediaPaths(proj, filePath);
   loadIntoStore(proj, filePath);
   return true;

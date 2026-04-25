@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, activeProfile } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
+import { findCaptionAt } from "../../lib/pipeline";
 
 function isAudioOnly(path: string): boolean {
   const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
@@ -14,15 +15,17 @@ export function VideoPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const rafRef = useRef<number>(0);
   const rafLastWrittenRef = useRef<number>(0);
+  // True only while the rAF tick loop is actively syncing currentTime ↔
+  // playbackTime. False when paused AND while play() is still pending —
+  // the seek effect uses this to know when it owns video.currentTime.
+  const rafActiveRef = useRef<boolean>(false);
 
   // Read signals — subscribes this component to re-render when they change
   const media = selectedMedia.value;
   const playing = isPlaying.value;
   const currentTime = playbackTime.value;
 
-  const activeCaption = media?.captions.find(
-    (c) => currentTime >= c.start && currentTime < c.end,
-  ) ?? null;
+  const activeCaption = media ? findCaptionAt(media.captions, currentTime) : null;
 
   const isEditingActive = activeCaption !== null && editingIndex.value === activeCaption.index;
   const overlayLines = isEditingActive
@@ -42,8 +45,7 @@ export function VideoPanel() {
     if (!video) return;
 
     if (playing) {
-      video.play().catch(() => { isPlaying.value = false; });
-      rafLastWrittenRef.current = video.currentTime;
+      let cancelled = false;
 
       const tick = () => {
         // If playbackTime has drifted from what rAF last wrote, an external
@@ -60,23 +62,45 @@ export function VideoPanel() {
         }
         rafRef.current = requestAnimationFrame(tick);
       };
-      rafRef.current = requestAnimationFrame(tick);
 
-      return () => cancelAnimationFrame(rafRef.current);
+      // Wait for play() to resolve before starting rAF. On Mac the decoder
+      // can take 50–300ms to actually start producing frames; ticking during
+      // that window spins re-renders against stale video.currentTime reads
+      // while the main thread is busy with decode setup.
+      video.play().then(() => {
+        if (cancelled) return;
+        rafLastWrittenRef.current = video.currentTime;
+        rafActiveRef.current = true;
+        rafRef.current = requestAnimationFrame(tick);
+      }).catch(() => {
+        if (cancelled) return;
+        isPlaying.value = false;
+      });
+
+      return () => {
+        cancelled = true;
+        rafActiveRef.current = false;
+        cancelAnimationFrame(rafRef.current);
+      };
     } else {
+      rafActiveRef.current = false;
       video.pause();
       cancelAnimationFrame(rafRef.current);
     }
   }, [playing]);
 
   // Sync external seeks (timeline click, caption click) → video element
-  // while paused. During playback the rAF loop owns video sync; running
-  // this effect then would micro-seek every tick (the half-frame threshold
-  // is tighter than the vt-vs-currentTime drift between rAF writes).
+  // whenever the rAF loop isn't actively syncing. Covers paused state and
+  // the play-pending window between video.play() being called and its
+  // promise resolving — without this, a timeline click during the decoder
+  // warmup would only land on the next rAF tick (or be lost if the user
+  // pauses again first). During active playback rAF owns sync; running
+  // this effect there would micro-seek every tick.
   const fps = media?.fps ?? activeProfile.value.timing.defaultFps;
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || playing) return;
+    if (!video) return;
+    if (rafActiveRef.current) return;
     if (Math.abs(video.currentTime - currentTime) > 1 / (2 * fps)) {
       video.currentTime = currentTime;
     }
@@ -96,6 +120,7 @@ export function VideoPanel() {
               ref={videoRef}
               key={media.id}
               src={convertFileSrc(media.path)}
+              preload="auto"
               class={`video-element ${isAudioOnly(media.path) ? "video-element--hidden" : ""}`}
               controls={false}
               disablePictureInPicture

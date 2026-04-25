@@ -1574,7 +1574,22 @@ pub fn run() {
 static ALLOW_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[tauri::command]
-fn force_quit(app: AppHandle) {
+async fn force_quit(app: AppHandle, state: State<'_, DaemonState>) -> Result<(), String> {
+    // Kill the daemon child synchronously before exiting. Without this,
+    // app.exit() races the daemon's Drop and the Tokio tasks pumping its
+    // stdout/stderr, and the parent process can linger as a zombie — on
+    // macOS that holds the single-instance lock, so the user sees "the app
+    // closed" but a relaunch silently does nothing until they force-quit.
+    let daemon = {
+        let mut guard = state.lock().await;
+        guard.take()
+    };
+    if let Some(d) = daemon {
+        log(&app, "force_quit: shutting down daemon");
+        d.shutdown().await;
+        log(&app, "force_quit: daemon child exited");
+    }
     ALLOW_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
     app.exit(0);
+    Ok(())
 }
