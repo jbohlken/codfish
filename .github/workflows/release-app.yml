@@ -136,4 +136,77 @@ jobs:
           releaseBody: ""
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          # latest.json is assembled in the dedicated assemble-updater job
+          # below, after both platform builds finish. tauri-action would
+          # otherwise upload a partial manifest with only this runner's
+          # platform, which the other job (or the assembler) would overwrite.
+
+  assemble-updater:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download platform signature files
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.ref_name }}"
+          mkdir sigs
+          gh release download "$tag" \
+            --repo "${{ github.repository }}" \
+            --pattern "*.sig" \
+            --dir sigs
+          ls -la sigs/
+
+      - name: Build latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+          repo="${{ github.repository }}"
+          pub_date=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+
+          # Glob the .sig files rather than hardcoding names so a Tauri
+          # filename change (or future per-platform variants) doesn't break
+          # the manifest. Exactly one .exe.sig and one .app.tar.gz.sig are
+          # expected; fail loudly otherwise.
+          win_sig_path=$(ls sigs/*.exe.sig 2>/dev/null | head -1)
+          mac_sig_path=$(ls sigs/*.app.tar.gz.sig 2>/dev/null | head -1)
+          if [ -z "$win_sig_path" ] || [ -z "$mac_sig_path" ]; then
+            echo "Missing platform signature(s) — expected one *.exe.sig and one *.app.tar.gz.sig in release assets."
+            exit 1
+          fi
+
+          win_asset=$(basename "$win_sig_path" .sig)
+          mac_asset=$(basename "$mac_sig_path" .sig)
+          win_sig=$(cat "$win_sig_path")
+          mac_sig=$(cat "$mac_sig_path")
+          base_url="https://github.com/${repo}/releases/download/${tag}"
+
+          jq -n \
+            --arg version "$version" \
+            --arg pub_date "$pub_date" \
+            --arg win_sig "$win_sig" \
+            --arg win_url "${base_url}/${win_asset}" \
+            --arg mac_sig "$mac_sig" \
+            --arg mac_url "${base_url}/${mac_asset}" \
+            '{
+              version: $version,
+              notes: "",
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $mac_sig, url: $mac_url },
+                "darwin-aarch64-app": { signature: $mac_sig, url: $mac_url },
+                "windows-x86_64": { signature: $win_sig, url: $win_url }
+              }
+            }' > latest.json
+          cat latest.json
+
+      - name: Upload latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" latest.json \
+            --repo "${{ github.repository }}" --clobber
