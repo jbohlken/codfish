@@ -14,59 +14,27 @@ import {
   getPendingAddIndex,
   mediaDuration,
   isPlaying,
-  exportFormats,
-  selectedExportFormat,
-  isDirty,
   playingCaptionIndex,
   warningsByCaption,
+  isBatchRunning,
 } from "../../store/app";
-import { snapToFrame, runPipeline, breakTextIntoLines } from "../../lib/pipeline";
+import { snapToFrame, breakTextIntoLines } from "../../lib/pipeline";
 import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
-import { PlusIcon as Plus, ArrowsClockwiseIcon as ArrowsClockwise, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, ExportIcon as ExportIcon, FileTextIcon as FileText, InfoIcon as Info, WarningIcon as Warning, WrenchIcon as Wrench } from "@phosphor-icons/react";
-import { SelectButton } from "../SelectButton";
-import { openFormatManager } from "../FormatManager";
+import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { WarningBadge } from "../WarningBadge";
-import { transcribeMedia, type TranscriptionProgress, type TranscriptionResult } from "../../lib/transcription";
-import { listFormats, exportCaptions } from "../../lib/export";
-import { showError } from "../ErrorModal";
+import { generateSelectedMedia } from "../../lib/actions";
+import { isUpdating } from "../UpdateNotice";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
 
 // ── Panel-local state ─────────────────────────────────────────────────────────
-const isGenerating = signal(false);
-const generateProgress = signal<TranscriptionProgress | null>(null);
-const confirmingRegenerate = signal(false);
 const editingIndex = signal<number | null>(null);
 const editText = signal("");
 export { editingIndex, editText };
 
 // Flag to suppress onBlur commit when Escape is pressed in the textarea
 let _editCancelled = false;
-
-// ── One-time loaders ──────────────────────────────────────────────────────────
-
-
-async function loadFormats() {
-  const fmts = await listFormats();
-  exportFormats.value = fmts;
-}
-
-function buildFormatOptions() {
-  const formats = exportFormats.value;
-  const builtins = formats.filter((f) => f.source === "builtin");
-  const custom = formats.filter((f) => f.source === "custom");
-
-  const options: ({ value: string; label: string } | { separator: true; label?: string })[] = [];
-
-  for (const f of builtins) options.push({ value: f.id, label: f.name });
-  if (builtins.length > 0 && custom.length > 0) {
-    options.push({ separator: true });
-  }
-  for (const f of custom) options.push({ value: f.id, label: f.name });
-
-  return options;
-}
 
 // ── Caption operations ────────────────────────────────────────────────────────
 
@@ -295,10 +263,6 @@ function addCaption() {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function CaptionPanel() {
-  useEffect(() => {
-    loadFormats();
-  }, []);
-
   // Caption keyboard shortcuts (Edit, Delete, Split, Add)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -307,7 +271,10 @@ export function CaptionPanel() {
         e.target instanceof HTMLSelectElement ||
         e.target instanceof HTMLTextAreaElement
       ) return;
-      if (isGenerating.value) return;
+      // Blockers (update / batch generation) inert the app-shell but not
+      // document-level listeners; gate explicitly so single-letter shortcuts
+      // can't reach through the blocker.
+      if (isBatchRunning.value || isUpdating()) return;
       if (!selectedMedia.value) return;
       if (editingIndex.value !== null) return;
 
@@ -368,8 +335,6 @@ export function CaptionPanel() {
 
 
   const media = selectedMedia.value;
-  const generating = isGenerating.value;
-  const progress = generateProgress.value;
   const hasCaptions = (media?.captions.length ?? 0) > 0;
   // Undefined = unprobed (old projects) or probe failed — allow the attempt.
   // Only block when we explicitly know there's no audio stream.
@@ -383,21 +348,12 @@ export function CaptionPanel() {
   const fps = media?.fps ?? profile.timing.defaultFps;
   const warningsByIndex = warningsByCaption.value;
 
-  const confirming = confirmingRegenerate.value;
-
-  useEffect(() => {
-    if (!confirming) return;
-    const dismiss = () => { confirmingRegenerate.value = false; };
-    document.addEventListener("click", dismiss);
-    return () => document.removeEventListener("click", dismiss);
-  }, [confirming]);
-
   return (
     <div class="panel caption-panel">
       <div class="panel-header">
         <span class="panel-header-title">Captions</span>
-        {media && !generating && (
-          <div style="position:relative;display:flex;align-items:center;gap:2px">
+        {media && (
+          <div style="display:flex;align-items:center;gap:2px">
             {media.alignmentDegraded && hasCaptions && (
               <button
                 class="btn btn-ghost btn-icon"
@@ -415,16 +371,6 @@ export function CaptionPanel() {
                 <Info size={14} />
               </button>
             )}
-            {hasCaptions && (
-              <button
-                class="btn btn-ghost btn-icon"
-                disabled={!canGenerate}
-                data-tooltip={!canGenerate ? "No audio track — nothing to transcribe" : "Regenerate captions"}
-                onClick={(e) => { e.stopPropagation(); confirmingRegenerate.value = true; }}
-              >
-                <ArrowsClockwise size={14} />
-              </button>
-            )}
             <button
               class="btn btn-ghost btn-icon"
               disabled={!canAddCaption}
@@ -433,15 +379,6 @@ export function CaptionPanel() {
             >
               <Plus size={14} />
             </button>
-            {confirming && (
-              <div class="regen-popover" onClick={(e) => e.stopPropagation()}>
-                <span class="regen-popover-label">Regenerate captions?</span>
-                <div class="regen-popover-actions">
-                  <button class="btn btn-secondary btn-sm" onClick={() => { confirmingRegenerate.value = false; }}>Cancel</button>
-                  <button class="btn btn-primary btn-sm" onClick={() => { confirmingRegenerate.value = false; handleGenerate(); }}>Regenerate</button>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -451,25 +388,15 @@ export function CaptionPanel() {
           <div class="empty-state">
             <span class="empty-state-body">Select a media item to view captions.</span>
           </div>
-        ) : generating ? (
-          <div class="empty-state">
-            <span class="empty-state-title">Generating…</span>
-            {progress && (
-              <>
-                <div class="progress-bar-track">
-                  <div class="progress-bar-fill" style={{ width: `${progress.percent}%` }} />
-                </div>
-                <span class="empty-state-body">{progress.message}</span>
-              </>
-            )}
-          </div>
         ) : media.captions.length === 0 ? (
           <div class="empty-state">
             <span class="empty-state-title">No captions yet</span>
             {!canGenerate ? (
               <span class="empty-state-body">This file has no audio track.</span>
             ) : (
-              <button class="btn btn-primary btn-sm" onClick={handleGenerate}><ArrowsClockwise size={13} /> Generate</button>
+              <button class="btn btn-primary btn-sm" onClick={generateSelectedMedia}>
+                Generate
+              </button>
             )}
           </div>
         ) : (
@@ -526,28 +453,6 @@ export function CaptionPanel() {
           </div>
         )}
       </div>
-
-      {media && !generating && hasCaptions && (
-        <div class="caption-panel-footer">
-          <SelectButton
-            icon={FileText}
-            tooltip="Export format"
-            direction="up"
-            options={buildFormatOptions()}
-            value={selectedExportFormat.value}
-            onChange={(v) => { selectedExportFormat.value = v; isDirty.value = true; }}
-            footer={(close) => (
-              <button class="titlebar-select-option" onClick={() => { close(); openFormatManager(); }}>
-                <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage export formats…</span>
-              </button>
-            )}
-          />
-          <div style="flex:1" />
-          <button class="btn btn-primary btn-sm" onClick={() => handleExport(media.name)}>
-            <ExportIcon size={13} /> Export
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -818,66 +723,5 @@ function handleEdit(index: number, text: string) {
     commitPendingAdd(newProject);
   } else {
     pushHistory(newProject, "Edit caption");
-  }
-}
-
-async function handleGenerate() {
-  const media = selectedMedia.value;
-  const proj = project.value;
-  if (!media || !proj) return;
-
-  confirmingRegenerate.value = false;
-  isGenerating.value = true;
-  generateProgress.value = { stage: "transcribing", percent: 0, message: "Starting up…" };
-
-  try {
-    const { words, detectedLanguage, alignmentDegraded }: TranscriptionResult = await transcribeMedia(
-      media.path,
-      proj.transcriptionModel,
-      proj.language || null,
-      (p) => { generateProgress.value = p; },
-    );
-    const { captions } = runPipeline(words, activeProfile.value, media.fps ?? undefined);
-    const current = project.value;
-    if (!current) return;
-    const autoDetect = !proj.language;
-    pushHistory({
-      ...current,
-      media: current.media.map((m) =>
-        m.id === media.id
-          ? {
-              ...m,
-              captions,
-              rawWords: words,
-              generatedAt: new Date().toISOString(),
-              generatedWithModel: proj.transcriptionModel,
-              generatedWithLanguage: autoDetect ? undefined : proj.language,
-              detectedLanguage: autoDetect ? detectedLanguage : undefined,
-              alignmentDegraded,
-            }
-          : m,
-      ),
-    }, "Generate captions");
-  } catch (e) {
-    showError(String(e));
-  } finally {
-    isGenerating.value = false;
-    generateProgress.value = null;
-  }
-}
-
-async function handleExport(baseName: string) {
-  const media = selectedMedia.value;
-  if (!media || media.captions.length === 0) return;
-
-  const format = exportFormats.value.find((f) => f.id === selectedExportFormat.value);
-  if (!format) return;
-
-  const fps = media.fps ?? activeProfile.value.timing.defaultFps;
-
-  try {
-    await exportCaptions(format, media.captions, baseName, fps, media.dropFrame ?? false);
-  } catch (e) {
-    showError(String(e));
   }
 }

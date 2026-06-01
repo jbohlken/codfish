@@ -2,6 +2,7 @@ import { signal, computed } from "@preact/signals";
 import type { CodProject, MediaItem, CaptionBlock } from "../types/project";
 import type { CaptionProfile } from "../types/profile";
 import type { ExportFormat } from "../lib/export";
+import type { TranscriptionProgress } from "../lib/transcription";
 import { validate } from "../lib/pipeline/validate";
 import { findCaptionAt } from "../lib/pipeline";
 import type { ValidationWarning } from "../lib/pipeline/types";
@@ -28,7 +29,7 @@ export const selectedProfile = signal<string>("Codfish");
 export const exportFormats = signal<ExportFormat[]>([]);
 export const selectedExportFormat = signal<string>("SRT");
 
-// ── Sidecar ──────────��────────────────────────────────────────────────────
+// ── Sidecar ────────────────────────────────────────────────────────────────
 export type SidecarState = "checking" | "not_installed" | "downloading" | "ready" | "update_available";
 export const sidecarStatus = signal<SidecarState>("checking");
 
@@ -36,6 +37,38 @@ export const sidecarStatus = signal<SidecarState>("checking");
 export type DaemonState = "checking" | "booting" | "ready" | "crashed" | "not_installed";
 export const daemonStatus = signal<DaemonState>("checking");
 export const daemonError = signal<string | null>(null);
+
+// ── Batch generation ──────────────────────────────────────────────────────
+// Sequential batch caption generation. The Rust daemon serializes
+// transcription anyway, so the runner processes one media at a time.
+// Single-file Generate / Regenerate are implemented as a 1-item batch.
+
+export type BatchItemStatus = "pending" | "running" | "done" | "failed" | "cancelled";
+
+export interface BatchState {
+  ids: string[];                                  // ordered queue of media IDs
+  statuses: ReadonlyMap<string, BatchItemStatus>;
+  errors: ReadonlyMap<string, string>;
+}
+
+export const batchState = signal<BatchState | null>(null);
+export const batchProgress = signal<TranscriptionProgress | null>(null);
+export const batchCancelRequested = signal(false);
+
+export const isBatchRunning = computed(() => batchState.value !== null);
+
+export const batchCurrentId = computed((): string | null => {
+  const state = batchState.value;
+  if (!state) return null;
+  for (const id of state.ids) {
+    if (state.statuses.get(id) === "running") return id;
+  }
+  return null;
+});
+
+export function getBatchStatus(id: string): BatchItemStatus | null {
+  return batchState.value?.statuses.get(id) ?? null;
+}
 
 // ── Undo / Redo ────────────────────────────────────────────────────────────
 

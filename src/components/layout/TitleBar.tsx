@@ -1,12 +1,25 @@
 import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
-import { project, isDirty, profiles, selectedProfile } from "../../store/app";
+import { ActionMenuButton, type ActionMenuItem } from "../ActionMenuButton";
+import {
+  project,
+  isDirty,
+  profiles,
+  selectedProfile,
+  selectedMedia,
+  selectedExportFormat,
+  exportFormats,
+} from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, WrenchIcon as Wrench } from "@phosphor-icons/react";
+import { CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, WrenchIcon as Wrench, FileTextIcon as FileText, ArrowsClockwiseIcon as ArrowsClockwise, ExportIcon as ExportIcon } from "@phosphor-icons/react";
 import { openProfileManager } from "../ProfileManager";
+import { openFormatManager } from "../FormatManager";
 import { hasUpdate, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
 import { listModels } from "../../lib/transcription";
+import { listFormats } from "../../lib/export";
+import { eligibleMediaIds, allTranscribableMediaIds, captionedMediaCount } from "../../lib/batch";
+import { generateSelectedMedia, generateMissingMedia, regenerateAllMedia, exportSelectedMedia, exportAllMedia } from "../../lib/actions";
 
 const TRANSCRIPTION_MODELS: { id: TranscriptionModel; label: string; size: string }[] = [
   { id: "tiny",     label: "Tiny",     size: "39 MB" },
@@ -53,13 +66,87 @@ function buildProfileOptions() {
   return options;
 }
 
+function buildFormatOptions() {
+  const formats = exportFormats.value;
+  const builtins = formats.filter((f) => f.source === "builtin");
+  const custom = formats.filter((f) => f.source === "custom");
+
+  const options: ({ value: string; label: string } | { separator: true })[] = [];
+  for (const f of builtins) options.push({ value: f.id, label: f.name });
+  if (builtins.length > 0 && custom.length > 0) {
+    options.push({ separator: true });
+  }
+  for (const f of custom) options.push({ value: f.id, label: f.name });
+  return options;
+}
+
+async function loadFormats() {
+  exportFormats.value = await listFormats();
+}
+
 export function TitleBar() {
   const proj = project.value;
   const dirty = isDirty.value;
   const cached = modelCached.value;
   const cacheLoaded = Object.keys(cached).length > 0;
 
-  useEffect(() => { loadModelCache(); }, []);
+  const media = selectedMedia.value;
+  // All three counts are computed-signal-backed: filter cost is paid once
+  // per project change, not on every render.
+  const missingCount = eligibleMediaIds.value.length;
+  const captionedCount = captionedMediaCount.value;
+  const transcribableCount = allTranscribableMediaIds.value.length;
+  const selectedHasCaptions = (media?.captions.length ?? 0) > 0;
+  const selectedHasAudio = media?.hasAudio ?? true;
+
+  // No batch-state gating here: when a batch is running the whole app-shell
+  // is inert (App.tsx) and the BatchBlocker takes over, so these controls
+  // are unreachable. Single source of truth.
+  const generateItems: ActionMenuItem[] = [
+    {
+      label: selectedHasCaptions ? "Regenerate current file" : "Generate current file",
+      disabled: !media || !selectedHasAudio,
+      disabledReason: !media
+        ? "Select a media item first"
+        : "Selected file has no audio track",
+      onClick: generateSelectedMedia,
+    },
+    {
+      label: "Generate missing",
+      meta: `(${missingCount})`,
+      description: "Files without captions yet",
+      disabled: missingCount === 0,
+      disabledReason: "All files already have captions",
+      onClick: generateMissingMedia,
+    },
+    {
+      label: "Regenerate everything",
+      meta: `(${transcribableCount})`,
+      description: "Replaces all captions and edits",
+      danger: true,
+      disabled: transcribableCount === 0 || captionedCount === 0,
+      disabledReason: captionedCount === 0 ? "Nothing generated yet" : "No transcribable media",
+      onClick: regenerateAllMedia,
+    },
+  ];
+
+  const exportItems: ActionMenuItem[] = [
+    {
+      label: "Export current file",
+      disabled: !selectedHasCaptions,
+      disabledReason: !media ? "Select a media item first" : "Selected file has no captions",
+      onClick: exportSelectedMedia,
+    },
+    {
+      label: "Export all",
+      meta: `(${captionedCount})`,
+      disabled: captionedCount === 0,
+      disabledReason: "No captioned media to export",
+      onClick: exportAllMedia,
+    },
+  ];
+
+  useEffect(() => { loadModelCache(); loadFormats(); }, []);
 
   return (
     <div class="titlebar">
@@ -112,9 +199,6 @@ export function TitleBar() {
               value={proj.language}
               onChange={(v) => { project.value = { ...proj, language: v }; isDirty.value = true; }}
             />
-
-            <div class="titlebar-divider" />
-
             <SelectButton
               icon={Sliders}
               tooltip="Caption profile"
@@ -129,6 +213,33 @@ export function TitleBar() {
                   <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage caption profiles…</span>
                 </button>
               )}
+            />
+            <ActionMenuButton
+              icon={ArrowsClockwise}
+              label="Generate"
+              tooltip="Generate captions"
+              items={generateItems}
+            />
+
+            <div class="titlebar-divider" />
+
+            <SelectButton
+              icon={FileText}
+              tooltip="Export format"
+              options={buildFormatOptions()}
+              value={selectedExportFormat.value}
+              onChange={(v) => { selectedExportFormat.value = v; isDirty.value = true; }}
+              footer={(close) => (
+                <button class="titlebar-select-option" onClick={() => { close(); openFormatManager(); }}>
+                  <span class="titlebar-select-option-name" style="display:flex;align-items:center;gap:6px"><Wrench size={12} /> Manage export formats…</span>
+                </button>
+              )}
+            />
+            <ActionMenuButton
+              icon={ExportIcon}
+              label="Export"
+              tooltip="Export captions"
+              items={exportItems}
             />
           </>
         )}

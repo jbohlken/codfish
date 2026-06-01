@@ -16,7 +16,7 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel, commitActiveEdit, cancelActiveEdit } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
-import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory } from "./store/app";
+import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory, isBatchRunning } from "./store/app";
 import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, revertProject, openRecent } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
@@ -25,6 +25,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { confirmUnsavedChanges } from "./components/UnsavedChanges";
 import { ErrorModal } from "./components/ErrorModal";
+import { NoticeModal } from "./components/NoticeModal";
 import { ProfileManager, openProfileManager, requestCloseProfileManager } from "./components/ProfileManager";
 import { ContextMenu } from "./components/ContextMenu";
 import { MediaSettings } from "./components/MediaSettings";
@@ -35,6 +36,7 @@ import { SidecarSetup } from "./components/SidecarSetup";
 import { Splash, startDaemon } from "./components/Splash";
 import { daemonError } from "./store/app";
 import { useUpdateChecker, sidecarUpdate, UpdateBlocker, isUpdating } from "./components/UpdateNotice";
+import { BatchBlocker } from "./components/BatchBlocker";
 import { BugReportModal, bugReportOpen } from "./components/BugReportModal";
 import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery";
 import type { CodProject } from "./types/project";
@@ -256,7 +258,8 @@ export function App() {
     const ready =
       (sidecarStatus.value === "ready" || sidecarStatus.value === "update_available") &&
       daemonStatus.value === "ready" &&
-      !isUpdating();
+      !isUpdating() &&
+      !isBatchRunning.value;
     const hasProject = !!project.value;
     const dirty = isDirty.value;
     // Touch sidecarUpdate so we re-run when an update starts/finishes
@@ -297,11 +300,11 @@ export function App() {
   useEffect(() => {
     const unlisten = listen<string>("menu://action", (e) => {
       // Belt-and-suspenders: the menu's enabled state already blocks every
-      // item except Exit during pre-splash, splash, and updates — but keep
-      // a dispatcher-side gate so any residual event (e.g. a native menu
-      // firing in a race window before set_menu_enabled lands) is still a
-      // no-op.
-      if (isUpdating()) return;
+      // item except Exit during pre-splash, splash, updates, and batch
+      // generation — but keep a dispatcher-side gate so any residual event
+      // (e.g. a native menu firing in a race window before set_menu_enabled
+      // lands) is still a no-op.
+      if (isUpdating() || isBatchRunning.value) return;
       const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
       if (!sidecarReady || daemonStatus.value !== "ready") return;
       // Forward-moving actions (save/new/open/close) commit in-flight edits so
@@ -341,7 +344,7 @@ export function App() {
   // unsaved-changes gate as the manual Open flow.
   useEffect(() => {
     const unlisten = listen<string>("menu://open-recent", (e) => {
-      if (isUpdating()) return;
+      if (isUpdating() || isBatchRunning.value) return;
       const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
       if (!sidecarReady || daemonStatus.value !== "ready") return;
       openRecent(e.payload);
@@ -368,9 +371,10 @@ export function App() {
         e.preventDefault();
         return;
       }
-      // Swallow everything while an update is in flight — the blocker is up
-      // and there's no project state left to act on.
-      if (isUpdating()) {
+      // Swallow everything while an update or batch generation is in flight
+      // — a blocker is up and the app-shell is inert. Document-level keydown
+      // still fires through inert, so we gate it explicitly here.
+      if (isUpdating() || isBatchRunning.value) {
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -394,7 +398,8 @@ export function App() {
       const ready =
         (sidecarStatus.value === "ready" || sidecarStatus.value === "update_available") &&
         daemonStatus.value === "ready" &&
-        !isUpdating();
+        !isUpdating() &&
+        !isBatchRunning.value;
       const hasProject = !!project.value;
       if (!isMac && e.ctrlKey && ready) {
         const k = e.key.toLowerCase();
@@ -426,7 +431,7 @@ export function App() {
 
   return (
     <>
-      <div class="app-shell" {...(isUpdating() ? { inert: true } : {})}>
+      <div class="app-shell" {...(isUpdating() || isBatchRunning.value ? { inert: true } : {})}>
         <TitleBar />
         <div class="main-panels">
           <ProjectPanel />
@@ -435,6 +440,7 @@ export function App() {
         </div>
         <Timeline />
         <ErrorModal />
+        <NoticeModal />
         <ProfileManager />
         <ContextMenu />
         <MediaSettings />
@@ -446,6 +452,7 @@ export function App() {
         <Tooltip />
       </div>
       <UpdateBlocker />
+      <BatchBlocker />
     </>
   );
 }
