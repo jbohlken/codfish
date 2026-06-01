@@ -74,7 +74,10 @@ describe("openRecent", () => {
     const result = await openRecent("/tmp/ok.cod");
     expect(result).toBe(true);
     expect(showErrorMock).not.toHaveBeenCalled();
-    expect(project.value?.name).toBe("loaded");
+    // loadProjectFromPath normalizes proj.name to pathToBasename(filePath)
+    // so the displayed name stays in sync with the actual filename if the
+    // file was renamed externally. The stored "loaded" gets overwritten.
+    expect(project.value?.name).toBe("ok");
     expect(projectPath.value).toBe("/tmp/ok.cod");
   });
 });
