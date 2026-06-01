@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
+import { join } from "@tauri-apps/api/path";
 import type { CaptionBlock } from "../../types/project";
 import { executeTemplate, parseCff, serializeCff } from "./builder";
 import { uniqueFormatName, randomFormatFilename } from "./validation";
@@ -44,6 +45,15 @@ export async function listFormats(): Promise<ExportFormat[]> {
   }
 }
 
+function serialize(captions: CaptionBlock[]): SerializedCaption[] {
+  return captions.map((c) => ({
+    index: c.index,
+    start: c.start,
+    end: c.end,
+    lines: c.lines,
+  }));
+}
+
 /** Execute a format's template and prompt the user for a save path. */
 export async function exportCaptions(
   format: ExportFormat,
@@ -52,14 +62,7 @@ export async function exportCaptions(
   fps: number,
   dropFrame = false,
 ): Promise<void> {
-  const serialized: SerializedCaption[] = captions.map((c) => ({
-    index: c.index,
-    start: c.start,
-    end: c.end,
-    lines: c.lines,
-  }));
-
-  const content = await runFormat(format.formatPath, serialized, fps, dropFrame);
+  const content = await runFormat(format.formatPath, serialize(captions), fps, dropFrame);
 
   const savePath = await save({
     title: "Export Captions",
@@ -69,6 +72,57 @@ export async function exportCaptions(
   if (!savePath) return;
 
   await invoke<void>("save_project", { path: savePath, json: content });
+}
+
+export interface BulkExportItem {
+  name: string;          // base filename (no extension)
+  captions: CaptionBlock[];
+  fps: number;
+  dropFrame: boolean;
+}
+
+export interface BulkExportResult {
+  folder: string;
+  written: string[];                       // filenames written
+  failed: { name: string; error: string }[];
+}
+
+/** Prompt once for a destination folder, then write one caption file per item
+ * into it (named `<base>.<ext>`). Within-batch name collisions are deduped
+ * (clip, clip-1, …). Returns null if the user cancels the folder picker. */
+export async function exportCaptionsBulk(
+  format: ExportFormat,
+  items: BulkExportItem[],
+): Promise<BulkExportResult | null> {
+  const picked = await open({
+    title: "Export all captions to folder…",
+    directory: true,
+    multiple: false,
+  });
+  const folder = Array.isArray(picked) ? picked[0] : picked;
+  if (!folder) return null;
+
+  const written: string[] = [];
+  const failed: { name: string; error: string }[] = [];
+  const used = new Set<string>();
+
+  for (const item of items) {
+    try {
+      const content = await runFormat(format.formatPath, serialize(item.captions), item.fps, item.dropFrame);
+      let base = item.name;
+      let n = 1;
+      while (used.has(base.toLowerCase())) base = `${item.name}-${n++}`;
+      used.add(base.toLowerCase());
+      const filename = `${base}.${format.extension}`;
+      const path = await join(folder, filename);
+      await invoke<void>("save_project", { path, json: content });
+      written.push(filename);
+    } catch (e) {
+      failed.push({ name: item.name, error: String(e) });
+    }
+  }
+
+  return { folder, written, failed };
 }
 
 // ── Format file operations ──────────────────────────────────────────────────

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint:encoding": "node scripts/check-no-fffd.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

@@ -15,7 +15,9 @@ import {
   activeProfile,
   playingCaptionIndex,
   warningsByCaption,
+  isBatchRunning,
 } from "../../store/app";
+import { isUpdating } from "../UpdateNotice";
 import { editingIndex, editText, commitActiveEdit } from "./CaptionPanel";
 import type { CaptionBlock } from "../../types/project";
 import { snapToFrame } from "../../lib/pipeline";
@@ -413,6 +415,8 @@ export function Timeline() {
   // Ctrl/Cmd +/- → zoom around playhead. Gated like the caption editor
   // shortcuts in CaptionPanel: skipped in text inputs, no media, or an
   // active caption edit. "=" covers unshifted; "+"/"_" cover shifted/numpad.
+  // Also gated on blockers (update / batch generation) — inert app-shell
+  // doesn't catch document-level keydown.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -421,6 +425,7 @@ export function Timeline() {
         e.target instanceof HTMLSelectElement ||
         e.target instanceof HTMLTextAreaElement
       ) return;
+      if (isUpdating() || isBatchRunning.value) return;
       if (!selectedMedia.value) return;
       if (editingIndex.value !== null) return;
       if (e.key === "=" || e.key === "+") {
