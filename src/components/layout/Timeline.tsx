@@ -1,9 +1,10 @@
 import { useRef, useEffect } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet } from "@phosphor-icons/react";
 import { useSignalEffect, signal } from "@preact/signals";
-import WaveSurfer from "wavesurfer.js";
 import { invoke } from "@tauri-apps/api/core";
-import { getCachedPeaks, cachePeaks } from "../../lib/peaks-cache";
+import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
+import { createWaveformPainter } from "../../lib/waveform";
 import {
   selectedMedia,
   selectedCaptionIndex,
@@ -32,6 +33,11 @@ const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 const zoomLevel = signal(1);
+// Outer scroll position and viewport width, mirrored into signals so the
+// virtualized ruler can subscribe locally — the Timeline body itself stays
+// off the per-frame scroll/zoom hot path.
+const timelineScroll = signal(0);
+const timelineViewport = signal(800);
 
 export function resetTimelineView(): void {
   zoomLevel.value = 1;
@@ -78,29 +84,27 @@ export function Timeline() {
   // owns the per-tick playbackTime subscription locally.
   const playingIndex = playingCaptionIndex.value;
 
-  const waveCanvasRef = useRef<HTMLDivElement>(null);
+  const waveCanvasRef = useRef<HTMLCanvasElement>(null);
   const blocksRowRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WaveSurfer | null>(null);
 
   const captionDuration = media?.captions.length
     ? media.captions[media.captions.length - 1].end
     : 0;
   const duration = mediaDuration.value || captionDuration;
 
-  // Init / reinit WaveSurfer when media changes
+  // Init / reinit the waveform painter when media changes
   useEffect(() => {
-    const container = waveCanvasRef.current;
-    wsRef.current?.destroy();
-    wsRef.current = null;
+    const canvas = waveCanvasRef.current;
+    const scrollEl = scrollRef.current;
 
-    if (!container || !media) {
+    if (!canvas || !scrollEl || !media) {
       waveformState.value = "idle";
       return;
     }
 
-    // No audio stream — don't spin up WaveSurfer at all. The peaks pipeline
-    // would just fail on ffmpeg stream-missing and spam a traceback.
+    // No audio stream — don't run the peaks pipeline at all. It would just
+    // fail on ffmpeg stream-missing and spam a traceback.
     if (media.hasAudio === false) {
       waveformState.value = "no-audio";
       return;
@@ -109,12 +113,18 @@ export function Timeline() {
     waveformState.value = "loading";
 
     let cancelled = false;
-    let ws: WaveSurfer | null = null;
+    // Created before the async pipeline so its first paint clears any
+    // previous media's waveform while the spinner is up.
+    const painter = createWaveformPainter({
+      canvas,
+      scrollEl,
+      rowEl: canvas.parentElement as HTMLElement,
+    });
 
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
 
-    // Peaks come from the sidecar's ffmpeg, not from WaveSurfer's fetch+decode.
+    // Peaks come from the sidecar's ffmpeg, not from a browser fetch+decode.
     // The browser-side path is unreliable for the Tauri asset protocol
     // (whole-file fetch fails for many files even though playback via range
     // requests works fine) and can't handle codecs WebAudio doesn't support.
@@ -128,124 +138,78 @@ export function Timeline() {
     };
     flog(`init path=${media.path}`);
     (async () => {
-      const mtime = await invoke<number>("file_mtime", { path: media.path });
+      // The video duration is needed up front: peak density scales with it
+      // (denser bins for shorter files), for both cache validation and the
+      // generate request. waitForMediaDuration resolves immediately once
+      // the <video> metadata is in; on timeout desiredBinsPerSec falls
+      // back to the legacy density.
+      const [mtime, videoDuration] = await Promise.all([
+        invoke<number>("file_mtime", { path: media.path }),
+        waitForMediaDuration(5000),
+      ]);
       if (cancelled) return;
+      const binsPerSec = desiredBinsPerSec(videoDuration);
       let peaks: Float32Array;
       let audioDuration: number;
-      const cached = await getCachedPeaks(media.path, mtime);
+      const cached = await getCachedPeaks(media.path, mtime, binsPerSec);
       if (cancelled) return;
       if (cached) {
         flog(`cache hit bins=${cached.peaks.length}`);
         peaks = cached.peaks;
         audioDuration = cached.duration;
       } else {
-        flog("cache miss → generate_peaks");
+        flog(`cache miss → generate_peaks binsPerSec=${binsPerSec}`);
         const r = await invoke<{ peaks: number[]; duration: number }>(
           "generate_peaks",
-          { path: media.path },
+          { path: media.path, binsPerSec },
         );
         if (cancelled) return;
         peaks = new Float32Array(r.peaks);
         audioDuration = r.duration;
-        cachePeaks(media.path, mtime, peaks, audioDuration);
+        cachePeaks(media.path, mtime, peaks, audioDuration, binsPerSec);
         flog(`generated bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
       }
-      // Align the waveform with the <video> element's duration so the
+      // Lay the waveform out on the <video> element's duration so the
       // ruler, caption blocks, playhead, and waveform all share one axis.
       // For VFR media the ffmpeg-reported audio duration can diverge from
       // what <video>.duration reports — using the audio duration here makes
       // the waveform and the seek bar drift apart as playback progresses.
-      const layoutDuration = await waitForMediaDuration(5000) ?? audioDuration;
-      if (cancelled) return;
-      // Pad or trim the peaks to the layout duration at the original bins/sec.
-      // Without this WaveSurfer would stretch (or compress) the peaks to fill
-      // the duration we hand it, so audio that ends at t=193s in a 232s
-      // container would still visually draw out to the right edge. Padding
-      // with silence lets the waveform end where the audio actually ends
-      // while caption blocks stay on the video-clock axis.
-      if (audioDuration > 0) {
-        const binsPerSec = peaks.length / audioDuration;
-        const targetBins = Math.max(1, Math.round(binsPerSec * layoutDuration));
-        if (targetBins > peaks.length) {
-          const padded = new Float32Array(targetBins);
-          padded.set(peaks);
-          peaks = padded;
-        } else if (targetBins < peaks.length) {
-          peaks = peaks.slice(0, targetBins);
-        }
-      }
-
-      // Construct WaveSurfer with peaks + duration directly so its internal
-      // audio element never gets a src. Avoids a second media decoder
-      // competing with <video> at startup, and seekTo writes become inert
-      // (no buffering work, no range fetches).
-      ws = WaveSurfer.create({
-        container,
-        // Match progressColor to waveColor and zero the cursor: with no
-        // backing media, WaveSurfer's cursor sits at 0 and would otherwise
-        // paint a sliver of "progress fill" at the start. Our own
-        // .timeline-playhead is the real position indicator.
-        waveColor: "#374151",
-        progressColor: "#374151",
-        cursorWidth: 0,
-        height: "auto" as any,
-        normalize: true,
-        interact: false,
-        barWidth: 2,
-        barGap: 1,
-        barRadius: 2,
-        peaks: [peaks],
-        duration: layoutDuration,
-      });
-
-      ws.on("error", (e) => {
-        markFailed(`wavesurfer error: ${(e as any)?.message ?? String(e)}`);
-      });
-
-      wsRef.current = ws;
+      // Audio that ends before the video does (e.g. a 193s track in a 232s
+      // container) leaves the tail of the row empty: the painter draws only
+      // bins that exist, on the video-clock axis.
+      const layoutDuration = videoDuration ?? audioDuration;
+      painter.setSource({ peaks, audioDuration, layoutDuration });
       waveformState.value = "ready";
-      flog(`peaks-only init layoutDuration=${layoutDuration.toFixed(2)}s audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
-
-      // No async load to wait on — apply the initial zoom now. (This used
-      // to live in the `ready` event handler.)
-      const visibleWidth = scrollRef.current?.clientWidth ?? 800;
-      ws.zoom((visibleWidth * zoomLevel.peek()) / layoutDuration);
+      flog(`painter ready layoutDuration=${layoutDuration.toFixed(2)}s audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
     })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     return () => {
       cancelled = true;
-      ws?.destroy();
-      wsRef.current = null;
+      painter.destroy();
     };
   }, [media?.path]);
 
-  // Sync zoomLevel → WaveSurfer pxPerSec, then re-sync its internal scroll.
-  // Skip until the peaks pipeline has constructed ws — the post-construct
-  // block in the media effect applies the initial zoom in that case.
-  useSignalEffect(() => {
-    const ws = wsRef.current;
-    const zoom = zoomLevel.value;
-    const dur = mediaDuration.value;
-    if (!ws || !dur || !ws.getDuration()) return;
-    const visibleWidth = scrollRef.current?.clientWidth ?? 800;
-    ws.zoom((visibleWidth * zoom) / dur);
-    requestAnimationFrame(() => syncWsScroll());
-  });
+  // Scroll- and zoom-driven repaints are owned by the painter itself: it
+  // listens to the outer container's scroll and observes the waveform row
+  // for size changes (zoom changes the row's width, since the scroll-inner
+  // is sized at zoom × 100%).
 
-  // WaveSurfer renders only its internally "visible" region. Our outer scroll
-  // container moves the content without WaveSurfer knowing, so we push our
-  // scrollLeft into WaveSurfer's own scroll container after every scroll event.
-  const syncWsScroll = () => {
-    const wsScroll = waveCanvasRef.current?.firstElementChild as HTMLElement | null;
-    const outer = scrollRef.current;
-    if (wsScroll && outer) wsScroll.scrollLeft = outer.scrollLeft;
-  };
-
+  // Mirror the outer scroll position and viewport width into signals for
+  // the virtualized ruler.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.addEventListener("scroll", syncWsScroll, { passive: true });
-    return () => el.removeEventListener("scroll", syncWsScroll);
+    const onScroll = () => { timelineScroll.value = el.scrollLeft; };
+    const measure = () => { timelineViewport.value = el.clientWidth; };
+    onScroll();
+    measure();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro?.disconnect();
+    };
   }, [media?.path]);
 
   // Auto-scroll to keep playhead in view during playback
@@ -338,8 +302,6 @@ export function Timeline() {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
-
-  const zoom = zoomLevel.value;
 
   const profile = activeProfile.value;
   const fps = media?.fps ?? profile.timing.defaultFps;
@@ -496,30 +458,7 @@ export function Timeline() {
           <Magnet size={14} />
         </button>
 
-        {/* Zoom controls */}
-        <div class="timeline-zoom-controls">
-          <button
-            class="timeline-btn timeline-btn--sm"
-            onClick={() => zoomAroundPlayhead(1 / 1.5)}
-            data-tooltip="Zoom out (Ctrl/Cmd −, Ctrl/Cmd+Scroll)"
-            disabled={zoom <= 1}
-          ><Minus size={12} /></button>
-          <button
-            class="timeline-btn timeline-btn--zoom-label"
-            onClick={() => {
-              zoomLevel.value = 1;
-              if (scrollRef.current) scrollRef.current.scrollLeft = 0;
-            }}
-            data-tooltip="Reset zoom to fit"
-          >
-            {zoom > 1 ? `${zoom >= 10 ? Math.round(zoom) : zoom.toFixed(1)}×` : "Fit"}
-          </button>
-          <button
-            class="timeline-btn timeline-btn--sm"
-            onClick={() => zoomAroundPlayhead(1.5)}
-            data-tooltip="Zoom in (Ctrl/Cmd +, Ctrl/Cmd+Scroll)"
-          ><Plus size={12} /></button>
-        </div>
+        <ZoomControls scrollRef={scrollRef} zoomAroundPlayhead={zoomAroundPlayhead} />
       </div>
 
       {/* Track area */}
@@ -531,19 +470,10 @@ export function Timeline() {
             class="timeline-scroll-outer"
             ref={scrollRef}
           >
-            <div
-              class="timeline-scroll-inner"
-              style={{ width: zoom <= 1 ? "100%" : `${zoom * 100}%` }}
-            >
+            <ScrollInner>
               {/* Ruler */}
               {duration > 0 && (
-                <RulerRow
-                  duration={duration}
-                  zoom={zoom}
-                  visibleWidth={scrollRef.current?.clientWidth ?? 800}
-                  mode={smpteMode}
-                  fps={effectiveFps}
-                />
+                <RulerRow duration={duration} mode={smpteMode} fps={effectiveFps} />
               )}
 
               {/* Waveform row — click to seek */}
@@ -552,7 +482,7 @@ export function Timeline() {
                 onMouseDown={handleWaveMouseDown}
                 style={{ cursor: "pointer" }}
               >
-                <div ref={waveCanvasRef} style={{ width: "100%", height: "100%" }} />
+                <canvas ref={waveCanvasRef} class="timeline-waveform-canvas" />
                 {waveformState.value === "loading" && (
                   <div class="timeline-waveform-loading">
                     <div class="timeline-waveform-loading-spinner" />
@@ -613,7 +543,7 @@ export function Timeline() {
                   />
                 ))}
               </div>
-            </div>
+            </ScrollInner>
           </div>
         )}
       </div>
@@ -811,19 +741,33 @@ function TransportTimecode({ mode, fps, duration }: {
   );
 }
 
-function RulerRow({ duration, zoom, visibleWidth, mode, fps }: {
+/** Subscribes to zoom/scroll/viewport locally and renders only the ticks
+ *  inside the visible window (±1 screen). Without the windowing, tick
+ *  count scales with zoom — tens of thousands of divs rebuilt on every
+ *  zoom step; with it, renders stay at a few dozen nodes and panning
+ *  re-renders only this row. */
+function RulerRow({ duration, mode, fps }: {
   duration: number;
-  zoom: number;
-  visibleWidth: number;
   mode: DisplayMode;
   fps: number;
 }) {
+  const zoom = zoomLevel.value;
+  const scrollLeft = timelineScroll.value;
+  const visibleWidth = timelineViewport.value;
+
   const pxPerSec = (visibleWidth * zoom) / duration;
   const candidates = [1 / fps, 0.5, 1, 2, 5, 10, 30, 60, 300, 600];
   const interval = candidates.find(i => i * pxPerSec >= 60) ?? 600;
 
+  const windowStart = Math.max(0, (scrollLeft - visibleWidth) / pxPerSec);
+  const windowEnd = Math.min(duration, (scrollLeft + 2 * visibleWidth) / pxPerSec);
+
   const ticks: number[] = [];
-  for (let t = 0; t <= duration + interval * 0.01; t += interval) {
+  for (
+    let t = Math.floor(windowStart / interval) * interval;
+    t <= windowEnd + interval * 0.01;
+    t += interval
+  ) {
     ticks.push(Math.min(t, duration));
   }
 
@@ -838,6 +782,56 @@ function RulerRow({ duration, zoom, visibleWidth, mode, fps }: {
           <span class="timeline-ruler-label">{formatDisplayTime(t, mode, fps)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Owns the zoom → content-width binding. The children vnodes are created
+ *  by the zoom-independent Timeline render and passed through unchanged,
+ *  so a zoom step re-renders this wrapper but Preact bails out of the
+ *  child subtree on vnode identity — caption blocks never re-diff. */
+function ScrollInner({ children }: { children: ComponentChildren }) {
+  const zoom = zoomLevel.value;
+  return (
+    <div
+      class="timeline-scroll-inner"
+      style={{ width: zoom <= 1 ? "100%" : `${zoom * 100}%` }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Reads zoomLevel locally so zoom steps re-render three buttons, not the
+ *  whole transport bar. */
+function ZoomControls({ scrollRef, zoomAroundPlayhead }: {
+  scrollRef: { current: HTMLDivElement | null };
+  zoomAroundPlayhead: (factor: number) => void;
+}) {
+  const zoom = zoomLevel.value;
+  return (
+    <div class="timeline-zoom-controls">
+      <button
+        class="timeline-btn timeline-btn--sm"
+        onClick={() => zoomAroundPlayhead(1 / 1.5)}
+        data-tooltip="Zoom out (Ctrl/Cmd −, Ctrl/Cmd+Scroll)"
+        disabled={zoom <= 1}
+      ><Minus size={12} /></button>
+      <button
+        class="timeline-btn timeline-btn--zoom-label"
+        onClick={() => {
+          zoomLevel.value = 1;
+          if (scrollRef.current) scrollRef.current.scrollLeft = 0;
+        }}
+        data-tooltip="Reset zoom to fit"
+      >
+        {zoom > 1 ? `${zoom >= 10 ? Math.round(zoom) : zoom.toFixed(1)}×` : "Fit"}
+      </button>
+      <button
+        class="timeline-btn timeline-btn--sm"
+        onClick={() => zoomAroundPlayhead(1.5)}
+        data-tooltip="Zoom in (Ctrl/Cmd +, Ctrl/Cmd+Scroll)"
+      ><Plus size={12} /></button>
     </div>
   );
 }

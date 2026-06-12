@@ -972,13 +972,14 @@ struct ProbeResult {
 }
 
 /// Generate downsampled waveform peaks via the sidecar's bundled ffmpeg.
-/// Replaces WaveSurfer's browser-side fetch+decode, which is unreliable
-/// for the Tauri asset-protocol path on Windows and chokes on any codec
+/// Used instead of a browser-side fetch+decode, which is unreliable for
+/// the Tauri asset-protocol path on Windows and chokes on any codec
 /// WebAudio can't handle.
 #[tauri::command]
 async fn generate_peaks(
     app: AppHandle,
     path: String,
+    bins_per_sec: Option<u32>,
     state: State<'_, DaemonState>,
 ) -> Result<PeaksResult, String> {
     let daemon = {
@@ -986,10 +987,17 @@ async fn generate_peaks(
         guard.clone().ok_or_else(|| "transcription engine not running".to_string())?
     };
 
+    let bins_per_sec = bins_per_sec.unwrap_or(100);
     let r: PeaksResult = daemon
-        .request("generate_peaks", serde_json::json!({ "path": path }))
+        .request(
+            "generate_peaks",
+            serde_json::json!({ "path": path, "binsPerSec": bins_per_sec }),
+        )
         .await?;
-    log(&app, &format!("generate_peaks: bins={} duration={:.2}s", r.peaks.len(), r.duration));
+    log(&app, &format!(
+        "generate_peaks: binsPerSec={} bins={} duration={:.2}s",
+        bins_per_sec, r.peaks.len(), r.duration
+    ));
     Ok(r)
 }
 

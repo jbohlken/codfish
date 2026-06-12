@@ -1,6 +1,7 @@
 /**
  * IndexedDB cache for downsampled waveform peaks.
- * Keyed by path; mtime stored so an in-place edit invalidates the entry.
+ * Keyed by path; mtime stored so an in-place edit invalidates the entry,
+ * binsPerSec stored so a density-policy change invalidates it too.
  */
 
 const DB_NAME = "codfish-peaks";
@@ -12,6 +13,21 @@ interface PeakEntry {
   mtime: number;
   peaks: Float32Array;
   duration: number;
+  binsPerSec: number;
+}
+
+/**
+ * Peak density policy: scale inversely with duration so every file gets
+ * roughly the same total bin count (~300k ≈ the bar count of a fully
+ * zoomed-in timeline at 500× in a typical window). Short files get dense
+ * bins and stay sharp at max zoom; long files keep the legacy 100/sec
+ * floor. Null duration (video metadata never loaded) falls back to the
+ * legacy density. The 2000/sec cap keeps requests well under the
+ * sidecar's 8 kHz decode rate.
+ */
+export function desiredBinsPerSec(duration: number | null): number {
+  if (!duration || duration <= 0) return 100;
+  return Math.min(2000, Math.max(100, Math.ceil(300_000 / duration)));
 }
 
 function open(): Promise<IDBDatabase> {
@@ -32,6 +48,7 @@ function open(): Promise<IDBDatabase> {
 export async function getCachedPeaks(
   path: string,
   mtime: number,
+  binsPerSec: number,
 ): Promise<{ peaks: Float32Array; duration: number } | null> {
   try {
     const db = await open();
@@ -40,7 +57,16 @@ export async function getCachedPeaks(
       const req = tx.objectStore(STORE).get(path);
       req.onsuccess = () => {
         const entry = req.result as PeakEntry | undefined;
-        if (!entry || entry.mtime !== mtime) {
+        if (!entry || entry.mtime !== mtime || !entry.duration) {
+          resolve(null);
+          return;
+        }
+        // Entries from before the density policy lack the field; their
+        // effective density is derivable (and ≈100 in practice), which
+        // keeps long-file entries valid instead of regenerating them.
+        const entryBins = entry.binsPerSec
+          ?? Math.round(entry.peaks.length / entry.duration);
+        if (entryBins !== binsPerSec) {
           resolve(null);
           return;
         }
@@ -61,11 +87,12 @@ export async function cachePeaks(
   mtime: number,
   peaks: Float32Array,
   duration: number,
+  binsPerSec: number,
 ): Promise<void> {
   try {
     const db = await open();
     const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put({ path, mtime, peaks, duration } satisfies PeakEntry);
+    tx.objectStore(STORE).put({ path, mtime, peaks, duration, binsPerSec } satisfies PeakEntry);
   } catch {
     // Caching is best-effort
   }

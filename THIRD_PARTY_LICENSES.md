@@ -62,7 +62,7 @@ cargo about generate -c src-tauri/about.toml src-tauri/about.hbs > THIRD_PARTY_L
 
 ### Desktop app — npm packages
 
-Frontend npm dependencies (Preact, wavesurfer.js, Tauri JS bindings,
+Frontend npm dependencies (Preact, Tauri JS bindings, Phosphor icons,
 etc.) are compiled into the app's JS bundle. Their license texts are
 collected with `license-checker-rspack`.
 
