@@ -330,6 +330,7 @@ export function makeMediaItem(filePath: string): MediaItem {
     path: filePath,
     fps: null,
     captions: [],
+    addedAt: new Date().toISOString(),
     exports: [],
   };
 }
