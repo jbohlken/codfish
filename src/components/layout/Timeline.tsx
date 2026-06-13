@@ -87,6 +87,7 @@ export function Timeline() {
   const waveCanvasRef = useRef<HTMLCanvasElement>(null);
   const blocksRowRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const painterRef = useRef<ReturnType<typeof createWaveformPainter> | null>(null);
 
   const captionDuration = media?.captions.length
     ? media.captions[media.captions.length - 1].end
@@ -114,12 +115,16 @@ export function Timeline() {
 
     let cancelled = false;
     // Created before the async pipeline so its first paint clears any
-    // previous media's waveform while the spinner is up.
+    // previous media's waveform while the spinner is up. The layout axis is
+    // driven separately by the reactive effect below (and seeded here), so the
+    // pipeline only has to supply peaks.
     const painter = createWaveformPainter({
       canvas,
       scrollEl,
       rowEl: canvas.parentElement as HTMLElement,
     });
+    painterRef.current = painter;
+    painter.setLayoutDuration(mediaDuration.peek() || captionDuration);
 
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
@@ -138,26 +143,26 @@ export function Timeline() {
     };
     flog(`init path=${media.path}`);
     (async () => {
-      // The video duration is needed up front: peak density scales with it
-      // (denser bins for shorter files), for both cache validation and the
-      // generate request. waitForMediaDuration resolves immediately once
-      // the <video> metadata is in; on timeout desiredBinsPerSec falls
-      // back to the legacy density.
-      const [mtime, videoDuration] = await Promise.all([
-        invoke<number>("file_mtime", { path: media.path }),
-        waitForMediaDuration(5000),
-      ]);
+      const mtime = await invoke<number>("file_mtime", { path: media.path });
       if (cancelled) return;
-      const binsPerSec = desiredBinsPerSec(videoDuration);
       let peaks: Float32Array;
       let audioDuration: number;
-      const cached = await getCachedPeaks(media.path, mtime, binsPerSec);
+      // Look up by (path, mtime) only — independent of density, so a stale
+      // <video> duration on a media switch can't cause a spurious miss.
+      const cached = await getCachedPeaks(media.path, mtime);
       if (cancelled) return;
       if (cached) {
         flog(`cache hit bins=${cached.peaks.length}`);
         peaks = cached.peaks;
         audioDuration = cached.duration;
       } else {
+        // Density scales with duration (denser bins for shorter files). Only
+        // needed when actually generating, so we wait for the <video> metadata
+        // here rather than up front — the cache lookup above doesn't need it.
+        // The painter is density-agnostic, so an approximate value is fine.
+        const videoDuration = await waitForMediaDuration(5000);
+        if (cancelled) return;
+        const binsPerSec = desiredBinsPerSec(videoDuration);
         flog(`cache miss → generate_peaks binsPerSec=${binsPerSec}`);
         const r = await invoke<{ peaks: number[]; duration: number }>(
           "generate_peaks",
@@ -169,25 +174,28 @@ export function Timeline() {
         cachePeaks(media.path, mtime, peaks, audioDuration, binsPerSec);
         flog(`generated bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
       }
-      // Lay the waveform out on the <video> element's duration so the
-      // ruler, caption blocks, playhead, and waveform all share one axis.
-      // For VFR media the ffmpeg-reported audio duration can diverge from
-      // what <video>.duration reports — using the audio duration here makes
-      // the waveform and the seek bar drift apart as playback progresses.
-      // Audio that ends before the video does (e.g. a 193s track in a 232s
-      // container) leaves the tail of the row empty: the painter draws only
-      // bins that exist, on the video-clock axis.
-      const layoutDuration = videoDuration ?? audioDuration;
-      painter.setSource({ peaks, audioDuration, layoutDuration });
+      painter.setPeaks(peaks, audioDuration);
       waveformState.value = "ready";
-      flog(`painter ready layoutDuration=${layoutDuration.toFixed(2)}s audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
+      flog(`painter ready audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
     })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     return () => {
       cancelled = true;
       painter.destroy();
+      painterRef.current = null;
     };
   }, [media?.path]);
+
+  // Keep the painter's layout axis synced to the live timeline duration. This
+  // is what makes the waveform align with the ruler/blocks/playhead, and — by
+  // tracking the signal rather than a value captured when the pipeline
+  // resolved — it self-corrects after a media switch, when <video> duration
+  // momentarily holds the previous item's value (or 0) before metadata loads.
+  useSignalEffect(() => {
+    const m = selectedMedia.value;
+    const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
+    painterRef.current?.setLayoutDuration(mediaDuration.value || capDur);
+  });
 
   // Scroll- and zoom-driven repaints are owned by the painter itself: it
   // listens to the outer container's scroll and observes the waveform row
