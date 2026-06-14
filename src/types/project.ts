@@ -39,6 +39,12 @@ export interface MediaItem {
   hasAudio?: boolean;  // probed from file; false = no audio stream, so transcription is blocked
   dropFrame?: boolean; // true = DF, false = NDF; auto-set for 29.97/59.94, user-overridable
   captions: CaptionBlock[];
+  /// ISO timestamp of when the file was imported into the project. Optional:
+  /// projects created before this field existed have media without it, and
+  /// the panel's "Date added" sort falls back to media-array order for those
+  /// (array order == import order, since media is only ever appended). New
+  /// imports always carry it.
+  addedAt?: string;
   rawWords?: Word[];              // persisted for future re-pipeline without re-transcribing
   generatedAt?: string;
   generatedWithModel?: TranscriptionModel;

@@ -10,7 +10,14 @@
  *
  * Repaints are coalesced to one per animation frame and triggered by
  * scroll, by row resize (which covers both window resizes and zoom — the
- * row's width is the zoomed content width), and by setSource.
+ * row's width is the zoomed content width), and by setPeaks/setLayoutDuration.
+ *
+ * Peaks and layout duration are set independently: the peaks come from the
+ * async sidecar/cache pipeline, while the layout axis tracks the live
+ * <video>-clock duration (mediaDuration). Keeping them separate means the
+ * painter self-corrects when the duration settles after a media switch,
+ * instead of baking in whatever value happened to be current when the
+ * pipeline resolved.
  */
 
 // Bar styling matches the previous WaveSurfer config (CSS px).
@@ -19,19 +26,14 @@ const BAR_GAP = 1;
 const BAR_RADIUS = 2;
 const WAVE_COLOR = "#374151";
 
-export interface WaveformSource {
-  /** Max-abs peak per bin, sidecar-generated (~100 bins/sec). */
-  peaks: Float32Array;
-  /** Seconds of audio the peaks cover. */
-  audioDuration: number;
-  /** Seconds of the timeline layout axis (the video clock). Audio that
-   *  ends before the video does just leaves the tail of the row empty —
-   *  only bins that exist are drawn. */
-  layoutDuration: number;
-}
-
 export interface WaveformPainter {
-  setSource(source: WaveformSource | null): void;
+  /** Peak envelope from the pipeline. audioDuration is the seconds the peaks
+   *  cover (sidecar-reported). */
+  setPeaks(peaks: Float32Array, audioDuration: number): void;
+  /** Seconds of the timeline layout axis (the video clock). Audio that ends
+   *  before the video does just leaves the tail of the row empty — only bins
+   *  that exist are drawn. */
+  setLayoutDuration(seconds: number): void;
   schedulePaint(): void;
   destroy(): void;
 }
@@ -46,7 +48,9 @@ export function createWaveformPainter(opts: {
   const { canvas, scrollEl, rowEl } = opts;
   const ctx = canvas.getContext("2d");
 
-  let source: WaveformSource | null = null;
+  let peaks: Float32Array | null = null;
+  let audioDuration = 0;
+  let layoutDuration = 0;
   let peakMax = 0;
   let raf = 0;
 
@@ -69,9 +73,7 @@ export function createWaveformPainter(opts: {
       ctx.clearRect(0, 0, w, h);
     }
 
-    if (!source || peakMax <= 0 || source.layoutDuration <= 0) return;
-    const { peaks, audioDuration, layoutDuration } = source;
-    if (!peaks.length || audioDuration <= 0) return;
+    if (!peaks || !peaks.length || peakMax <= 0 || audioDuration <= 0 || layoutDuration <= 0) return;
 
     // All geometry below is in device px.
     const totalWidth = scrollEl.scrollWidth * dpr;
@@ -136,14 +138,18 @@ export function createWaveformPainter(opts: {
   resizeObserver?.observe(rowEl);
 
   return {
-    setSource(s) {
-      source = s;
+    setPeaks(p, dur) {
+      peaks = p;
+      audioDuration = dur;
       peakMax = 0;
-      if (s) {
-        for (let i = 0; i < s.peaks.length; i++) {
-          if (s.peaks[i] > peakMax) peakMax = s.peaks[i];
-        }
+      for (let i = 0; i < p.length; i++) {
+        if (p[i] > peakMax) peakMax = p[i];
       }
+      schedulePaint();
+    },
+    setLayoutDuration(seconds) {
+      if (seconds === layoutDuration) return;
+      layoutDuration = seconds;
       schedulePaint();
     },
     schedulePaint,

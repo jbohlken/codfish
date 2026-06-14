@@ -1,4 +1,4 @@
-import { signal } from "@preact/signals";
+import { signal, useSignalEffect } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 
 interface TextTooltip {
@@ -22,13 +22,22 @@ type TooltipState = TextTooltip | RowsTooltip;
 
 const tooltipState = signal<TooltipState | null>(null);
 let pendingDelay: ReturnType<typeof setTimeout> | null = null;
+// The element a hover (data-tooltip) tooltip is anchored to, when one is
+// showing. Tracked so we can auto-hide if that element is removed from the
+// DOM without a mouseout (filtered out of a list, removed, etc.). Null for
+// the imperatively-positioned tooltips, which have no tracked DOM anchor.
+let anchorEl: HTMLElement | null = null;
 
 export function showWarningTooltip(
   rows: { label: string; detail: string; strict?: boolean }[],
   x: number,
   y: number,
   anchorBottom: number,
+  anchor?: HTMLElement,
 ) {
+  // Pass the anchor so the unmount watchdog hides this tooltip if the element
+  // disappears without a mouseleave (e.g. a warning badge whose warnings clear).
+  anchorEl = anchor ?? null;
   tooltipState.value = { type: "rows", rows, x, y, anchorBottom };
 }
 
@@ -42,6 +51,7 @@ export function showTextTooltip(text: string, x: number, y: number, anchorBottom
     clearTimeout(pendingDelay);
     pendingDelay = null;
   }
+  anchorEl = null;
   tooltipState.value = { type: "text", text, x, y, anchorBottom };
 }
 
@@ -52,6 +62,7 @@ export function showBlockTooltip(
   y: number,
   anchorBottom: number,
 ) {
+  anchorEl = null;
   tooltipState.value = { type: "rows", lines, rows, x, y, anchorBottom };
 }
 
@@ -60,6 +71,7 @@ export function hideTooltip() {
     clearTimeout(pendingDelay);
     pendingDelay = null;
   }
+  anchorEl = null;
   tooltipState.value = null;
 }
 
@@ -71,7 +83,10 @@ export function Tooltip() {
       const text = el.getAttribute("data-tooltip") ?? "";
       if (!text) return;
       pendingDelay = setTimeout(() => {
+        // Element may have been removed during the hover delay.
+        if (!el.isConnected) return;
         const rect = el.getBoundingClientRect();
+        anchorEl = el;
         tooltipState.value = {
           type: "text",
           text,
@@ -96,6 +111,25 @@ export function Tooltip() {
       hideTooltip();
     };
   }, []);
+
+  // While a tooltip is anchored to an element, hide it if that element leaves
+  // the DOM — a programmatic removal (list filtered, row deleted, a warning
+  // badge whose warnings cleared) fires no mouseout, so the tooltip would
+  // otherwise strand. DOM-mutation-driven, not per-frame: the observer wakes
+  // only when the tree actually changes, and only while a tooltip is showing
+  // (it disconnects when tooltipState changes — including the hideTooltip
+  // below). Covers both hover (data-tooltip) and imperative anchored tooltips.
+  useSignalEffect(() => {
+    if (tooltipState.value === null || anchorEl === null) return;
+    const el = anchorEl;
+    if (!el.isConnected) { hideTooltip(); return; }
+    if (typeof MutationObserver !== "function") return;
+    const observer = new MutationObserver(() => {
+      if (!el.isConnected) hideTooltip();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  });
 
   const state = tooltipState.value;
   const ref = useRef<HTMLDivElement>(null);

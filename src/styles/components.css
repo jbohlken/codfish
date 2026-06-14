@@ -262,6 +262,177 @@
   background: var(--color-surface);
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Sort dropdown (header). The menu is position:fixed (coords set inline from
+   the trigger rect) so it escapes the panel's overflow:hidden. */
+.panel-sort {
+  position: relative;
+}
+
+.panel-sort-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 160px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-sort-group-label {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  padding: var(--space-1) var(--space-2);
+}
+
+.panel-sort-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: 5px var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.panel-sort-option:hover {
+  background: var(--color-surface-hover);
+}
+
+.panel-sort-option--active {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Fixed-width gutter so labels align whether or not the check is shown. */
+.panel-sort-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--color-accent);
+}
+
+.panel-sort-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: var(--space-1) 0;
+}
+
+/* Filter row — sits between header and the scrollable list. */
+/* Search expands inline inside the panel header (replacing the title +
+   action buttons while open), so it occupies the header row rather than
+   pushing the list down or overlaying any rows. */
+.panel-header-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  margin-right: var(--space-2);
+}
+
+.panel-filter-icon {
+  display: inline-flex;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.panel-filter-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  padding: var(--space-1) 0;
+}
+
+.panel-filter-input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.panel-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.panel-filter-clear:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Drag strip on the right edge of the panel *header* only — below it, the
+   panel body's scrollbar owns that edge. Anchored inside the header so it
+   tracks the header height. Shows a 2px accent line on hover/drag;
+   double-click resets the width to the stylesheet default. */
+.project-panel .panel-header {
+  position: relative;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.panel-resize-handle:hover::after {
+  opacity: 0.5;
+}
+
+body.col-resizing .panel-resize-handle::after {
+  opacity: 1;
+}
+
+body.col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .project-panel-actions {
   display: flex;
   flex-direction: column;
@@ -313,7 +484,7 @@
 
 .media-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -341,6 +512,9 @@
   font-size: var(--text-base);
   flex-shrink: 0;
   color: var(--color-text-secondary);
+  /* Optically center the 14px icon on the first text line of the
+     (possibly wrapped) name. */
+  margin-top: 2px;
 }
 
 .media-row-info {
@@ -349,13 +523,26 @@
   min-width: 0;
 }
 
+/* Wrap long names to two lines instead of end-truncating — with broadcast
+   naming the distinguishing part is usually the tail, which an ellipsis
+   would cut. overflow-wrap breaks within unbroken _-/. runs. The full name
+   + path live in the row tooltip. */
 .media-row-name {
   font-size: var(--text-base);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.media-row-match {
+  background: var(--color-accent-light);
+  color: inherit;
+  border-radius: 2px;
 }
 
 .media-row-meta {

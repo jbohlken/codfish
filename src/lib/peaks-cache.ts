@@ -1,7 +1,8 @@
 /**
  * IndexedDB cache for downsampled waveform peaks.
- * Keyed by path; mtime stored so an in-place edit invalidates the entry,
- * binsPerSec stored so a density-policy change invalidates it too.
+ * Keyed by path; mtime stored so an in-place edit invalidates the entry.
+ * binsPerSec is stored for reference/debugging but is NOT part of the key
+ * (see getCachedPeaks) — the painter derives density from the data.
  */
 
 const DB_NAME = "codfish-peaks";
@@ -24,6 +25,10 @@ interface PeakEntry {
  * floor. Null duration (video metadata never loaded) falls back to the
  * legacy density. The 2000/sec cap keeps requests well under the
  * sidecar's 8 kHz decode rate.
+ *
+ * IMPORTANT: this value is NOT part of the cache key (see getCachedPeaks).
+ * If you materially change this policy, bump DB_VERSION so existing entries
+ * regenerate — otherwise users keep their old-density peaks forever.
  */
 export function desiredBinsPerSec(duration: number | null): number {
   if (!duration || duration <= 0) return 100;
@@ -45,10 +50,16 @@ function open(): Promise<IDBDatabase> {
   });
 }
 
+// Keyed on (path, mtime) only. Density (binsPerSec) is deliberately NOT part
+// of the key: the painter derives bins/sec from peaks.length / duration at
+// render time, so a stored entry renders correctly at whatever density it was
+// generated with. Keying on density would thrash the cache, because the
+// generation-time density is derived from the <video> duration, which isn't
+// reliably known yet on a media switch. A material density-policy change is
+// handled by bumping DB_VERSION (which drops the store), not per-entry.
 export async function getCachedPeaks(
   path: string,
   mtime: number,
-  binsPerSec: number,
 ): Promise<{ peaks: Float32Array; duration: number } | null> {
   try {
     const db = await open();
@@ -58,15 +69,6 @@ export async function getCachedPeaks(
       req.onsuccess = () => {
         const entry = req.result as PeakEntry | undefined;
         if (!entry || entry.mtime !== mtime || !entry.duration) {
-          resolve(null);
-          return;
-        }
-        // Entries from before the density policy lack the field; their
-        // effective density is derivable (and ≈100 in practice), which
-        // keeps long-file entries valid instead of regenerating them.
-        const entryBins = entry.binsPerSec
-          ?? Math.round(entry.peaks.length / entry.duration);
-        if (entryBins !== binsPerSec) {
           resolve(null);
           return;
         }

@@ -14,8 +14,9 @@ export function WarningBadge({ warnings }: { warnings: ValidationWarning[] }) {
   const rows = warnings.map(w => ({ label: w.label, detail: w.detail, strict: w.strict ?? false }));
 
   const handleMouseEnter = (e: MouseEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    showWarningTooltip(rows, rect.left + rect.width / 2, rect.top, rect.bottom);
+    const el = e.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    showWarningTooltip(rows, rect.left + rect.width / 2, rect.top, rect.bottom, el);
   };
 
   return (
