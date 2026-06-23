@@ -265,7 +265,7 @@
 .panel-header-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 2px; /* match the CaptionPanel header button group */
 }
 
 /* Sort dropdown (header). The menu is position:fixed (coords set inline from
@@ -494,6 +494,11 @@ body.col-resizing {
   cursor: pointer;
   text-align: left;
   transition: background 0.1s;
+  /* Explicit so <button> media rows and the <div> bin row render identically —
+     bare buttons otherwise fall back to the UA font + line-height: normal,
+     making them shorter and a different typeface than the inherited app font. */
+  font-family: var(--font-sans);
+  line-height: var(--line-height-tight);
 }
 
 .media-row:hover {
@@ -562,6 +567,37 @@ body.col-resizing {
   margin-left: var(--space-2);
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
+}
+
+/* ── Bins ───────────────────────────────────────────────────────────────── */
+/* Bin rows reuse .media-row; a disclosure caret + folder icon mark them, and
+   the meta line shows a media count instead of a caption count. The row is a
+   <div> (not a button) so the inline-rename <input> can live inside it. */
+.media-row--bin {
+  cursor: pointer;
+}
+
+.bin-row-caret {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-top: 2px; /* align with the first text line, like the icon */
+  color: var(--color-text-tertiary);
+}
+
+/* Members render indented beneath their bin row. */
+.media-row--in-bin {
+  padding-left: calc(var(--space-3) + 22px);
+}
+
+.bin-row-input {
+  width: 100%;
+  padding: 1px var(--space-1);
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font: inherit;
+  outline: none;
 }
 
 /* ── Batch blocker ──────────────────────────────────────────────────────── */
@@ -720,6 +756,30 @@ body.col-resizing {
 
 .context-menu-item--danger:hover:not(:disabled) {
   background: var(--color-danger-light);
+}
+
+/* Submenu (flyout) support */
+.context-menu-row {
+  position: relative;
+}
+
+.context-menu-item--parent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* Flyout opens to the right of its parent row, aligned to its top. The panel
+   it's invoked from sits at the left of the window, so rightward has room. */
+.context-menu-submenu {
+  position: absolute;
+  left: 100%;
+  top: calc(-1 * var(--space-1));
+  margin-left: 2px;
+  /* Backstop for a very long bin list; the JS nudge handles edge overflow. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
 
 /* ── Media Settings Modal ───────────────────────────────────────────────── */

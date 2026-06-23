@@ -5,7 +5,7 @@ import {
   selectedExportFormat,
 } from "../store/app";
 import { runBatchGeneration, eligibleMediaIds, allTranscribableMediaIds, captionedMedia } from "./batch";
-import { exportCaptions, exportCaptionsBulk, type BulkExportItem } from "./export";
+import { exportCaptions, exportCaptionsBulk, type BulkExportItem, type BulkExportResult } from "./export";
 import { showError } from "../components/ErrorModal";
 import { showNotice } from "../components/NoticeModal";
 import { confirmUnsavedChanges } from "../components/UnsavedChanges";
@@ -54,6 +54,20 @@ export async function regenerateAllMedia(): Promise<void> {
 
 // ── Export ─────────────────────────────────────────────────────────────────
 
+/** Surface the outcome of a bulk export run. */
+function reportBulkExport(result: BulkExportResult | null, attempted: number): void {
+  if (!result) return; // cancelled folder picker
+  if (result.failed.length > 0) {
+    const lines = result.failed.map((f) => `• ${f.name}: ${f.error}`);
+    showError(`Exported ${result.written.length} of ${attempted} file(s).\n\nFailed:\n${lines.join("\n")}`);
+  } else {
+    showNotice(
+      "Export complete",
+      `Exported ${result.written.length} caption file${result.written.length === 1 ? "" : "s"} to:\n${result.folder}`,
+    );
+  }
+}
+
 function resolveFormat() {
   return exportFormats.value.find((f) => f.id === selectedExportFormat.value) ?? null;
 }
@@ -99,20 +113,7 @@ export async function exportAllMedia(): Promise<void> {
   }));
 
   try {
-    const result = await exportCaptionsBulk(format, items);
-    if (!result) return; // cancelled folder picker
-
-    if (result.failed.length > 0) {
-      const lines = result.failed.map((f) => `• ${f.name}: ${f.error}`);
-      showError(
-        `Exported ${result.written.length} of ${items.length} file(s).\n\nFailed:\n${lines.join("\n")}`,
-      );
-    } else {
-      showNotice(
-        "Export complete",
-        `Exported ${result.written.length} caption file${result.written.length === 1 ? "" : "s"} to:\n${result.folder}`,
-      );
-    }
+    reportBulkExport(await exportCaptionsBulk(format, items), items.length);
   } catch (e) {
     showError(String(e));
   }

@@ -54,10 +54,25 @@ export interface MediaItem {
   /// and captions are using segment-level timing. Surfaced as a warning
   /// badge so users know to consider regenerating.
   alignmentDegraded?: boolean;
+  /// Id of the bin this media belongs to (see CodProject.bins). Absent — or
+  /// referencing a bin that no longer exists — means ungrouped. Optional and
+  /// additive: projects created before bins existed have no binId and render
+  /// ungrouped, exactly as before.
+  binId?: string;
   exports: ExportRecord[];
 }
 
 export type TranscriptionModel = "tiny" | "base" | "small" | "medium" | "large-v3";
+
+/// A user-created folder/bin for organizing media within a project. Order in
+/// the array is the display order. Collapsed state is intentionally NOT stored
+/// here — it's per-user view state kept in localStorage, so toggling a bin
+/// open/closed never enters the undo history. Optional + additive on
+/// CodProject: older files have no `bins` and render everything ungrouped.
+export interface Bin {
+  id: string;
+  name: string;
+}
 
 export interface CodProject {
   version: number;
@@ -67,6 +82,9 @@ export interface CodProject {
   createdAt: string;
   updatedAt: string;
   media: MediaItem[];
+  /// User-created bins for organizing media. Optional + additive — absent in
+  /// projects created before bins existed (everything renders ungrouped).
+  bins?: Bin[];
   exportFormatName?: string;
   exportFormatHash?: string;
   profileName?: string;

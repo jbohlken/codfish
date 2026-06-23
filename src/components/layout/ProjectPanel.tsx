@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useMemo } from "preact/hooks";
-import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
+import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, CaretDownIcon as CaretDown, CaretRightIcon as CaretRight, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal } from "@preact/signals";
-import { project, selectedMediaId, selectedCaptionIndex, pushHistory } from "../../store/app";
+import { project, selectedMediaId, selectedMediaIds, selectedCaptionIndex, pushHistory } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
@@ -12,12 +12,25 @@ import {
   fileExists,
   VIDEO_EXTS,
 } from "../../lib/project";
+import {
+  groupMediaByBin,
+  rangeSelect,
+  collapsedBins,
+  toggleBinCollapsed,
+  createBin,
+  createBinWithMedia,
+  renameBin,
+  dissolveBin,
+  moveMediaToBin,
+  forgetBinCollapse,
+} from "../../lib/bins";
 import { recentProjects } from "../../lib/recent";
-import { showContextMenu } from "../ContextMenu";
+import { showContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { hideTooltip } from "../Tooltip";
+import { confirmUnsavedChanges } from "../UnsavedChanges";
 import { mediaSettingsId } from "../MediaSettings";
 import { sortMedia, type SortMode, type SortDir } from "../../lib/mediaSort";
-import type { MediaItem } from "../../types/project";
+import type { MediaItem, Bin } from "../../types/project";
 
 const missingIds = signal<ReadonlySet<string>>(new Set());
 
@@ -136,6 +149,11 @@ function closeSearch() {
   filterText.value = "";
 }
 
+// Shift-click range anchor (the last plain/ctrl click) and the bin currently
+// being inline-renamed in its header.
+const selectionAnchor = signal<string | null>(null);
+const editingBinId = signal<string | null>(null);
+
 function setSortMode(mode: SortMode) {
   sortMode.value = mode;
   localStorage.setItem(SORT_MODE_KEY, mode);
@@ -146,8 +164,8 @@ function setSortDir(dir: SortDir) {
 }
 
 /** Apply the active sort + filter to a media array, as the panel displays it.
- *  Shared by the render and by removeMedia's selection fallback so both agree
- *  on "visible order". */
+ *  Shared by the render and by removeMediaIds' selection fallback so both
+ *  agree on "visible order". */
 function visibleOrder(media: MediaItem[]): MediaItem[] {
   const q = filterText.value.trim().toLowerCase();
   return sortMedia(media, sortMode.value, sortDir.value)
@@ -248,34 +266,42 @@ async function checkMissingMedia(items: MediaItem[]) {
   missingIds.value = new Set(results.filter((r) => r.missing).map((r) => r.id));
 }
 
-function removeMedia(mediaId: string) {
+function removeMediaIds(mediaIds: string[], opts?: { removeBinId?: string; label?: string }) {
   const proj = project.value;
-  if (!proj) return;
-  const wasSelected = selectedMediaId.value === mediaId;
-  // When removing the selected item, move selection to the next neighbour in
-  // *visible* (sorted/filtered) order — under a non-default sort or active
-  // filter the media array order diverges from what the user sees, so a plain
-  // updated[0] could land on an off-screen or filtered-out row.
-  let nextId = selectedMediaId.value;
-  if (wasSelected) {
+  const removeBinId = opts?.removeBinId;
+  if (!proj || (mediaIds.length === 0 && !removeBinId)) return;
+  const removing = new Set(mediaIds);
+  const active = selectedMediaId.value;
+  const removingActive = active !== null && removing.has(active);
+  // When removing the active item, move selection to the nearest surviving
+  // neighbour in *visible* (sorted/filtered) order — under a non-default sort
+  // or active filter the media array order diverges from what the user sees.
+  let nextId = active;
+  if (removingActive) {
     const visibleBefore = visibleOrder(proj.media);
-    const pos = visibleBefore.findIndex((m) => m.id === mediaId);
-    nextId = visibleBefore[pos + 1]?.id ?? visibleBefore[pos - 1]?.id ?? null;
+    const pos = visibleBefore.findIndex((m) => removing.has(m.id));
+    const after = visibleBefore.slice(pos + 1).find((m) => !removing.has(m.id));
+    const before = [...visibleBefore.slice(0, pos)].reverse().find((m) => !removing.has(m.id));
+    nextId = after?.id ?? before?.id ?? null;
   }
-  const updated = proj.media.filter((m) => m.id !== mediaId);
-  // Record the post-op selection so redo lands on the neighbour, not the
-  // now-deleted id — pushHistory otherwise snapshots the current selection,
-  // which is still the removed item at this point.
-  pushHistory({ ...proj, media: updated }, "Remove media", {
-    selectedMediaId: nextId,
-    selectedCaptionIndex: selectedCaptionIndex.value,
-  });
-  if (wasSelected) selectedMediaId.value = nextId;
+  const updated = proj.media.filter((m) => !removing.has(m.id));
+  const label = opts?.label ?? (mediaIds.length > 1 ? `Remove ${mediaIds.length} media` : "Remove media");
+  // Record the post-op selection so redo lands on the neighbour, not a
+  // now-deleted id — pushHistory otherwise snapshots the current selection.
+  pushHistory(
+    {
+      ...proj,
+      media: updated,
+      ...(removeBinId ? { bins: (proj.bins ?? []).filter((b) => b.id !== removeBinId) } : {}),
+    },
+    label,
+    { selectedMediaId: nextId, selectedCaptionIndex: selectedCaptionIndex.value },
+  );
+  if (removingActive) selectedMediaId.value = nextId;
 }
 
 export function ProjectPanel() {
   const proj = project.value;
-  const selectedId = selectedMediaId.value;
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -314,6 +340,122 @@ export function ProjectPanel() {
   );
 
   const showSearch = !!proj && hasMedia && searchOpen.value;
+
+  const bins = proj?.bins ?? [];
+  const hasBins = bins.length > 0;
+  const selIds = selectedMediaIds.value;
+  const searching = query.length > 0;
+  const groups = groupMediaByBin(visibleMedia, bins);
+  const collapsedSet = collapsedBins.value;
+  const isCollapsed = (binId: string) => !searching && collapsedSet.has(binId);
+
+  // Total membership per bin (from the full media list, not the filtered view)
+  // — the badge and the bin's Generate/Export both mean "all members".
+  const binCounts = new Map<string, number>();
+  for (const mm of proj?.media ?? []) {
+    if (mm.binId != null) binCounts.set(mm.binId, (binCounts.get(mm.binId) ?? 0) + 1);
+  }
+
+  // Ids of the rows actually on screen (collapsed bins contribute none), so a
+  // shift-range can't silently pull in items hidden inside a collapsed bin.
+  const orderedIds = groups.flatMap((g) =>
+    g.bin && isCollapsed(g.bin.id) ? [] : g.items.map((m) => m.id),
+  );
+
+  // Plain click selects one; Ctrl/Cmd toggles; Shift extends a range over the
+  // visible (flattened) order from the last anchor. selectedMediaId stays the
+  // active item the editor follows; selectedMediaIds is the bulk-action set.
+  const selectRow = (item: MediaItem, e: MouseEvent) => {
+    const current = selectedMediaIds.peek();
+    if (e.shiftKey && selectionAnchor.value) {
+      selectedMediaIds.value = new Set(rangeSelect(orderedIds, selectionAnchor.value, item.id));
+      selectedMediaId.value = item.id;
+    } else if (e.ctrlKey || e.metaKey) {
+      const next = new Set(current);
+      if (next.has(item.id)) next.delete(item.id);
+      else next.add(item.id);
+      selectedMediaIds.value = next;
+      selectedMediaId.value = next.has(item.id) ? item.id : (orderedIds.find((id) => next.has(id)) ?? null);
+      selectionAnchor.value = item.id;
+    } else {
+      selectedMediaId.value = item.id;
+      selectedMediaIds.value = new Set([item.id]);
+      selectionAnchor.value = item.id;
+    }
+  };
+
+  const openRowMenu = (e: MouseEvent, item: MediaItem) => {
+    // Right-clicking a row outside the current selection acts on just that row.
+    if (!selectedMediaIds.peek().has(item.id)) {
+      selectedMediaId.value = item.id;
+      selectedMediaIds.value = new Set([item.id]);
+      selectionAnchor.value = item.id;
+    }
+    const ids = [...selectedMediaIds.peek()];
+    const multi = ids.length > 1;
+    const moveSubmenu: ContextMenuItem[] = [
+      ...bins.map((b) => ({ label: b.name, onClick: () => moveMediaToBin(ids, b.id) })),
+      {
+        label: "New bin…",
+        onClick: () => {
+          // One undo step (create + move together), auto-named without collision.
+          const id = createBinWithMedia(ids);
+          if (id) editingBinId.value = id;
+        },
+      },
+    ];
+    const anyBinned = ids.some((id) => proj!.media.find((m) => m.id === id)?.binId != null);
+    const items: ContextMenuItem[] = [];
+    if (!multi) {
+      items.push({ label: "Settings…", onClick: () => { mediaSettingsId.value = item.id; } });
+      items.push({ label: "Re-link file…", onClick: () => relinkMediaItem(item.id) });
+    }
+    items.push({ label: multi ? `Move ${ids.length} to bin` : "Move to bin", submenu: moveSubmenu });
+    if (anyBinned) items.push({ label: "Remove from bin", onClick: () => moveMediaToBin(ids, null) });
+    items.push({
+      label: multi ? `Remove ${ids.length} from project` : "Remove from project",
+      danger: true,
+      onClick: () => removeMediaIds(ids),
+    });
+    showContextMenu(e, items);
+  };
+
+  // Delete a bin AND its media from the project (files on disk are untouched).
+  // Confirm only when there's media to lose; an empty bin deletes like Dissolve.
+  const deleteBin = async (bin: Bin) => {
+    if (!proj) return;
+    const memberIds = proj.media.filter((m) => m.binId === bin.id).map((m) => m.id);
+    if (memberIds.length > 0) {
+      const choice = await confirmUnsavedChanges(
+        `Delete “${bin.name}” and its ${memberIds.length} media item${memberIds.length === 1 ? "" : "s"} from the project? The original files on disk won't be deleted.`,
+        { title: "Delete bin?", hideDiscard: true, confirmLabel: "Delete" },
+      );
+      if (choice !== "save") return;
+    }
+    removeMediaIds(memberIds, { removeBinId: bin.id, label: "Delete bin" });
+    forgetBinCollapse(bin.id);
+  };
+
+  const openBinMenu = (e: MouseEvent, bin: Bin) => {
+    showContextMenu(e, [
+      { label: "Rename", onClick: () => { editingBinId.value = bin.id; } },
+      { label: "Dissolve bin", onClick: () => dissolveBin(bin.id) },
+      { label: "Delete bin", danger: true, onClick: () => { void deleteBin(bin); } },
+    ]);
+  };
+
+  const renderRow = (item: MediaItem, inBin: boolean) => (
+    <MediaRow
+      key={item.id}
+      item={item}
+      query={query}
+      selected={selIds.has(item.id)}
+      missing={missingIds.value.has(item.id)}
+      inBin={inBin}
+      onSelect={(e) => selectRow(item, e)}
+      onContextMenu={(e) => openRowMenu(e, item)}
+    />
+  );
 
   return (
     <div class="panel project-panel">
@@ -356,6 +498,15 @@ export function ProjectPanel() {
                 onClick={() => { openSearch(); searchInputRef.current?.focus(); }}
               >
                 <MagnifyingGlass size={14} />
+              </button>
+            )}
+            {hasMedia && !showSearch && (
+              <button
+                class="btn btn-ghost btn-icon"
+                data-tooltip="New bin"
+                onClick={() => { const id = createBin(); if (id) editingBinId.value = id; }}
+              >
+                <FolderPlus size={14} />
               </button>
             )}
             <SortMenu />
@@ -409,35 +560,35 @@ export function ProjectPanel() {
             <span class="empty-state-title">No matches</span>
             <span class="empty-state-body">No media matches “{filterText.value.trim()}”.</span>
           </div>
+        ) : !hasBins ? (
+          // No bins → flat list, exactly as before.
+          <div class="media-list">{visibleMedia.map((m) => renderRow(m, false))}</div>
         ) : (
+          // Bins render as media-style rows (folder icon + media count); their
+          // members render indented beneath when expanded. Ungrouped media are
+          // plain top-level rows after the bins — no separate section header.
           <div class="media-list">
-            {visibleMedia.map((item) => (
-              <MediaRow
-                key={item.id}
-                item={item}
-                query={query}
-                selected={item.id === selectedId}
-                missing={missingIds.value.has(item.id)}
-                onClick={() => { selectedMediaId.value = item.id; }}
-                onContextMenu={(e) => {
-                  showContextMenu(e, [
-                    {
-                      label: "Settings…",
-                      onClick: () => { mediaSettingsId.value = item.id; },
-                    },
-                    {
-                      label: "Re-link file…",
-                      onClick: () => relinkMediaItem(item.id),
-                    },
-                    {
-                      label: "Remove from project",
-                      danger: true,
-                      onClick: () => removeMedia(item.id),
-                    },
-                  ]);
-                }}
-              />
-            ))}
+            {groups.map((group) =>
+              group.bin === null
+                ? group.items.map((m) => renderRow(m, false))
+                : (
+                  <BinGroup
+                    key={group.bin.id}
+                    bin={group.bin}
+                    count={binCounts.get(group.bin.id) ?? 0}
+                    // While searching, force-expand so matches aren't hidden,
+                    // and skip bins with no matches.
+                    collapsed={isCollapsed(group.bin.id)}
+                    hidden={searching && group.items.length === 0}
+                    editing={editingBinId.value === group.bin.id}
+                    onToggle={() => toggleBinCollapsed(group.bin!.id)}
+                    onContextMenu={(e) => openBinMenu(e, group.bin!)}
+                    onRename={(name) => { renameBin(group.bin!.id, name); editingBinId.value = null; }}
+                    onCancelRename={() => { editingBinId.value = null; }}
+                    renderItems={() => group.items.map((m) => renderRow(m, true))}
+                  />
+                )
+            )}
           </div>
         )}
       </div>
@@ -445,12 +596,93 @@ export function ProjectPanel() {
   );
 }
 
-function MediaRow({ item, query, selected, missing, onClick, onContextMenu }: {
+function BinGroup({ bin, count, collapsed, hidden, editing, onToggle, onContextMenu, onRename, onCancelRename, renderItems }: {
+  bin: Bin;
+  count: number;
+  collapsed: boolean;
+  hidden: boolean;
+  editing: boolean;
+  onToggle: () => void;
+  onContextMenu: (e: MouseEvent) => void;
+  onRename: (name: string) => void;
+  onCancelRename: () => void;
+  renderItems: () => ComponentChildren;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Guards a single commit: Enter/Escape and the blur that follows unmounting
+  // the focused input must not both fire onRename. Reset each time editing opens.
+  const committed = useRef(false);
+  useEffect(() => {
+    if (editing) {
+      committed.current = false;
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  if (hidden) return null;
+
+  const commit = (value: string) => {
+    if (committed.current) return;
+    committed.current = true;
+    onRename(value);
+  };
+  const cancel = () => {
+    if (committed.current) return;
+    committed.current = true;
+    onCancelRename();
+  };
+
+  const meta = count === 0 ? "Empty" : `${count} item${count === 1 ? "" : "s"}`;
+
+  return (
+    <div>
+      {/* Styled like a media row; the caret + folder icon mark it as a bin. */}
+      <div
+        class="media-row media-row--bin"
+        onClick={() => { if (!editing) onToggle(); }}
+        onContextMenu={onContextMenu}
+      >
+        <span class="bin-row-caret">
+          {collapsed ? <CaretRight size={12} /> : <CaretDown size={12} />}
+        </span>
+        <span class="media-row-icon"><Folder size={14} /></span>
+        <span class="media-row-info">
+          {editing ? (
+            // Uncontrolled (defaultValue): a controlled value would be reset to
+            // bin.name on any unrelated signal re-render mid-edit.
+            <input
+              ref={inputRef}
+              class="bin-row-input"
+              type="text"
+              defaultValue={bin.name}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commit((e.target as HTMLInputElement).value);
+                else if (e.key === "Escape") cancel();
+              }}
+              onBlur={(e) => commit((e.target as HTMLInputElement).value)}
+            />
+          ) : (
+            <>
+              <span class="media-row-name">{bin.name}</span>
+              <span class="media-row-meta">{meta}</span>
+            </>
+          )}
+        </span>
+      </div>
+      {!collapsed && renderItems()}
+    </div>
+  );
+}
+
+function MediaRow({ item, query, selected, missing, inBin, onSelect, onContextMenu }: {
   item: MediaItem;
   query: string;
   selected: boolean;
   missing: boolean;
-  onClick: () => void;
+  inBin: boolean;
+  onSelect: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
   const meta = missing
@@ -465,9 +697,9 @@ function MediaRow({ item, query, selected, missing, onClick, onContextMenu }: {
 
   return (
     <button
-      class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""}`}
+      class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""} ${inBin ? "media-row--in-bin" : ""}`}
       data-tooltip={`${item.name}\n${item.path}`}
-      onClick={onClick}
+      onClick={onSelect}
       onContextMenu={onContextMenu}
     >
       <span class="media-row-icon">{getMediaIcon(item.path)}</span>

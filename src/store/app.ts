@@ -1,4 +1,4 @@
-import { signal, computed } from "@preact/signals";
+import { signal, computed, effect } from "@preact/signals";
 import type { CodProject, MediaItem, CaptionBlock } from "../types/project";
 import type { CaptionProfile } from "../types/profile";
 import type { ExportFormat } from "../lib/export";
@@ -15,6 +15,27 @@ export const isDirty = signal(false);
 // ── Selection ──────────────────────────────────────────────────────────────
 export const selectedMediaId = signal<string | null>(null);
 export const selectedCaptionIndex = signal<number | null>(null);
+// Multi-selection for bulk project-panel actions (move to bin, generate,
+// export, remove). selectedMediaId stays the single "active" item that the
+// video/caption panels follow; this set is the broader selection a bulk
+// action operates on. Plain click resets it to one item.
+export const selectedMediaIds = signal<ReadonlySet<string>>(new Set());
+
+// Keep the multi-selection coherent with the active item. Whenever the active
+// item changes to something outside the current selection — import auto-select,
+// undo/redo, project load/reset — collapse the selection to just it (or clear
+// it when nothing is active). Panel multi-select actions set the active to a
+// member of the set they just wrote, so this is a no-op for them. Subscribes
+// only to selectedMediaId; reads the set via peek() so it never loops.
+effect(() => {
+  const active = selectedMediaId.value;
+  const current = selectedMediaIds.peek();
+  if (active === null) {
+    if (current.size > 0) selectedMediaIds.value = new Set();
+  } else if (!current.has(active)) {
+    selectedMediaIds.value = new Set([active]);
+  }
+});
 
 // ── Playback ───────────────────────────────────────────────────────────────
 export const playbackTime = signal(0);   // seconds
