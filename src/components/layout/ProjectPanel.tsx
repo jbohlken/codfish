@@ -494,7 +494,16 @@ export function ProjectPanel() {
   // any selected bin and anything inside one (a bin can't move into its own
   // subtree). "New bin…" creates a bin and moves the whole selection into it.
   const buildMoveSubmenu = (mediaIds: string[], binIds: string[]): ContextMenuEntry[] => {
-    const targets = orderedBinList.filter(({ bin: t }) => !binIds.some((bid) => isDescendant(bins, bid, t.id)));
+    // When everything selected already shares one parent bin, moving there is a
+    // no-op — drop it as a target so there's no dead entry. (A mixed set of
+    // parents has no single no-op target, so nothing is excluded then.)
+    const parents = new Set<string | undefined>();
+    for (const id of mediaIds) parents.add(proj!.media.find((m) => m.id === id)?.binId ?? undefined);
+    for (const id of binIds) parents.add(bins.find((b) => b.id === id)?.parentId ?? undefined);
+    const commonParent = parents.size === 1 ? [...parents][0] : undefined;
+    const targets = orderedBinList.filter(
+      ({ bin: t }) => t.id !== commonParent && !binIds.some((bid) => isDescendant(bins, bid, t.id)),
+    );
     const anyNested = mediaIds.some((id) => proj!.media.find((m) => m.id === id)?.binId != null)
       || binIds.some((id) => bins.find((b) => b.id === id)?.parentId != null);
     const entries: ContextMenuEntry[] = [];
@@ -946,7 +955,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
           the selected and drop-target highlights. */}
       <div
         class={`media-row media-row--bin${selected ? " media-row--selected" : ""}${dropActive ? " media-row--drop-target" : ""}`}
-        style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` } : undefined}
+        style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + min(${depth * BIN_INDENT_STEP}px, 45%))` } : undefined}
         draggable={!editing}
         onDragStart={onDragStartBin}
         onDragEnd={onDragEnd}
@@ -1012,9 +1021,10 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
     : null;
 
   // Same indent formula and [icon][name] layout as bin rows, so a clip and a
-  // sub-bin at the same depth line up exactly.
+  // sub-bin at the same depth line up exactly. Clamped (min with 45%) so a very
+  // deep tree never squeezes the name on a narrow panel.
   const style = depth > 0
-    ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` }
+    ? { paddingLeft: `calc(var(--space-3) + min(${depth * BIN_INDENT_STEP}px, 45%))` }
     : undefined;
 
   return (
