@@ -200,6 +200,15 @@ export function toggleBinCollapsed(id: string): void {
   persistCollapsed(next);
 }
 
+/** Force a bin open (e.g. after adding a sub-bin to it, so the new child is
+ *  visible). No-op when it isn't collapsed. */
+export function expandBin(id: string): void {
+  if (!collapsedBins.value.has(id)) return;
+  const next = new Set(collapsedBins.value);
+  next.delete(id);
+  persistCollapsed(next);
+}
+
 /** Drop persisted collapse state for the given bin ids (after they're dissolved
  *  or deleted) — localStorage hygiene; also means undoing the removal restores
  *  them expanded. No-op (no write) when none of the ids were collapsed. */

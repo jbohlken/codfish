@@ -16,13 +16,16 @@ import {
   buildBinForest,
   sortBins,
   collectSubtree,
+  isDescendant,
   rangeSelect,
   collapsedBins,
   toggleBinCollapsed,
+  expandBin,
   createBin,
   createBinWithMedia,
   renameBin,
   dissolveBin,
+  moveBin,
   moveMediaToBin,
   forgetBinCollapse,
   type BinNode,
@@ -39,6 +42,10 @@ const missingIds = signal<ReadonlySet<string>>(new Set());
 
 // Pixels each bin-tree nesting level shifts its rows to the right.
 const BIN_INDENT_STEP = 16;
+
+// Indent a bin's name by its tree depth for the flat "Move to bin" pickers.
+// Non-breaking spaces so the leading indent isn't collapsed in the button text.
+const indentLabel = (depth: number, name: string) => `${"  ".repeat(depth)}${name}`;
 
 // ── Panel resizing ──────────────────────────────────────────────────────────
 // The grid column is driven by --project-panel-width; dragging the handle
@@ -385,6 +392,18 @@ export function ProjectPanel() {
   collectVisible(forest.roots);
   for (const m of forest.ungrouped) orderedIds.push(m.id);
 
+  // Bins flattened in display (tree) order with their nesting depth — the
+  // source for the "Move to bin" pickers, which indent each entry by depth so
+  // the hierarchy reads in a single flat list (deep flyout chains don't).
+  const orderedBinList: { bin: Bin; depth: number }[] = [];
+  const flattenBins = (nodes: BinNode[], depth: number) => {
+    for (const n of nodes) {
+      orderedBinList.push({ bin: n.bin, depth });
+      flattenBins(n.children, depth + 1);
+    }
+  };
+  flattenBins(forest.roots, 0);
+
   // Plain click selects one; Ctrl/Cmd toggles; Shift extends a range over the
   // visible (flattened) order from the last anchor. selectedMediaId stays the
   // active item the editor follows; selectedMediaIds is the bulk-action set.
@@ -417,7 +436,10 @@ export function ProjectPanel() {
     const ids = [...selectedMediaIds.peek()];
     const multi = ids.length > 1;
     const moveSubmenu: ContextMenuItem[] = [
-      ...bins.map((b) => ({ label: b.name, onClick: () => moveMediaToBin(ids, b.id) })),
+      ...orderedBinList.map(({ bin: b, depth }) => ({
+        label: indentLabel(depth, b.name),
+        onClick: () => moveMediaToBin(ids, b.id),
+      })),
       {
         label: "New bin…",
         onClick: () => {
@@ -462,11 +484,35 @@ export function ProjectPanel() {
   };
 
   const openBinMenu = (e: MouseEvent, bin: Bin) => {
-    showContextMenu(e, [
+    // "Move to" can target any bin that isn't this one or nested inside it
+    // (that would make a cycle), plus the top level when it's currently nested.
+    const moveTargets = orderedBinList.filter(({ bin: t }) => !isDescendant(bins, bin.id, t.id));
+    const moveSubmenu: ContextMenuItem[] = [];
+    if (bin.parentId != null) {
+      moveSubmenu.push({ label: "Top level", onClick: () => moveBin(bin.id, null) });
+    }
+    moveSubmenu.push(
+      ...moveTargets.map(({ bin: t, depth }) => ({
+        label: indentLabel(depth, t.name),
+        onClick: () => moveBin(bin.id, t.id),
+      })),
+    );
+    const items: ContextMenuItem[] = [
+      {
+        label: "New sub-bin",
+        onClick: () => {
+          const id = createBin(undefined, bin.id);
+          if (id) { expandBin(bin.id); editingBinId.value = id; }
+        },
+      },
       { label: "Rename", onClick: () => { editingBinId.value = bin.id; } },
+    ];
+    if (moveSubmenu.length) items.push({ label: "Move to…", submenu: moveSubmenu });
+    items.push(
       { label: "Dissolve bin", onClick: () => dissolveBin(bin.id) },
       { label: "Delete bin", danger: true, onClick: () => { void deleteBin(bin); } },
-    ]);
+    );
+    showContextMenu(e, items);
   };
 
   // depth = nesting level of the row (0 = top-level / ungrouped). Media inside a
