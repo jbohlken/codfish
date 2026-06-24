@@ -216,7 +216,7 @@ function persistCollapsed(next: Set<string>): void {
  *  (which renders open by default): recording it now means the new bin is
  *  remembered open on reopen — what-you-see-is-what-you-get — instead of its
  *  open-ness only sticking if something is later toggled. */
-function rememberCollapseState(): void {
+export function rememberCollapseState(): void {
   persistCollapsed(collapsedBins.peek());
 }
 
@@ -274,7 +274,9 @@ function nextBinName(bins: Bin[]): string {
   return `Bin ${max + 1}`;
 }
 
-function makeBin(bins: Bin[], name: string | undefined, parentId: string | undefined): Bin {
+/** Build a Bin object (id + createdAt, auto-named if no name) without touching
+ *  history — for callers that batch a bin into a larger pushHistory. */
+export function makeBin(bins: Bin[], name: string | undefined, parentId: string | undefined): Bin {
   return {
     id: crypto.randomUUID(),
     name: name?.trim() || nextBinName(bins),

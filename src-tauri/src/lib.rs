@@ -655,6 +655,82 @@ fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).is_file()
 }
 
+#[derive(serde::Serialize)]
+struct DroppedFolder {
+    name: String,
+    media: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct DroppedMedia {
+    /// Loose media files that were dropped directly.
+    files: Vec<String>,
+    /// Dropped folders that contain media (recursed, flattened per folder).
+    folders: Vec<DroppedFolder>,
+    /// Count of top-level dropped items that yielded no media — an unsupported
+    /// file, or a folder with nothing importable — so the UI can report them.
+    skipped: u32,
+}
+
+fn has_media_ext(path: &std::path::Path, exts: &[String]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| exts.iter().any(|x| x.eq_ignore_ascii_case(e)))
+        .unwrap_or(false)
+}
+
+/// Collect media files under `dir`, recursing real subdirectories only — entry
+/// file types (not `is_dir`, which follows links) are checked so a symlink
+/// can't send us into a cycle.
+fn collect_media_recursive(dir: &std::path::Path, exts: &[String], out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        let path = entry.path();
+        if ft.is_dir() {
+            collect_media_recursive(&path, exts, out);
+        } else if ft.is_file() && has_media_ext(&path, exts) {
+            if let Some(s) = path.to_str() {
+                out.push(s.to_string());
+            }
+        }
+    }
+}
+
+/// Classify dropped paths for import: loose media files, plus a flattened media
+/// list per dropped folder (recursed). Lets the UI turn each dropped folder
+/// into a bin and report whatever couldn't be imported.
+#[tauri::command]
+fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia {
+    let mut files: Vec<String> = Vec::new();
+    let mut folders: Vec<DroppedFolder> = Vec::new();
+    let mut skipped: u32 = 0;
+    for p in paths {
+        let path = std::path::Path::new(&p);
+        if path.is_dir() {
+            let mut media: Vec<String> = Vec::new();
+            collect_media_recursive(path, &exts, &mut media);
+            media.sort();
+            if media.is_empty() {
+                skipped += 1;
+            } else {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Folder")
+                    .to_string();
+                folders.push(DroppedFolder { name, media });
+            }
+        } else if has_media_ext(path, &exts) {
+            files.push(p);
+        } else {
+            skipped += 1;
+        }
+    }
+    files.sort();
+    DroppedMedia { files, folders, skipped }
+}
+
 /// Modification time in unix seconds. Used by the peaks cache to invalidate
 /// entries when a file is edited or replaced (rename alone changes the path
 /// key, but an in-place edit keeps the path and needs the mtime to differ).
@@ -1497,6 +1573,7 @@ pub fn run() {
             save_project,
             load_project,
             file_exists,
+            collect_dropped_media,
             file_mtime,
             compute_relative_path,
             resolve_relative_path,

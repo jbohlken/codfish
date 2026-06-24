@@ -10,8 +10,9 @@ import { hashContent } from "../hash";
 import { selectedExportFormat, exportFormats, selectedProfile, profiles } from "../../store/app";
 import { loadFormatSource, listFormats } from "../export";
 import { loadProfiles, loadProfileSource } from "../profiles";
-import type { CodProject, MediaItem } from "../../types/project";
+import type { CodProject, MediaItem, Bin } from "../../types/project";
 import { isDropFrameRate } from "../time";
+import { makeBin, rememberCollapseState } from "../bins";
 import { cancelActiveEdit } from "../../components/layout/CaptionPanel";
 import { resetTimelineView } from "../../components/layout/Timeline";
 
@@ -232,52 +233,101 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   return true;
 }
 
+function isMediaPath(p: string): boolean {
+  const ext = p.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
+  return MEDIA_EXTS.includes(ext);
+}
+
+/** Probe each path and build MediaItem objects (no history mutation). `binId`
+ *  assigns the items to a bin. */
+async function buildMediaItems(paths: string[], binId?: string): Promise<MediaItem[]> {
+  return Promise.all(
+    paths.map(async (p) => {
+      const item = makeMediaItem(p);
+      if (binId) item.binId = binId;
+      const probe = await probeFps(p);
+      item.fps = probe.fps;
+      if (probe.vfr) item.vfr = true;
+      if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
+      if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
+      return item;
+    })
+  );
+}
+
+/** Tell the user how many dropped items couldn't be imported (unsupported file,
+ *  or a folder with no media). No-op when none. */
+function notifySkipped(count: number): void {
+  if (count <= 0) return;
+  showNotice(
+    "Some items weren’t imported",
+    `${count === 1 ? "1 item was" : `${count} items were`} skipped — Codfish imports video and audio files (${MEDIA_EXTS.join(", ")}).`,
+  );
+}
+
 /** Probe + append the given file paths as media (one undo step), optionally
- *  into a bin, and select the first. Paths whose extension isn't a supported
- *  media type (including dropped folders) are skipped, and the user is told how
- *  many were left out. Shared by the Import dialog (where the picker already
- *  restricts to media, so nothing is skipped) and by OS file-drop. */
+ *  into a bin, and select the first. Non-media paths are skipped and reported.
+ *  Shared by the Import dialog (whose picker is restricted to media, so nothing
+ *  is skipped) and by flat file-drops. */
 export async function importMediaPaths(paths: string[], binId?: string): Promise<void> {
   const proj = project.value;
   if (!proj) return;
-
-  const mediaPaths = paths.filter((p) => {
-    const ext = p.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
-    return MEDIA_EXTS.includes(ext);
-  });
-
+  const mediaPaths = paths.filter(isMediaPath);
   if (mediaPaths.length > 0) {
-    const newItems = await Promise.all(
-      mediaPaths.map(async (p) => {
-        const item = makeMediaItem(p);
-        if (binId) item.binId = binId;
-        const probe = await probeFps(p);
-        item.fps = probe.fps;
-        if (probe.vfr) item.vfr = true;
-        if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
-        if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
-        return item;
-      })
-    );
+    const newItems = await buildMediaItems(mediaPaths, binId);
     const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
-    pushHistory({
-      ...proj,
-      media: [...proj.media, ...newItems],
-    }, label);
-
-    // Auto-select the first imported item
+    pushHistory({ ...proj, media: [...proj.media, ...newItems] }, label);
     selectedMediaId.value = newItems[0].id;
   }
+  notifySkipped(paths.length - mediaPaths.length);
+}
 
-  // Tell the user about anything that couldn't be imported (unsupported type or
-  // a folder). The dialog never skips, so this only surfaces on file-drop.
-  const skipped = paths.length - mediaPaths.length;
-  if (skipped > 0) {
-    showNotice(
-      "Some items weren’t imported",
-      `${skipped === 1 ? "1 item was" : `${skipped} items were`} skipped — Codfish imports video and audio files (${MEDIA_EXTS.join(", ")}).`,
-    );
+interface DroppedMedia {
+  files: string[];
+  folders: { name: string; media: string[] }[];
+  skipped: number;
+}
+
+/** Import an OS file-drop: loose media files go to the drop target, and each
+ *  dropped folder becomes a bin (named after it) under the target, holding the
+ *  media found inside it (recursed, flattened). The whole drop is one undo step;
+ *  anything not importable is reported. `targetBinId` is the bin dropped onto,
+ *  or undefined for the top level. */
+export async function importDrop(paths: string[], targetBinId?: string): Promise<void> {
+  const proj = project.value;
+  if (!proj) return;
+
+  let result: DroppedMedia;
+  try {
+    result = await invoke<DroppedMedia>("collect_dropped_media", { paths, exts: MEDIA_EXTS });
+  } catch {
+    // Backend unavailable (shouldn't happen in the webview) — flat import.
+    return importMediaPaths(paths, targetBinId);
   }
+
+  const newBins: Bin[] = [];
+  const newItems: MediaItem[] = [];
+  newItems.push(...(await buildMediaItems(result.files, targetBinId)));
+  for (const folder of result.folders) {
+    const bin = makeBin(proj.bins ?? [], folder.name, targetBinId);
+    newBins.push(bin);
+    newItems.push(...(await buildMediaItems(folder.media, bin.id)));
+  }
+
+  if (newItems.length > 0) {
+    const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
+    pushHistory(
+      {
+        ...proj,
+        bins: newBins.length ? [...(proj.bins ?? []), ...newBins] : proj.bins,
+        media: [...proj.media, ...newItems],
+      },
+      label,
+    );
+    selectedMediaId.value = newItems[0].id;
+    if (newBins.length) rememberCollapseState(); // new bins are open — remember it
+  }
+  notifySkipped(result.skipped);
 }
 
 export async function importMedia(): Promise<void> {

@@ -8,7 +8,7 @@ import {
   openProjectGuarded,
   openRecent,
   importMedia,
-  importMediaPaths,
+  importDrop,
   relinkMediaItem,
   fileExists,
   VIDEO_EXTS,
@@ -385,7 +385,7 @@ export function ProjectPanel() {
           } else if (p.type === "drop") {
             const target = osDropTargetAt(p.position);
             dropTarget.value = null;
-            if (target !== null) void importMediaPaths(p.paths, target === ROOT_DROP ? undefined : target);
+            if (target !== null) void importDrop(p.paths, target === ROOT_DROP ? undefined : target);
           } else {
             // enter / over
             dropTarget.value = osDropTargetAt(p.position);
