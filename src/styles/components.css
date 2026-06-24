@@ -484,7 +484,7 @@ body.col-resizing {
 
 .media-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -521,18 +521,18 @@ body.col-resizing {
 .media-row-icon {
   font-size: var(--text-base);
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
   color: var(--color-text-secondary);
-  /* Optically center the 14px icon on the first text line of the
-     (possibly wrapped) name. */
-  margin-top: 2px;
 }
 
-/* Name + status share one baseline-aligned row, so a short name is a single
-   line (status to its right) rather than two stacked lines. The name takes the
+/* Name + status share one row (status to its right), so a short name is a
+   single line rather than two stacked ones. Center-aligned: baseline is
+   unreliable against the line-clamped (-webkit-box) name. The name takes the
    width; status keeps its natural width on the right. */
 .media-row-info {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
   flex: 1;
   min-width: 0;
