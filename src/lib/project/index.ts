@@ -269,7 +269,7 @@ function notifySkipped(names: string[]): void {
   const list = shown.map((n) => `•  ${n}`).join("\n") + (more > 0 ? `\n•  …and ${more} more` : "");
   showNotice(
     names.length === 1 ? "1 item wasn’t imported" : `${names.length} items weren’t imported`,
-    `Only video and audio files (${MEDIA_EXTS.join(", ")}) can be imported.\n\nSkipped:\n${list}`,
+    `Only video and audio files (${MEDIA_EXTS.join(", ")}) can be imported. The following items were skipped:\n\n${list}`,
   );
 }
 
