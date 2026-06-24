@@ -170,6 +170,21 @@ export function pushHistory(
   isDirty.value = true;
 }
 
+/** Drop ids from the multi-selection sets that don't exist in the current
+ *  project. History only records the active item, so after an undo/redo the
+ *  sets can reference clips/bins absent from the restored state (stale highlight,
+ *  inflated context-menu counts). Pruning keeps them coherent without storing
+ *  the whole selection in every history entry. */
+function pruneSelectionToProject() {
+  const proj = project.peek();
+  const mediaIds = new Set(proj?.media.map((m) => m.id) ?? []);
+  const binIds = new Set((proj?.bins ?? []).map((b) => b.id));
+  const media = [...selectedMediaIds.peek()].filter((id) => mediaIds.has(id));
+  const bins = [...selectedBinIds.peek()].filter((id) => binIds.has(id));
+  if (media.length !== selectedMediaIds.peek().size) selectedMediaIds.value = new Set(media);
+  if (bins.length !== selectedBinIds.peek().size) selectedBinIds.value = new Set(bins);
+}
+
 export function undo() {
   if (_historyIndex.value <= 0) return;
   // Restore selection to where the operation we're undoing happened, so the
@@ -180,6 +195,7 @@ export function undo() {
   project.value = entry.project;
   selectedMediaId.value = undone.selectedMediaId;
   selectedCaptionIndex.value = undone.selectedCaptionIndex;
+  pruneSelectionToProject();
   isDirty.value = true;
 }
 
@@ -190,6 +206,7 @@ export function redo() {
   project.value = entry.project;
   selectedMediaId.value = entry.selectedMediaIdAfter;
   selectedCaptionIndex.value = entry.selectedCaptionIndexAfter;
+  pruneSelectionToProject();
   isDirty.value = true;
 }
 
