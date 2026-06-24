@@ -170,20 +170,23 @@ export function rangeSelect(orderedIds: string[], anchorId: string, targetId: st
 }
 
 // ── Collapse state (per-user view state, localStorage) ────────────────────
-// Stored per project (keyed by the project's createdAt) so reopening a project
-// — even after an app restart — restores its bins' open/closed state, while a
-// closed project's ids don't pile into one global list. The active project's
-// set lives in `collapsedBins`; loadCollapsedForProject swaps it on open.
+// Bins default to COLLAPSED, so what's persisted is the set of EXPANDED ids per
+// project (keyed by createdAt) — "no entry" therefore means all collapsed, and
+// any bin not explicitly expanded (including ones created later) stays
+// collapsed. Persisted across sessions; never written to the .cod. `expanded`
+// is recomputed from the live bin list on each write, so deleted bins drop out
+// automatically. The active project's collapsed set lives in `collapsedBins`.
 
-const COLLAPSED_KEY = "codfish:collapsedBins";
+const EXPANDED_KEY = "codfish:expandedBins";
+// Retire the previous (collapsed-ids) storage so its inverted meaning can't be
+// misread; collapse state resets once on upgrade (harmless view state).
+try { localStorage.removeItem("codfish:collapsedBins"); } catch { /* ignore */ }
 
-type CollapsedMap = Record<string, string[]>;
+type ExpandedMap = Record<string, string[]>;
 
-function loadCollapsedMap(): CollapsedMap {
+function loadExpandedMap(): ExpandedMap {
   try {
-    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}");
-    // Ignore the legacy flat-array format (pre per-project scoping) — collapse
-    // state resets once on upgrade, which is harmless view state.
+    const raw = JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "{}");
     return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   } catch {
     return {};
@@ -197,29 +200,29 @@ function persistCollapsed(next: Set<string>): void {
   collapsedBins.value = next;
   if (currentProjectKey === null) return;
   try {
-    const map = loadCollapsedMap();
-    if (next.size) map[currentProjectKey] = [...next];
+    const map = loadExpandedMap();
+    // Store the expanded bins (the exceptions to the collapsed default),
+    // recomputed from the current bin list so deleted bins fall away.
+    const expanded = (project.peek()?.bins ?? []).map((b) => b.id).filter((id) => !next.has(id));
+    if (expanded.length) map[currentProjectKey] = expanded;
     else delete map[currentProjectKey];
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(map));
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify(map));
   } catch {
     // view state is best-effort
   }
 }
 
-/** Swap the active collapse set to the given project's, pruned to bins that
- *  still exist (`validIds`) so ids of bins deleted while the project was closed
- *  are dropped. Call whenever the open project changes (null when none). */
+/** Swap the active collapse set to the given project's: every current bin
+ *  (`validIds`) is collapsed unless it was saved as expanded. Call whenever the
+ *  open project changes (null when none). */
 export function loadCollapsedForProject(projectKey: string | null, validIds: Set<string>): void {
   currentProjectKey = projectKey;
   if (projectKey === null) {
     collapsedBins.value = new Set();
     return;
   }
-  const stored = loadCollapsedMap()[projectKey] ?? [];
-  const pruned = stored.filter((id) => validIds.has(id));
-  collapsedBins.value = new Set(pruned);
-  // Write back only if pruning changed something, to drop stale ids.
-  if (pruned.length !== stored.length) persistCollapsed(collapsedBins.value);
+  const expanded = new Set(loadExpandedMap()[projectKey] ?? []);
+  collapsedBins.value = new Set([...validIds].filter((id) => !expanded.has(id)));
 }
 
 export function toggleBinCollapsed(id: string): void {
