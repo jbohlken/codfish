@@ -44,10 +44,12 @@ function ItemBody({ item }: { item: ContextMenuItem }) {
   );
 }
 
-/** Inline left-padding override for an indented item, or undefined. */
+/** Inline left-padding override for an indented item, or undefined. Built on the
+ *  same base padding as a flat row (--space-2) so the depth 0->1 step matches
+ *  every deeper step; basing it on --space-3 made the first indent 4px too deep. */
 function indentStyle(item: ContextMenuItem) {
   return item.indent
-    ? { paddingLeft: `calc(var(--space-3) + ${item.indent * MENU_INDENT_STEP}px)` }
+    ? { paddingLeft: `calc(var(--space-2) + ${item.indent * MENU_INDENT_STEP}px)` }
     : undefined;
 }
 
