@@ -212,6 +212,14 @@ function persistCollapsed(next: Set<string>): void {
   }
 }
 
+/** Persist the current open/closed state as-is. Used right after creating a bin
+ *  (which renders open by default): recording it now means the new bin is
+ *  remembered open on reopen — what-you-see-is-what-you-get — instead of its
+ *  open-ness only sticking if something is later toggled. */
+function rememberCollapseState(): void {
+  persistCollapsed(collapsedBins.peek());
+}
+
 /** Swap the active collapse set to the given project's: every current bin
  *  (`validIds`) is collapsed unless it was saved as expanded. Call whenever the
  *  open project changes (null when none). */
@@ -282,6 +290,7 @@ export function createBin(name?: string, parentId?: string): string | null {
   if (!proj) return null;
   const bin = makeBin(proj.bins ?? [], name, parentId);
   pushHistory({ ...proj, bins: [...(proj.bins ?? []), bin] }, `New bin "${bin.name}"`);
+  rememberCollapseState(); // the new bin is open — remember it open across sessions
   return bin.id;
 }
 
@@ -306,6 +315,7 @@ export function createBinWithItems(mediaIds: string[], binIds: string[], parentI
     },
     `New bin "${bin.name}"`,
   );
+  rememberCollapseState(); // the new bin is open — remember it open across sessions
   return bin.id;
 }
 
