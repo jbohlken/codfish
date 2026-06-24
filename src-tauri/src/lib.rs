@@ -679,16 +679,18 @@ fn has_media_ext(path: &std::path::Path, exts: &[String]) -> bool {
         .unwrap_or(false)
 }
 
+// Lossy so a non-UTF8 name still yields something reportable.
 fn basename(path: &std::path::Path) -> String {
     path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
-/// Walk `dir`, pushing media files to `media` and the basenames of unsupported
-/// files to `skipped`. Recurses real subdirectories only — entry file types
-/// (not `is_dir`, which follows links) are checked so a symlink can't loop.
+/// Walk `dir`, pushing media files to `media` and the basenames of everything
+/// it couldn't import to `skipped` (so nothing is dropped silently). Recurses
+/// real subdirectories only — entry file types (not `is_dir`, which follows
+/// links) are checked so a symlink can't loop; a media-looking symlink is
+/// reported rather than followed.
 fn collect_recursive(
     dir: &std::path::Path,
     exts: &[String],
@@ -699,19 +701,29 @@ fn collect_recursive(
     for entry in entries.flatten() {
         let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
+        let report_skipped = |skipped: &mut Vec<String>| {
+            let b = basename(&path);
+            if !b.is_empty() {
+                skipped.push(b);
+            }
+        };
         if ft.is_dir() {
             collect_recursive(&path, exts, media, skipped);
         } else if ft.is_file() {
             if has_media_ext(&path, exts) {
-                if let Some(s) = path.to_str() {
-                    media.push(s.to_string());
+                match path.to_str() {
+                    Some(s) => media.push(s.to_string()),
+                    // Non-UTF8 path can't be handed back as a usable string —
+                    // report instead of silently dropping it.
+                    None => report_skipped(skipped),
                 }
             } else {
-                let b = basename(&path);
-                if !b.is_empty() {
-                    skipped.push(b);
-                }
+                report_skipped(skipped);
             }
+        } else if ft.is_symlink() && has_media_ext(&path, exts) {
+            // We don't follow symlinks (cycle safety); surface a media-looking
+            // one so it isn't silently skipped.
+            report_skipped(skipped);
         }
     }
 }
@@ -727,6 +739,7 @@ fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia 
     for p in paths {
         let path = std::path::Path::new(&p);
         if path.is_dir() {
+            let before = skipped.len();
             let mut media: Vec<String> = Vec::new();
             collect_recursive(path, &exts, &mut media, &mut skipped);
             media.sort();
@@ -736,6 +749,12 @@ fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia 
                     name: if name.is_empty() { "Folder".to_string() } else { name },
                     media,
                 });
+            } else if skipped.len() == before {
+                // Folder yielded nothing importable and nothing to report from
+                // inside — surface the folder itself so an empty/irrelevant
+                // dropped folder isn't a silent no-op.
+                let b = basename(path);
+                skipped.push(if b.is_empty() { p } else { b });
             }
         } else if path.is_file() {
             if has_media_ext(path, &exts) {
