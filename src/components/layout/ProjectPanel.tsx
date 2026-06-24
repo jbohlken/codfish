@@ -783,6 +783,7 @@ export function ProjectPanel() {
 
     const begin = () => {
       dragging = true;
+      hideTooltip(); // clear any hover tooltip already showing on the grabbed row
       // Capture now so move/up keep firing if the cursor leaves the window
       // mid-drag (a release outside would otherwise strand the ghost).
       captureEl?.setPointerCapture?.(e.pointerId);

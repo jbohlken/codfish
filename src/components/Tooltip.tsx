@@ -78,6 +78,9 @@ export function hideTooltip() {
 export function Tooltip() {
   useEffect(() => {
     const onOver = (e: MouseEvent) => {
+      // Don't pop tooltips mid-drag — the pointer is captured, so no mouseout
+      // fires to dismiss one, and it strands over the dragged row.
+      if (document.body.classList.contains("rows-dragging")) return;
       const el = (e.target as HTMLElement).closest("[data-tooltip]") as HTMLElement | null;
       if (!el) return;
       const text = el.getAttribute("data-tooltip") ?? "";
