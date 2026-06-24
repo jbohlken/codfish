@@ -74,10 +74,6 @@ function setDragImageLabel(e: DragEvent, label: string) {
   setTimeout(() => ghost.remove(), 0);
 }
 
-// Indent a bin's name by its tree depth for the flat "Move to bin" pickers.
-// Non-breaking spaces so the leading indent isn't collapsed in the button text.
-const indentLabel = (depth: number, name: string) => `${"  ".repeat(depth)}${name}`;
-
 // ── Panel resizing ──────────────────────────────────────────────────────────
 // The grid column is driven by --project-panel-width; dragging the handle
 // overrides it inline on <html> and persists per-user. Double-click resets
@@ -468,11 +464,14 @@ export function ProjectPanel() {
     const multi = ids.length > 1;
     const moveSubmenu: ContextMenuItem[] = [
       ...orderedBinList.map(({ bin: b, depth }) => ({
-        label: indentLabel(depth, b.name),
+        label: b.name,
+        icon: <Folder size={14} />,
+        indent: depth,
         onClick: () => moveMediaToBin(ids, b.id),
       })),
       {
         label: "New bin…",
+        icon: <FolderPlus size={14} />,
         onClick: () => {
           // One undo step (create + move together), auto-named without collision.
           const id = createBinWithMedia(ids);
@@ -520,17 +519,20 @@ export function ProjectPanel() {
     const moveTargets = orderedBinList.filter(({ bin: t }) => !isDescendant(bins, bin.id, t.id));
     const moveSubmenu: ContextMenuItem[] = [];
     if (bin.parentId != null) {
-      moveSubmenu.push({ label: "Top level", onClick: () => moveBin(bin.id, null) });
+      moveSubmenu.push({ label: "Top level", icon: <FolderOpen size={14} />, onClick: () => moveBin(bin.id, null) });
     }
     moveSubmenu.push(
       ...moveTargets.map(({ bin: t, depth }) => ({
-        label: indentLabel(depth, t.name),
+        label: t.name,
+        icon: <Folder size={14} />,
+        indent: depth,
         onClick: () => moveBin(bin.id, t.id),
       })),
     );
     const items: ContextMenuItem[] = [
       {
         label: "New sub-bin",
+        icon: <FolderPlus size={14} />,
         onClick: () => {
           const id = createBin(undefined, bin.id);
           if (id) { expandBin(bin.id); editingBinId.value = id; }

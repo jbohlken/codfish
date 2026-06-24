@@ -1,15 +1,43 @@
 import { signal } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { CaretRightIcon as CaretRight } from "@phosphor-icons/react";
+import type { ComponentChildren } from "preact";
 
 export interface ContextMenuItem {
   label: string;
   danger?: boolean;
   disabled?: boolean;
+  /** Optional leading icon, rendered before the label. */
+  icon?: ComponentChildren;
+  /** Nesting level for tree-shaped pickers (e.g. "Move to bin"): indents the
+   *  row by this many steps so the hierarchy reads at a glance. */
+  indent?: number;
   /** Action to run on click. Omitted for items that only open a submenu. */
   onClick?: () => void;
   /** When present, the item opens a flyout of these instead of acting. */
   submenu?: ContextMenuItem[];
+}
+
+// Pixels per indent level for tree-shaped menus, added to the item's base
+// left padding.
+const MENU_INDENT_STEP = 16;
+
+/** Render an item's leading icon (if any) + its label. Shared by the root menu
+ *  and submenu flyouts so both pick up icons and indentation. */
+function ItemBody({ item }: { item: ContextMenuItem }) {
+  return (
+    <>
+      {item.icon && <span class="context-menu-item-icon">{item.icon}</span>}
+      <span class="context-menu-item-label">{item.label}</span>
+    </>
+  );
+}
+
+/** Inline left-padding override for an indented item, or undefined. */
+function indentStyle(item: ContextMenuItem) {
+  return item.indent
+    ? { paddingLeft: `calc(var(--space-3) + ${item.indent * MENU_INDENT_STEP}px)` }
+    : undefined;
 }
 
 interface ContextMenuState {
@@ -91,12 +119,13 @@ export function ContextMenu() {
           <button
             key={i}
             class={`context-menu-item ${item.danger ? "context-menu-item--danger" : ""}`}
+            style={indentStyle(item)}
             disabled={item.disabled}
             // Hovering a non-submenu sibling closes any open flyout.
             onMouseEnter={() => setOpenIndex(null)}
             onClick={() => { close(); item.onClick?.(); }}
           >
-            {item.label}
+            <ItemBody item={item} />
           </button>
         )
       )}
@@ -130,10 +159,11 @@ function Submenu({ items, onClose }: { items: ContextMenuItem[]; onClose: () => 
         <button
           key={j}
           class={`context-menu-item ${sub.danger ? "context-menu-item--danger" : ""}`}
+          style={indentStyle(sub)}
           disabled={sub.disabled}
           onClick={() => { onClose(); sub.onClick?.(); }}
         >
-          {sub.label}
+          <ItemBody item={sub} />
         </button>
       ))}
     </div>
