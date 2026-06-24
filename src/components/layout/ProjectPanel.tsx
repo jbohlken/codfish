@@ -760,7 +760,10 @@ export function ProjectPanel() {
       selected={selBinIds.has(node.bin.id)}
       dropActive={dropTarget.value === node.bin.id}
       onSelect={(e) => selectRowId(node.bin.id, "bin", e)}
-      onToggle={() => toggleBinCollapsed(node.bin.id)}
+      // Inert while searching: bins are force-expanded, so toggling would only
+      // (invisibly) mutate the persisted collapse state and surprise the user
+      // once the search clears.
+      onToggle={() => { if (!searching) toggleBinCollapsed(node.bin.id); }}
       onContextMenu={(e) => openBinMenu(e, node.bin)}
       onRename={(name) => { renameBin(node.bin.id, name); editingBinId.value = null; }}
       onCancelRename={() => { editingBinId.value = null; }}
@@ -944,6 +947,8 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
 
   if (hidden) return null;
 
+  const searching = query.length > 0;
+
   const commit = (value: string) => {
     if (committed.current) return;
     committed.current = true;
@@ -981,9 +986,12 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
         onContextMenu={onContextMenu}
       >
         <span
-          class="media-row-icon bin-row-toggle"
-          data-tooltip={collapsed ? "Expand" : "Collapse"}
-          onClick={(e) => { if (!editing) { e.stopPropagation(); onToggle(); } }}
+          // While searching the disclosure is forced open and toggling is
+          // inert, so the icon drops its toggle affordance and a click just
+          // falls through to select the row (like a clip's icon).
+          class={`media-row-icon${searching ? "" : " bin-row-toggle"}`}
+          data-tooltip={searching ? undefined : collapsed ? "Expand" : "Collapse"}
+          onClick={(e) => { if (!editing && !searching) { e.stopPropagation(); onToggle(); } }}
         >
           {collapsed ? <Folder size={14} /> : <FolderOpen size={14} />}
         </span>
