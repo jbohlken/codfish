@@ -498,6 +498,9 @@ async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
     delete toSave.profileName;
     delete toSave.profileHash;
   }
+  // Don't persist an empty bins array into a project that never had bins —
+  // keep its shape identical to a pre-bins .cod (bins is optional + additive).
+  if (toSave.bins && toSave.bins.length === 0) delete toSave.bins;
   await invoke<void>("save_project", { path: filePath, json: JSON.stringify(toSave, null, 2) });
 }
 
