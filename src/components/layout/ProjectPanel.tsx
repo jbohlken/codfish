@@ -465,13 +465,13 @@ export function ProjectPanel() {
     const moveSubmenu: ContextMenuItem[] = [
       ...orderedBinList.map(({ bin: b, depth }) => ({
         label: b.name,
-        icon: <Folder size={14} />,
+        icon: <Folder size={12} />,
         indent: depth,
         onClick: () => moveMediaToBin(ids, b.id),
       })),
       {
         label: "New bin…",
-        icon: <FolderPlus size={14} />,
+        icon: <FolderPlus size={12} />,
         onClick: () => {
           // One undo step (create + move together), auto-named without collision.
           const id = createBinWithMedia(ids);
@@ -519,12 +519,12 @@ export function ProjectPanel() {
     const moveTargets = orderedBinList.filter(({ bin: t }) => !isDescendant(bins, bin.id, t.id));
     const moveSubmenu: ContextMenuItem[] = [];
     if (bin.parentId != null) {
-      moveSubmenu.push({ label: "Top level", icon: <FolderOpen size={14} />, onClick: () => moveBin(bin.id, null) });
+      moveSubmenu.push({ label: "Top level", icon: <FolderOpen size={12} />, onClick: () => moveBin(bin.id, null) });
     }
     moveSubmenu.push(
       ...moveTargets.map(({ bin: t, depth }) => ({
         label: t.name,
-        icon: <Folder size={14} />,
+        icon: <Folder size={12} />,
         indent: depth,
         onClick: () => moveBin(bin.id, t.id),
       })),
@@ -532,7 +532,7 @@ export function ProjectPanel() {
     const items: ContextMenuItem[] = [
       {
         label: "New sub-bin",
-        icon: <FolderPlus size={14} />,
+        icon: <FolderPlus size={12} />,
         onClick: () => {
           const id = createBin(undefined, bin.id);
           if (id) { expandBin(bin.id); editingBinId.value = id; }

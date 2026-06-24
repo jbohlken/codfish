@@ -775,7 +775,7 @@ body.col-resizing {
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   width: 100%;
   text-align: left;
   padding: 5px var(--space-2);
@@ -788,11 +788,11 @@ body.col-resizing {
   white-space: nowrap;
 }
 
-/* Leading icon for tree-shaped pickers (e.g. "Move to bin"). */
+/* Leading icon for tree-shaped pickers (e.g. "Move to bin"). Inherits the
+   item's text color and uses the same 6px gap as the menu-bar dropdowns. */
 .context-menu-item-icon {
   display: inline-flex;
   flex-shrink: 0;
-  color: var(--color-text-secondary);
 }
 
 .context-menu-item:hover:not(:disabled) {
