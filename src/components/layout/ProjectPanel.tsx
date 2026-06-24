@@ -495,15 +495,15 @@ export function ProjectPanel() {
   // subtree). "New bin…" creates a bin and moves the whole selection into it.
   const buildMoveSubmenu = (mediaIds: string[], binIds: string[]): ContextMenuEntry[] => {
     // When everything selected already shares one parent bin, moving there is a
-    // no-op — drop it as a target so there's no dead entry. (A mixed set of
-    // parents has no single no-op target, so nothing is excluded then.)
+    // no-op — show it greyed-out (rather than hidden) so its sub-bins don't end
+    // up indented under nothing, and so "where it is now" stays visible. (A
+    // mixed set of parents has no single no-op target, so none is greyed.)
     const parents = new Set<string | undefined>();
     for (const id of mediaIds) parents.add(proj!.media.find((m) => m.id === id)?.binId ?? undefined);
     for (const id of binIds) parents.add(bins.find((b) => b.id === id)?.parentId ?? undefined);
     const commonParent = parents.size === 1 ? [...parents][0] : undefined;
-    const targets = orderedBinList.filter(
-      ({ bin: t }) => t.id !== commonParent && !binIds.some((bid) => isDescendant(bins, bid, t.id)),
-    );
+    // A bin can't be a target if it's a selected bin or inside one (cycle).
+    const targets = orderedBinList.filter(({ bin: t }) => !binIds.some((bid) => isDescendant(bins, bid, t.id)));
     const anyNested = mediaIds.some((id) => proj!.media.find((m) => m.id === id)?.binId != null)
       || binIds.some((id) => bins.find((b) => b.id === id)?.parentId != null);
     const entries: ContextMenuEntry[] = [];
@@ -512,12 +512,9 @@ export function ProjectPanel() {
       if (targets.length) entries.push({ separator: true });
     }
     entries.push(
-      ...targets.map(({ bin: t, depth }) => ({
-        label: t.name,
-        icon: <Folder size={12} />,
-        indent: depth,
-        onClick: () => moveItemsToBin(mediaIds, binIds, t.id),
-      })),
+      ...targets.map(({ bin: t, depth }) => t.id === commonParent
+        ? { label: t.name, icon: <Folder size={12} />, indent: depth, disabled: true }
+        : { label: t.name, icon: <Folder size={12} />, indent: depth, onClick: () => moveItemsToBin(mediaIds, binIds, t.id) }),
     );
     if (entries.length) entries.push({ separator: true });
     entries.push({
