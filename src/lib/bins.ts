@@ -110,8 +110,11 @@ export function buildBinForest(
   if (sortSiblings) topLevel = sortSiblings(topLevel);
   const roots = topLevel.map(build);
   // Bins stuck in a cycle were never reached from the top level — surface them
-  // as roots (the visited guard inside build() keeps the recursion finite).
-  for (const b of bins) {
+  // as roots, ordered like every other level (the visited guard inside build()
+  // keeps the recursion finite).
+  let stray = bins.filter((b) => !visited.has(b.id));
+  if (sortSiblings) stray = sortSiblings(stray);
+  for (const b of stray) {
     if (!visited.has(b.id)) roots.push(build(b));
   }
 

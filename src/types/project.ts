@@ -80,8 +80,10 @@ export interface Bin {
   /// defensive about both so a malformed tree never hides bins).
   parentId?: string;
   /// ISO timestamp of when the bin was created. Drives the "Date added" sort
-  /// for bins; absent on bins created before this field existed (they fall
-  /// back to array order via a stable sort).
+  /// for bins. Always set by the app (makeBin); only a hand-edited .cod could
+  /// omit it, in which case — mirroring media's added-sort — an un-stamped bin
+  /// is treated as predating any stamped one, and bins with equal/again-absent
+  /// stamps keep their array (insertion) order via the stable index tiebreak.
   createdAt?: string;
 }
 
