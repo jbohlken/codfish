@@ -494,6 +494,11 @@ body.col-resizing {
   cursor: pointer;
   text-align: left;
   transition: background 0.1s;
+  /* Suppress the default focus ring on the <button> media rows (the same as
+     the app's other custom controls) — selection is shown by the row's
+     background, and the stray UA outline doesn't appear on the <div> bin rows,
+     so leaving it on made the two look inconsistent on click/Shift. */
+  outline: none;
   /* Explicit so <button> media rows and the <div> bin row render identically —
      bare buttons otherwise fall back to the UA font + line-height: normal,
      making them shorter and a different typeface than the inherited app font. */
