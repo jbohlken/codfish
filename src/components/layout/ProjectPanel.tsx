@@ -1100,7 +1100,10 @@ export function ProjectPanel() {
         // the selection and closes the editor — row clicks select and stop here
         // by hitting .media-row first. (A drag's trailing click is swallowed, so
         // dragging onto empty space won't deselect.)
-        onClick={(e) => { if (!(e.target as HTMLElement).closest(".media-row")) deselectAll(); }}
+        // Also clear the shift-range anchor (a ProjectPanel-local signal
+        // deselectAll can't reach), so a later shift-click starts fresh instead
+        // of resurrecting the just-discarded range from the stale anchor.
+        onClick={(e) => { if (!(e.target as HTMLElement).closest(".media-row")) { selectionAnchor.value = null; deselectAll(); } }}
       >
         {!proj ? (
           <div class="empty-state">
