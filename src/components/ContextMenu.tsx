@@ -133,7 +133,11 @@ export function ContextMenu() {
               class={`context-menu-item context-menu-item--parent ${item.danger ? "context-menu-item--danger" : ""}`}
               disabled={item.disabled}
               // Open on click too (hover-only excludes touch/trackpad taps).
-              onClick={() => setOpenIndex(openIndex === i ? null : i)}
+              // Idempotent open, not toggle: a toggle fights hover (hover opens
+              // it, the same click then closes it, and it stays stuck-closed
+              // because no fresh mouseenter fires) and on touch the synthetic
+              // mouseover before the click would tap it straight back closed.
+              onClick={() => setOpenIndex(i)}
             >
               <span class="context-menu-item-parent-label"><ItemBody item={item} /></span>
               <CaretRight size={12} />
