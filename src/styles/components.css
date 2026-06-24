@@ -490,10 +490,11 @@ body.col-resizing {
   padding: var(--space-2) var(--space-3);
   background: transparent;
   border: none;
+  /* Reserve a 3px left gutter for the --open marker (transparent until open) so
+     opening a clip never shifts the row — matches the selected caption row. */
+  border-left: 3px solid transparent;
   border-radius: 0;
   cursor: pointer;
-  /* Positioning context for the --open accent bar (::before). */
-  position: relative;
   text-align: left;
   transition: background 0.1s;
   /* Suppress the default focus ring on the <button> media rows (the same as
@@ -516,19 +517,12 @@ body.col-resizing {
   background: var(--color-accent-light);
 }
 
-/* Marks the clip currently open in the editor with a left accent bar — or, when
-   that clip is hidden inside a collapsed bin, marks the bin standing in for it.
-   A left gutter bar reads on top of the selection fill and on an unselected bin
-   alike, and doesn't disturb the row's [icon][name] layout. */
-.media-row--open::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--color-accent);
-  border-radius: 0 2px 2px 0;
+/* Marks the clip open in the editor — or the collapsed bin standing in for it —
+   with the same 3px accent left border the selected caption row uses. Paired
+   with the selection fill it inherits, the open clip's row reads identically to
+   a selected caption row, so "what's active" looks the same in both panels. */
+.media-row--open {
+  border-left-color: var(--color-accent);
 }
 
 .media-row--selected:hover {
