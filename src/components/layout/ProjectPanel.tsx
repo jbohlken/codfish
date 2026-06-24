@@ -542,10 +542,15 @@ export function ProjectPanel() {
         selectedMediaIds.value = next;
         if (next.has(id)) selectedMediaId.value = id;
         else {
-          // Removed the active clip — fall back to another selected clip if any,
-          // else leave the editor where it is.
-          const fallback = orderedRows.find((r) => r.kind === "media" && next.has(r.id));
-          if (fallback) selectedMediaId.value = fallback.id;
+          // Removed the active clip — move the editor to another still-selected
+          // clip so the selection stays coherent: prefer a visible one, else any
+          // in the set (e.g. one inside a collapsed bin). If no clip remains,
+          // leave the editor on its last clip — same as a bins-only selection
+          // (nulling it here would wrongly clear any co-selected bins via the
+          // coherence effect).
+          const visible = orderedRows.find((r) => r.kind === "media" && next.has(r.id));
+          const fallback = visible?.id ?? next.values().next().value;
+          if (fallback) selectedMediaId.value = fallback;
         }
       } else {
         const next = new Set(selectedBinIds.peek());
