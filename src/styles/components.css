@@ -584,6 +584,15 @@ body.col-resizing {
   color: var(--color-text-tertiary);
 }
 
+/* Empty stand-in for the disclosure caret on media rows, so their icon lines up
+   with bin icons. Width matches the 12px caret glyph; the row's flex gap does
+   the rest. */
+.media-row-caret-spacer {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 12px;
+}
+
 /* Bin members and sub-bins render indented beneath their bin row. The indent
    is depth-driven and applied inline (paddingLeft) by ProjectPanel, since it
    scales with nesting level — see BIN_INDENT_STEP. */

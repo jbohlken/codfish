@@ -40,8 +40,12 @@ import type { MediaItem, Bin } from "../../types/project";
 
 const missingIds = signal<ReadonlySet<string>>(new Set());
 
-// Pixels each bin-tree nesting level shifts its rows to the right.
-const BIN_INDENT_STEP = 16;
+// Pixels each bin-tree nesting level shifts its rows to the right — one
+// disclosure caret (12px) + the row's flex gap (--space-2, 8px), so a child's
+// caret sits under its parent's icon, Explorer-style. Bins and media at the
+// same depth share this, and media carry a caret-width spacer (so their icon
+// lines up with a bin's icon) — keeping the two row kinds perfectly aligned.
+const BIN_INDENT_STEP = 20;
 
 // ── Drag-and-drop ─────────────────────────────────────────────────────────
 // What's currently being dragged, and the live drop target for highlighting.
@@ -594,6 +598,7 @@ export function ProjectPanel() {
       selected={selIds.has(item.id)}
       missing={missingIds.value.has(item.id)}
       depth={depth}
+      tree={hasBins}
       onSelect={(e) => selectRow(item, e)}
       onContextMenu={(e) => openRowMenu(e, item)}
       onDragStart={(e) => startMediaDrag(item, e)}
@@ -852,12 +857,15 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, o
   );
 }
 
-function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu, onDragStart, onDragEnd }: {
+function MediaRow({ item, query, selected, missing, depth, tree, onSelect, onContextMenu, onDragStart, onDragEnd }: {
   item: MediaItem;
   query: string;
   selected: boolean;
   missing: boolean;
   depth: number;
+  // True whenever bins exist, so the row reserves a caret-width gutter and its
+  // icon lines up with bin icons (even at depth 0, alongside top-level bins).
+  tree: boolean;
   onSelect: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
   onDragStart: (e: DragEvent) => void;
@@ -873,12 +881,11 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
     ? `${item.fps} fps${item.dropFrame != null ? (item.dropFrame ? " DF" : " NDF") : ""}`
     : null;
 
-  // Media in a bin at level L render at depth L+1. The first level of nesting
-  // gets a fixed offset that tucks the row under the bin's name (past the
-  // caret + folder icon); deeper levels add one indent step each.
-  const inBin = depth > 0;
-  const style = inBin
-    ? { paddingLeft: `calc(var(--space-3) + 22px + ${(depth - 1) * BIN_INDENT_STEP}px)` }
+  // Same indent formula as bin rows, so a clip and a sub-bin at the same depth
+  // line up exactly. The caret-width spacer below keeps the icon aligned with
+  // bin icons (which sit after their disclosure caret).
+  const style = depth > 0
+    ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` }
     : undefined;
 
   return (
@@ -892,6 +899,9 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
+      {/* Empty caret-width gutter so the icon aligns with bin icons (which sit
+          past their disclosure caret). Only when bins exist. */}
+      {tree && <span class="media-row-caret-spacer" aria-hidden="true" />}
       <span class="media-row-icon">{getMediaIcon(item.path)}</span>
       <span class="media-row-info">
         <span class="media-row-name">{highlightMatch(item.name, query)}</span>
