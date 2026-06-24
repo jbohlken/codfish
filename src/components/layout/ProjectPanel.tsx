@@ -522,6 +522,21 @@ export function ProjectPanel() {
     return entries;
   };
 
+  // Drop gone bins (removed or dissolved) from the bin selection — leftover ids
+  // would just highlight nothing and leave a stale shift-anchor.
+  const deselectBins = (ids: Iterable<string>) => {
+    const drop = new Set(ids);
+    const next = [...selectedBinIds.peek()].filter((id) => !drop.has(id));
+    if (next.length !== selectedBinIds.peek().size) selectedBinIds.value = new Set(next);
+  };
+
+  // Dissolve bins, then clear them from the selection (their contents survive,
+  // promoted up a level — but the bins themselves are gone).
+  const dissolveSelectedBins = (binIds: string[]) => {
+    dissolveBins(binIds);
+    deselectBins(binIds);
+  };
+
   // Remove a selection of clips and/or bins from the project (bins take their
   // whole sub-tree and the media inside). Files on disk are untouched. Confirms
   // only when media would be lost; an empty bin removes silently, like Dissolve.
@@ -551,10 +566,7 @@ export function ProjectPanel() {
     removeMediaIds([...removeMedia], { removeBinIds: [...subtreeBins], label: "Remove from project" });
     if (subtreeBins.size) {
       forgetBinCollapse(subtreeBins);
-      // Drop the now-deleted bins from the selection (removeMediaIds only tends
-      // the media selection); leftover ids would just highlight nothing.
-      const stillSelected = [...selectedBinIds.peek()].filter((id) => !subtreeBins.has(id));
-      if (stillSelected.length !== selectedBinIds.peek().size) selectedBinIds.value = new Set(stillSelected);
+      deselectBins(subtreeBins);
     }
   };
 
@@ -609,7 +621,7 @@ export function ProjectPanel() {
         { label: "Rename", onClick: () => { editingBinId.value = id; } },
         { separator: true },
         { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
-        { label: "Dissolve bin", onClick: () => dissolveBins([id]) },
+        { label: "Dissolve bin", onClick: () => dissolveSelectedBins([id]) },
         { separator: true },
         { label: "Delete bin", danger: true, onClick: () => { void removeSelection([], [id]); } },
       ];
@@ -622,7 +634,7 @@ export function ProjectPanel() {
       { label: `Move ${label} to…`, submenu: buildMoveSubmenu(mediaIds, binIds) },
     ];
     if (binIds.length > 1 && mediaIds.length === 0) {
-      items.push({ label: `Dissolve ${binIds.length} bins`, onClick: () => dissolveBins(binIds) });
+      items.push({ label: `Dissolve ${binIds.length} bins`, onClick: () => dissolveSelectedBins(binIds) });
     }
     items.push(
       { separator: true },

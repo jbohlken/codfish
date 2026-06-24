@@ -375,8 +375,9 @@ export function planItemMove(
   });
   // Clips to move: selected, not already in target, and not inside a selected
   // bin (those travel with their bin).
+  const mediaById = new Map(media.map((m) => [m.id, m]));
   const moveMediaIds = mediaIds.filter((id) => {
-    const m = media.find((x) => x.id === id);
+    const m = mediaById.get(id);
     if (!m) return false;
     if (m.binId != null && selectedBins.has(m.binId)) return false;
     return (m.binId ?? undefined) !== target;
