@@ -453,7 +453,7 @@ body.col-resizing {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary);
   padding: 0 var(--space-2);
   margin-bottom: var(--space-1);
 }
