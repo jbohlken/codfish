@@ -693,13 +693,22 @@ fn basename(path: &std::path::Path) -> String {
 /// (Thumbs.db, .DS_Store), and symlinks — are incidental and intentionally NOT
 /// reported: only the paths the user explicitly dropped are surfaced (see
 /// collect_dropped_media), so a normal folder drop stays quiet.
-fn collect_recursive(dir: &std::path::Path, exts: &[String], media: &mut Vec<String>) {
+/// Hard cap on recursion depth. Bounds stack usage on a pathologically deep tree
+/// (the command runs on a worker thread with a finite stack, where an overflow
+/// is an uncatchable abort). Far deeper than any real media library, and on
+/// Windows MAX_PATH already caps real nesting well below this.
+const MAX_DROP_DEPTH: u32 = 64;
+
+fn collect_recursive(dir: &std::path::Path, exts: &[String], media: &mut Vec<String>, depth: u32) {
+    if depth >= MAX_DROP_DEPTH {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
         if ft.is_dir() {
-            collect_recursive(&path, exts, media);
+            collect_recursive(&path, exts, media, depth + 1);
         } else if ft.is_file() && has_media_ext(&path, exts) {
             if let Some(s) = path.to_str() {
                 media.push(s.to_string());
@@ -723,7 +732,7 @@ fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia 
         let path = std::path::Path::new(&p);
         if path.is_dir() {
             let mut media: Vec<String> = Vec::new();
-            collect_recursive(path, &exts, &mut media);
+            collect_recursive(path, &exts, &mut media, 0);
             media.sort();
             if !media.is_empty() {
                 let name = basename(path);
