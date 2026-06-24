@@ -32,7 +32,7 @@ import {
   type BinNode,
 } from "../../lib/bins";
 import { recentProjects } from "../../lib/recent";
-import { showContextMenu, type ContextMenuItem } from "../ContextMenu";
+import { showContextMenu, type ContextMenuItem, type ContextMenuEntry } from "../ContextMenu";
 import { hideTooltip } from "../Tooltip";
 import { confirmUnsavedChanges } from "../UnsavedChanges";
 import { mediaSettingsId } from "../MediaSettings";
@@ -566,21 +566,25 @@ export function ProjectPanel() {
     showContextMenu(e, buildSelectionMenu(mediaIds, binIds));
   };
 
-  const buildSelectionMenu = (mediaIds: string[], binIds: string[]): ContextMenuItem[] => {
-    // Single clip: full clip menu.
+  const buildSelectionMenu = (mediaIds: string[], binIds: string[]): ContextMenuEntry[] => {
+    // Single clip: full clip menu, grouped — item actions · organize · destroy.
     if (mediaIds.length === 1 && binIds.length === 0) {
       const id = mediaIds[0];
       const binned = proj!.media.find((m) => m.id === id)?.binId != null;
-      const items: ContextMenuItem[] = [
+      const items: ContextMenuEntry[] = [
         { label: "Settings…", onClick: () => { mediaSettingsId.value = id; } },
         { label: "Re-link file…", onClick: () => relinkMediaItem(id) },
+        { separator: true },
         { label: "Move to bin", submenu: buildMoveSubmenu(mediaIds, binIds) },
       ];
       if (binned) items.push({ label: "Remove from bin", onClick: () => moveMediaToBin(mediaIds, null) });
-      items.push({ label: "Remove from project", danger: true, onClick: () => removeMediaIds(mediaIds) });
+      items.push(
+        { separator: true },
+        { label: "Remove from project", danger: true, onClick: () => removeMediaIds(mediaIds) },
+      );
       return items;
     }
-    // Single bin: full bin menu.
+    // Single bin: full bin menu, grouped — create/rename · organize · destroy.
     if (binIds.length === 1 && mediaIds.length === 0) {
       const id = binIds[0];
       const bin = bins.find((b) => b.id === id)!;
@@ -598,30 +602,35 @@ export function ProjectPanel() {
             onClick: () => moveBin(id, t.id),
           })),
       );
-      const items: ContextMenuItem[] = [
+      const items: ContextMenuEntry[] = [
         {
           label: "New sub-bin",
           icon: <FolderPlus size={12} />,
           onClick: () => { const nid = createBin(undefined, id); if (nid) { expandBin(id); editingBinId.value = nid; } },
         },
         { label: "Rename", onClick: () => { editingBinId.value = id; } },
+        { separator: true },
       ];
       if (moveSubmenu.length) items.push({ label: "Move to…", submenu: moveSubmenu });
       items.push(
         { label: "Dissolve bin", onClick: () => dissolveBin(id) },
+        { separator: true },
         { label: "Delete bin", danger: true, onClick: () => { void removeSelection([], [id]); } },
       );
       return items;
     }
-    // Multi / mixed: only cross-kind actions.
+    // Multi / mixed: only cross-kind actions, with the destructive one split off.
     const label = countLabel(mediaIds.length, binIds.length);
     const anyNested = mediaIds.some((id) => proj!.media.find((m) => m.id === id)?.binId != null)
       || binIds.some((id) => bins.find((b) => b.id === id)?.parentId != null);
-    const items: ContextMenuItem[] = [
+    const items: ContextMenuEntry[] = [
       { label: `Move ${label} to bin`, submenu: buildMoveSubmenu(mediaIds, binIds) },
     ];
     if (anyNested) items.push({ label: "Move to top level", onClick: () => moveItemsToBin(mediaIds, binIds, null) });
-    items.push({ label: `Remove ${label} from project`, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } });
+    items.push(
+      { separator: true },
+      { label: `Remove ${label} from project`, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
+    );
     return items;
   };
 

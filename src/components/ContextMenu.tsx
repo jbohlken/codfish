@@ -15,8 +15,19 @@ export interface ContextMenuItem {
   /** Action to run on click. Omitted for items that only open a submenu. */
   onClick?: () => void;
   /** When present, the item opens a flyout of these instead of acting. */
-  submenu?: ContextMenuItem[];
+  submenu?: ContextMenuEntry[];
 }
+
+/** A divider between groups of items, with an optional uppercase group label
+ *  (same shape as the menu-bar select dropdowns' separators). */
+export interface ContextMenuSeparator {
+  separator: true;
+  label?: string;
+}
+
+export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator;
+
+const isSeparator = (e: ContextMenuEntry): e is ContextMenuSeparator => "separator" in e;
 
 // Pixels per indent level for tree-shaped menus, added to the item's base
 // left padding.
@@ -43,15 +54,25 @@ function indentStyle(item: ContextMenuItem) {
 interface ContextMenuState {
   x: number;
   y: number;
-  items: ContextMenuItem[];
+  items: ContextMenuEntry[];
 }
 
 export const contextMenu = signal<ContextMenuState | null>(null);
 
-export function showContextMenu(e: MouseEvent, items: ContextMenuItem[]) {
+export function showContextMenu(e: MouseEvent, items: ContextMenuEntry[]) {
   e.preventDefault();
   e.stopPropagation();
   contextMenu.value = { x: e.clientX, y: e.clientY, items };
+}
+
+/** A divider (with optional group label) between menu sections. */
+function Divider({ label }: { label?: string }) {
+  return (
+    <div class="context-menu-divider-wrap">
+      <div class="context-menu-divider" />
+      {label && <div class="context-menu-group-label">{label}</div>}
+    </div>
+  );
 }
 
 export function ContextMenu() {
@@ -98,7 +119,9 @@ export function ContextMenu() {
       onMouseDown={(e) => e.stopPropagation()}
     >
       {state.items.map((item, i) =>
-        item.submenu ? (
+        isSeparator(item) ? (
+          <Divider key={i} label={item.label} />
+        ) : item.submenu ? (
           <div
             key={i}
             class="context-menu-row"
@@ -136,7 +159,7 @@ export function ContextMenu() {
 /** Flyout for a submenu. Positioned by CSS to the right of its parent row,
  *  then nudged on mount to stay within the viewport (flip left on right-edge
  *  overflow; shift up on bottom-edge overflow). */
-function Submenu({ items, onClose }: { items: ContextMenuItem[]; onClose: () => void }) {
+function Submenu({ items, onClose }: { items: ContextMenuEntry[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -155,17 +178,21 @@ function Submenu({ items, onClose }: { items: ContextMenuItem[]; onClose: () => 
 
   return (
     <div ref={ref} class="context-menu context-menu-submenu">
-      {items.map((sub, j) => (
-        <button
-          key={j}
-          class={`context-menu-item ${sub.danger ? "context-menu-item--danger" : ""}`}
-          style={indentStyle(sub)}
-          disabled={sub.disabled}
-          onClick={() => { onClose(); sub.onClick?.(); }}
-        >
-          <ItemBody item={sub} />
-        </button>
-      ))}
+      {items.map((sub, j) =>
+        isSeparator(sub) ? (
+          <Divider key={j} label={sub.label} />
+        ) : (
+          <button
+            key={j}
+            class={`context-menu-item ${sub.danger ? "context-menu-item--danger" : ""}`}
+            style={indentStyle(sub)}
+            disabled={sub.disabled}
+            onClick={() => { onClose(); sub.onClick?.(); }}
+          >
+            <ItemBody item={sub} />
+          </button>
+        )
+      )}
     </div>
   );
 }

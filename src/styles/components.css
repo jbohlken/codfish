@@ -806,6 +806,21 @@ body.col-resizing {
   flex-shrink: 0;
 }
 
+/* Group divider (and optional uppercase label), matching the select dropdowns. */
+.context-menu-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: var(--space-1) 0;
+}
+
+.context-menu-group-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  padding: var(--space-1) var(--space-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .context-menu-item:hover:not(:disabled) {
   background: var(--color-surface-hover);
 }
