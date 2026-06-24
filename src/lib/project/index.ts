@@ -278,15 +278,20 @@ function notifySkipped(names: string[]): void {
  *  Shared by the Import dialog (whose picker is restricted to media, so nothing
  *  is skipped) and by flat file-drops. */
 export async function importMediaPaths(paths: string[], binId?: string): Promise<void> {
-  const proj = project.value;
-  if (!proj) return;
+  if (!project.value) return;
   const mediaPaths = paths.filter(isMediaPath);
   if (mediaPaths.length > 0) {
     const newItems = await buildMediaItems(mediaPaths, binId);
+    // Re-read state AFTER the async probe — the user can edit, undo, or import
+    // again while files probe (seconds for many/large files). Rebasing onto a
+    // snapshot captured before the await would silently discard that work and
+    // truncate the redo branch.
+    const cur = project.value;
+    if (!cur) return;
     const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
     // Record the imported clip as the post-op selection so redo lands on it,
     // not the clip that was active before the import.
-    pushHistory({ ...proj, media: [...proj.media, ...newItems] }, label, {
+    pushHistory({ ...cur, media: [...cur.media, ...newItems] }, label, {
       selectedMediaId: newItems[0].id,
       selectedCaptionIndex: null,
     });
@@ -329,22 +334,29 @@ export async function importDrop(paths: string[], targetBinId?: string): Promise
   }
 
   if (newItems.length > 0) {
-    const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
-    pushHistory(
-      {
-        ...proj,
-        bins: newBins.length ? [...(proj.bins ?? []), ...newBins] : proj.bins,
-        media: [...proj.media, ...newItems],
-      },
-      label,
-      { selectedMediaId: newItems[0].id, selectedCaptionIndex: null }, // redo lands on the import
-    );
-    selectedMediaId.value = newItems[0].id;
-    selectedCaptionIndex.value = null;
-    if (newBins.length) rememberCollapseState(); // new bins are open — remember it
-    // Reveal the import in a collapsed target bin (clips + any new sub-bins);
-    // expandBin persists so it stays open across sessions.
-    if (targetBinId) expandBin(targetBinId);
+    // Re-read after the async probe/collect so the append rebases onto the
+    // user's current state, not the pre-await snapshot (which would discard
+    // intervening edits and wipe the redo branch). New bins carry uuid ids, so
+    // appending them to the current bins can't collide.
+    const cur = project.value;
+    if (cur) {
+      const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
+      pushHistory(
+        {
+          ...cur,
+          bins: newBins.length ? [...(cur.bins ?? []), ...newBins] : cur.bins,
+          media: [...cur.media, ...newItems],
+        },
+        label,
+        { selectedMediaId: newItems[0].id, selectedCaptionIndex: null }, // redo lands on the import
+      );
+      selectedMediaId.value = newItems[0].id;
+      selectedCaptionIndex.value = null;
+      if (newBins.length) rememberCollapseState(); // new bins are open — remember it
+      // Reveal the import in a collapsed target bin (clips + any new sub-bins);
+      // expandBin persists so it stays open across sessions.
+      if (targetBinId) expandBin(targetBinId);
+    }
   }
   notifySkipped(result.skipped);
 }
