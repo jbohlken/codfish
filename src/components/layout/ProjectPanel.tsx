@@ -360,6 +360,9 @@ export function ProjectPanel() {
   const proj = project.value;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const panelBodyRef = useRef<HTMLDivElement>(null);
+  // Teardown for an in-flight pointer drag, so an unmount mid-drag can cancel it.
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanupRef.current?.(), []);
 
   useEffect(() => {
     checkMissingMedia(proj?.media ?? []);
@@ -776,7 +779,10 @@ export function ProjectPanel() {
     const p = dragPayload.peek();
     if (!p) return false;
     if (targetBinId === null) return true;
-    return !p.binIds.some((bid) => isDescendant(bins, bid, targetBinId));
+    // Read the live tree, not the render-time `bins` closure — a mid-drag
+    // mutation (e.g. a batch finishing) could otherwise misjudge cycle safety.
+    const liveBins = project.peek()?.bins ?? [];
+    return !p.binIds.some((bid) => isDescendant(liveBins, bid, targetBinId));
   };
 
   // Begin a potential drag from a row. Nothing happens until the pointer moves
@@ -891,16 +897,26 @@ export function ProjectPanel() {
       // If a click follows (drag started on this row), swallowClick eats it;
       // otherwise tidy the listener up next tick.
       if (wasDragging) setTimeout(() => document.removeEventListener("click", swallowClick, true), 0);
+      dragCleanupRef.current = null;
     };
 
     const onUp = () => finish(true);
     const onCancel = () => finish(false);
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") finish(false); };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape") return;
+      // While dragging, Escape cancels the drag and nothing else — don't let it
+      // also reach other app Escape handlers (e.g. the caption editor).
+      if (dragging) { ev.preventDefault(); ev.stopPropagation(); }
+      finish(false);
+    };
 
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
     document.addEventListener("pointercancel", onCancel);
     document.addEventListener("keydown", onKey);
+    // Let an unmount mid-drag tear everything down (no terminal pointer event
+    // would otherwise fire) — mirrors PanelResizeHandle's safety net.
+    dragCleanupRef.current = () => finish(false);
   };
 
   // depth = nesting level of the row (0 = top-level / ungrouped). Media inside a
