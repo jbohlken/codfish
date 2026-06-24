@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from "preact/hooks";
 import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
-import { signal } from "@preact/signals";
+import { signal, useComputed } from "@preact/signals";
 import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory } from "../../store/app";
 import {
   newProjectGuarded,
@@ -466,8 +466,15 @@ export function ProjectPanel() {
 
   const showSearch = !!proj && hasMedia && searchOpen.value;
 
-  const selIds = selectedMediaIds.value;
-  const selBinIds = selectedBinIds.value;
+  // Selection and drop highlights are bound per-row to computed signals (see
+  // MediaRow/BinGroup) rather than read here — so selecting or dragging updates
+  // only the affected row's class attribute and never re-renders the forest.
+  // The root drop highlight and the new-bin tooltip read their signals the same
+  // way, keeping this render off the dropTarget/selection subscription list.
+  const panelBodyClass = useComputed(
+    () => `panel-body scrollable${dropTarget.value === ROOT_DROP ? " panel-body--drop-root" : ""}`,
+  );
+  const newBinTooltip = useComputed(() => (selectedBinIds.value.size === 1 ? "New sub-bin" : "New bin"));
   // Sub-bins at each level follow the same sort as media; media keep the
   // already-sorted order they arrive in. Bins first, then ungrouped media.
   const forest = buildBinForest(visibleMedia, bins, (level) => sortBins(level, sMode, sDir));
@@ -926,8 +933,6 @@ export function ProjectPanel() {
       key={item.id}
       item={item}
       query={query}
-      selected={selIds.has(item.id)}
-      missing={missingIds.value.has(item.id)}
       depth={depth}
       onSelect={(e) => selectRow(item, e)}
       onContextMenu={(e) => openRowMenu(e, item)}
@@ -948,8 +953,6 @@ export function ProjectPanel() {
       hidden={searching && !binShown(node)}
       editing={editingBinId.value === node.bin.id}
       query={query}
-      selected={selBinIds.has(node.bin.id)}
-      dropActive={dropTarget.value === node.bin.id}
       onSelect={(e) => selectRowId(node.bin.id, "bin", e)}
       // Inert while searching: bins are force-expanded, so toggling would only
       // (invisibly) mutate the persisted collapse state and surprise the user
@@ -1017,7 +1020,7 @@ export function ProjectPanel() {
                 // With exactly one bin highlighted, make the new bin a sub-bin
                 // of it; otherwise (none, or an ambiguous multi-selection) a
                 // top-level bin.
-                data-tooltip={selBinIds.size === 1 ? "New sub-bin" : "New bin"}
+                data-tooltip={newBinTooltip}
                 onClick={() => {
                   const sel = [...selectedBinIds.peek()];
                   const parentId = sel.length === 1 ? sel[0] : undefined;
@@ -1049,7 +1052,7 @@ export function ProjectPanel() {
           finds bins by their data-bin-id and falls back to this element. */}
       <div
         ref={panelBodyRef}
-        class={`panel-body scrollable${dropTarget.value === ROOT_DROP ? " panel-body--drop-root" : ""}`}
+        class={panelBodyClass}
       >
         {!proj ? (
           <div class="empty-state">
@@ -1108,15 +1111,13 @@ export function ProjectPanel() {
   );
 }
 
-function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dropActive, query, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onPointerDownDrag, renderItems }: {
+function BinGroup({ bin, count, depth, collapsed, hidden, editing, query, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onPointerDownDrag, renderItems }: {
   bin: Bin;
   count: number;
   depth: number;
   collapsed: boolean;
   hidden: boolean;
   editing: boolean;
-  selected: boolean;
-  dropActive: boolean;
   query: string;
   onSelect: (e: MouseEvent) => void;
   onToggle: () => void;
@@ -1137,6 +1138,15 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
       inputRef.current?.select();
     }
   }, [editing]);
+
+  // Bound to class so selecting the bin or dragging over it updates only this
+  // element's attribute — no BinGroup re-render. Reads the signals directly
+  // (not props), so the parent never subscribes to selection/dropTarget.
+  const rowClass = useComputed(
+    () =>
+      `media-row media-row--bin${selectedBinIds.value.has(bin.id) ? " media-row--selected" : ""}` +
+      `${dropTarget.value === bin.id ? " media-row--drop-target" : ""}`,
+  );
 
   if (hidden) return null;
 
@@ -1168,7 +1178,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
           right by one indent step. The row is the drag handle and shows both
           the selected and drop-target highlights. */}
       <div
-        class={`media-row media-row--bin${selected ? " media-row--selected" : ""}${dropActive ? " media-row--drop-target" : ""}`}
+        class={rowClass}
         style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + min(${depth * BIN_INDENT_STEP}px, 45%))` } : undefined}
         onPointerDown={onPointerDownDrag}
         onClick={(e) => { if (!editing) onSelect(e); }}
@@ -1214,16 +1224,25 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
   );
 }
 
-function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu, onPointerDownDrag }: {
+function MediaRow({ item, query, depth, onSelect, onContextMenu, onPointerDownDrag }: {
   item: MediaItem;
   query: string;
-  selected: boolean;
-  missing: boolean;
   depth: number;
   onSelect: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
   onPointerDownDrag: (e: PointerEvent) => void;
 }) {
+  // `missing` drives the badge/meta child (a render-time swap), so the row does
+  // re-render when its missing state flips (rare — only on a media-existence
+  // re-check). Selection, by contrast, is bound to class below and never
+  // re-renders the row.
+  const missing = missingIds.value.has(item.id);
+  const rowClass = useComputed(
+    () =>
+      `media-row${selectedMediaIds.value.has(item.id) ? " media-row--selected" : ""}` +
+      `${missingIds.value.has(item.id) ? " media-row--missing" : ""}`,
+  );
+
   const captionMeta = item.captions.length > 0
     ? `${item.captions.length} captions`
     : "No captions";
@@ -1241,7 +1260,7 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
 
   return (
     <button
-      class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""}`}
+      class={rowClass}
       style={style}
       data-tooltip={`${item.name}\n${item.path}${fpsLabel ? `\n${fpsLabel}` : ""}`}
       onClick={onSelect}
