@@ -24,7 +24,7 @@ import {
   createBin,
   createBinWithItems,
   renameBin,
-  dissolveBin,
+  dissolveBins,
   moveItemsToBin,
   forgetBinCollapse,
   type BinNode,
@@ -609,18 +609,28 @@ export function ProjectPanel() {
         { label: "Rename", onClick: () => { editingBinId.value = id; } },
         { separator: true },
         { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
-        { label: "Dissolve bin", onClick: () => dissolveBin(id) },
+        { label: "Dissolve bin", onClick: () => dissolveBins([id]) },
         { separator: true },
         { label: "Delete bin", danger: true, onClick: () => { void removeSelection([], [id]); } },
       ];
     }
-    // Multi / mixed: only cross-kind actions, with the destructive one split off.
+    // Multi / mixed: cross-kind actions, plus Dissolve when bins are selected
+    // (it only affects the bins; clips are untouched). Destructive split off.
     const label = countLabel(mediaIds.length, binIds.length);
-    return [
+    const items: ContextMenuEntry[] = [
       { label: `Move ${label} to…`, submenu: buildMoveSubmenu(mediaIds, binIds) },
+    ];
+    if (binIds.length) {
+      items.push({
+        label: binIds.length === 1 ? "Dissolve bin" : `Dissolve ${binIds.length} bins`,
+        onClick: () => dissolveBins(binIds),
+      });
+    }
+    items.push(
       { separator: true },
       { label: `Remove ${label} from project`, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
-    ];
+    );
+    return items;
   };
 
   const openRowMenu = (e: MouseEvent, item: MediaItem) => openContextMenuFor(e, item.id, "media");

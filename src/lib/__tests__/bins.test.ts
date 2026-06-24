@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildBinForest, sortBins, collectSubtree, isDescendant, rangeSelect, planItemMove } from "../bins";
+import { buildBinForest, sortBins, collectSubtree, isDescendant, rangeSelect, planItemMove, planDissolve } from "../bins";
 import type { BinNode } from "../bins";
 import type { Bin, MediaItem } from "../../types/project";
 
@@ -193,6 +193,44 @@ describe("planItemMove", () => {
   it("refuses to move a bin into its own subtree (cycle)", () => {
     const bins = [bin("a"), bin("b", "a")];
     expect(planItemMove(bins, [], [], ["a"], "b").reparentBinIds).toEqual([]);
+  });
+});
+
+describe("planDissolve", () => {
+  const parentOf = (bins: ReturnType<typeof planDissolve>["bins"], id: string) =>
+    bins.find((b) => b.id === id)?.parentId;
+  const binOf = (media: ReturnType<typeof planDissolve>["media"], id: string) =>
+    media.find((m) => m.id === id)?.binId;
+
+  it("promotes a dissolved bin's contents to its parent", () => {
+    const bins = [bin("root"), bin("X", "root"), bin("child", "X")];
+    const media = [m("a", "X")];
+    const out = planDissolve(bins, media, ["X"]);
+    expect(out.bins.map((b) => b.id)).toEqual(["root", "child"]); // X gone
+    expect(parentOf(out.bins, "child")).toBe("root");
+    expect(binOf(out.media, "a")).toBe("root");
+  });
+
+  it("promotes a dissolved root bin's contents to the top level", () => {
+    const out = planDissolve([bin("R"), bin("c", "R")], [m("a", "R")], ["R"]);
+    expect(parentOf(out.bins, "c")).toBeUndefined();
+    expect(binOf(out.media, "a")).toBeUndefined();
+  });
+
+  it("skips past several dissolved ancestors at once (parent + child)", () => {
+    const bins = [bin("root"), bin("A", "root"), bin("B", "A"), bin("g", "B")];
+    const media = [m("a", "A"), m("b", "B")];
+    const out = planDissolve(bins, media, ["A", "B"]);
+    expect(out.bins.map((b) => b.id)).toEqual(["root", "g"]);
+    expect(parentOf(out.bins, "g")).toBe("root");   // g was under B, promoted past A
+    expect(binOf(out.media, "a")).toBe("root");
+    expect(binOf(out.media, "b")).toBe("root");
+  });
+
+  it("leaves bins outside the dissolve set untouched", () => {
+    const bins = [bin("X"), bin("Y"), bin("y1", "Y")];
+    const out = planDissolve(bins, [], ["X"]);
+    expect(parentOf(out.bins, "y1")).toBe("Y");
   });
 });
 

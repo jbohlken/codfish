@@ -289,26 +289,46 @@ export function renameBin(id: string, name: string): void {
   );
 }
 
-/** Remove a bin, promoting its contents up one level: child sub-bins and direct
- *  media reparent to the dissolved bin's parent (or to top-level/ungrouped when
- *  it was a root). Files are kept. */
-export function dissolveBin(id: string): void {
+/**
+ * Pure planner for {@link dissolveBins}: drop the dissolved bins and promote
+ * everything they held up to the nearest *surviving* ancestor (or top level).
+ * Handles dissolving a parent and child together — contents skip past every
+ * dissolved ancestor in one go. Exposed for unit tests.
+ */
+export function planDissolve(
+  allBins: Bin[],
+  media: MediaItem[],
+  dissolveIds: string[],
+): { bins: Bin[]; media: MediaItem[] } {
+  const dissolve = new Set(dissolveIds);
+  const byId = new Map(allBins.map((b) => [b.id, b]));
+  // Walk up from a parent id past any dissolved bins to the first survivor
+  // (undefined = top level / ungrouped).
+  const survivingParent = (parentId?: string): string | undefined => {
+    let cur = parentId;
+    const seen = new Set<string>();
+    while (cur && dissolve.has(cur) && !seen.has(cur)) {
+      seen.add(cur);
+      cur = byId.get(cur)?.parentId;
+    }
+    return cur && !dissolve.has(cur) ? cur : undefined;
+  };
+  return {
+    bins: allBins
+      .filter((b) => !dissolve.has(b.id))
+      .map((b) => (b.parentId != null && dissolve.has(b.parentId) ? { ...b, parentId: survivingParent(b.parentId) } : b)),
+    media: media.map((m) => (m.binId != null && dissolve.has(m.binId) ? { ...m, binId: survivingParent(m.binId) } : m)),
+  };
+}
+
+/** Remove one or more bins, promoting their contents up to the nearest
+ *  surviving ancestor (or top level). Files are kept. */
+export function dissolveBins(binIds: string[]): void {
   const proj = project.value;
-  if (!proj?.bins) return;
-  const target = proj.bins.find((b) => b.id === id);
-  if (!target) return;
-  const newParent = target.parentId; // undefined => promote to top level / ungrouped
-  pushHistory(
-    {
-      ...proj,
-      bins: proj.bins
-        .filter((b) => b.id !== id)
-        .map((b) => (b.parentId === id ? { ...b, parentId: newParent } : b)),
-      media: proj.media.map((m) => (m.binId === id ? { ...m, binId: newParent } : m)),
-    },
-    "Dissolve bin",
-  );
-  forgetBinCollapse(id);
+  if (!proj?.bins || binIds.length === 0) return;
+  const { bins, media } = planDissolve(proj.bins, proj.media, binIds);
+  pushHistory({ ...proj, bins, media }, binIds.length > 1 ? `Dissolve ${binIds.length} bins` : "Dissolve bin");
+  forgetBinCollapse(binIds);
 }
 
 /**
