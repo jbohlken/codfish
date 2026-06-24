@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory } from "../../store/app";
 import { showError } from "../../components/ErrorModal";
+import { showNotice } from "../../components/NoticeModal";
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
 import { addRecent, loadRecent } from "../recent";
@@ -232,9 +233,10 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
 }
 
 /** Probe + append the given file paths as media (one undo step), optionally
- *  into a bin, and select the first. Non-media paths (and dropped folders,
- *  which have no media extension) are ignored. Shared by the Import dialog and
- *  by OS file-drop onto the project panel. */
+ *  into a bin, and select the first. Paths whose extension isn't a supported
+ *  media type (including dropped folders) are skipped, and the user is told how
+ *  many were left out. Shared by the Import dialog (where the picker already
+ *  restricts to media, so nothing is skipped) and by OS file-drop. */
 export async function importMediaPaths(paths: string[], binId?: string): Promise<void> {
   const proj = project.value;
   if (!proj) return;
@@ -243,28 +245,39 @@ export async function importMediaPaths(paths: string[], binId?: string): Promise
     const ext = p.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
     return MEDIA_EXTS.includes(ext);
   });
-  if (mediaPaths.length === 0) return;
 
-  const newItems = await Promise.all(
-    mediaPaths.map(async (p) => {
-      const item = makeMediaItem(p);
-      if (binId) item.binId = binId;
-      const probe = await probeFps(p);
-      item.fps = probe.fps;
-      if (probe.vfr) item.vfr = true;
-      if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
-      if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
-      return item;
-    })
-  );
-  const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
-  pushHistory({
-    ...proj,
-    media: [...proj.media, ...newItems],
-  }, label);
+  if (mediaPaths.length > 0) {
+    const newItems = await Promise.all(
+      mediaPaths.map(async (p) => {
+        const item = makeMediaItem(p);
+        if (binId) item.binId = binId;
+        const probe = await probeFps(p);
+        item.fps = probe.fps;
+        if (probe.vfr) item.vfr = true;
+        if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
+        if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
+        return item;
+      })
+    );
+    const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
+    pushHistory({
+      ...proj,
+      media: [...proj.media, ...newItems],
+    }, label);
 
-  // Auto-select the first imported item
-  selectedMediaId.value = newItems[0].id;
+    // Auto-select the first imported item
+    selectedMediaId.value = newItems[0].id;
+  }
+
+  // Tell the user about anything that couldn't be imported (unsupported type or
+  // a folder). The dialog never skips, so this only surfaces on file-drop.
+  const skipped = paths.length - mediaPaths.length;
+  if (skipped > 0) {
+    showNotice(
+      "Some items weren’t imported",
+      `${skipped === 1 ? "1 item was" : `${skipped} items were`} skipped — Codfish imports video and audio files (${MEDIA_EXTS.join(", ")}).`,
+    );
+  }
 }
 
 export async function importMedia(): Promise<void> {
