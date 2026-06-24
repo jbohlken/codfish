@@ -11,7 +11,7 @@
 import { signal } from "@preact/signals";
 import { project, pushHistory } from "../store/app";
 import type { Bin, MediaItem } from "../types/project";
-import type { SortMode, SortDir } from "./mediaSort";
+import { sortMedia, type SortMode, type SortDir } from "./mediaSort";
 
 // ── Tree model (pure) ──────────────────────────────────────────────────────
 
@@ -139,6 +139,29 @@ export function collectSubtree(bins: Bin[], rootId: string): Set<string> {
     out.add(id);
     for (const c of childrenOf.get(id) ?? []) stack.push(c.id);
   }
+  return out;
+}
+
+/** Media ids in the order the project panel displays them: the bin forest
+ *  flattened depth-first — a bin's sub-bins (and their clips) before the bin's
+ *  own clips — then ungrouped clips, with the active sort applied at every
+ *  level. Independent of collapse and search (those only hide rows). Used to
+ *  order batch generation / bulk export so they follow what the user sees,
+ *  rather than raw import order. */
+export function orderMediaIdsForDisplay(
+  media: MediaItem[],
+  bins: Bin[],
+  mode: SortMode,
+  dir: SortDir,
+): string[] {
+  const forest = buildBinForest(sortMedia(media, mode, dir), bins, (level) => sortBins(level, mode, dir));
+  const out: string[] = [];
+  const visit = (node: BinNode) => {
+    for (const child of node.children) visit(child);
+    for (const m of node.items) out.push(m.id);
+  };
+  for (const root of forest.roots) visit(root);
+  for (const m of forest.ungrouped) out.push(m.id);
   return out;
 }
 

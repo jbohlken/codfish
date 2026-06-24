@@ -6,6 +6,7 @@ import type { TranscriptionProgress } from "../lib/transcription";
 import { validate } from "../lib/pipeline/validate";
 import { findCaptionAt } from "../lib/pipeline";
 import type { ValidationWarning } from "../lib/pipeline/types";
+import { SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../lib/mediaSort";
 
 // ── Project ────────────────────────────────────────────────────────────────
 export const project = signal<CodProject | null>(null);
@@ -46,6 +47,25 @@ effect(() => {
     if (selectedBinIds.peek().size > 0) selectedBinIds.value = new Set();
   }
 });
+
+// ── Project-panel sort (user view state, persisted; not in the .cod) ─────────
+// Lives here (not in ProjectPanel) so the batch/export id-lists can order
+// themselves the same way the panel displays them. The ordering itself stays
+// pure in lib/mediaSort + lib/bins.
+const SORT_MODE_KEY = "codfish:projectSortMode";
+const SORT_DIR_KEY = "codfish:projectSortDir";
+const storedSortMode = localStorage.getItem(SORT_MODE_KEY) as SortMode | null;
+const storedSortDir = localStorage.getItem(SORT_DIR_KEY) as SortDir | null;
+export const sortMode = signal<SortMode>(storedSortMode && SORT_MODES.includes(storedSortMode) ? storedSortMode : "added");
+export const sortDir = signal<SortDir>(storedSortDir && SORT_DIRS.includes(storedSortDir) ? storedSortDir : "asc");
+export function setSortMode(mode: SortMode): void {
+  sortMode.value = mode;
+  try { localStorage.setItem(SORT_MODE_KEY, mode); } catch { /* best-effort */ }
+}
+export function setSortDir(dir: SortDir): void {
+  sortDir.value = dir;
+  try { localStorage.setItem(SORT_DIR_KEY, dir); } catch { /* best-effort */ }
+}
 
 // ── Playback ───────────────────────────────────────────────────────────────
 export const playbackTime = signal(0);   // seconds

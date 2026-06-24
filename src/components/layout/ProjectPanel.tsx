@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from "preact/hooks";
 import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal, computed, useComputed } from "@preact/signals";
-import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory, deselectAll } from "../../store/app";
+import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory, deselectAll, sortMode, sortDir, setSortMode, setSortDir } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
@@ -37,7 +37,7 @@ import { showContextMenu, type ContextMenuEntry } from "../ContextMenu";
 import { hideTooltip } from "../Tooltip";
 import { confirmUnsavedChanges } from "../UnsavedChanges";
 import { mediaSettingsId } from "../MediaSettings";
-import { sortMedia, type SortMode, type SortDir } from "../../lib/mediaSort";
+import { sortMedia, SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../../lib/mediaSort";
 import type { MediaItem, Bin } from "../../types/project";
 
 const missingIds = signal<ReadonlySet<string>>(new Set());
@@ -161,14 +161,10 @@ function PanelResizeHandle() {
 }
 
 // ── Sort & filter ───────────────────────────────────────────────────────────
-// Sort mode/direction are user-level view state (persisted in localStorage,
-// not the .cod). Filter text is transient and resets on project switch. The
-// ordering itself lives in lib/mediaSort (pure + unit-tested).
-
-const SORT_MODE_KEY = "codfish:projectSortMode";
-const SORT_DIR_KEY = "codfish:projectSortDir";
-const SORT_MODES: SortMode[] = ["added", "name"];
-const SORT_DIRS: SortDir[] = ["asc", "desc"];
+// Sort mode/direction live in store/app (so the batch/export id-lists can order
+// themselves the way the panel displays). Filter text is transient and resets
+// on project switch. The ordering itself lives in lib/mediaSort + lib/bins
+// (pure + unit-tested); SORT_MODES/SORT_DIRS come from lib/mediaSort.
 
 const SORT_LABELS: Record<SortMode, string> = {
   added: "Date added",
@@ -179,10 +175,6 @@ const DIR_LABELS: Record<SortMode, Record<SortDir, string>> = {
   name: { asc: "A → Z", desc: "Z → A" },
 };
 
-const storedMode = localStorage.getItem(SORT_MODE_KEY) as SortMode | null;
-const storedDir = localStorage.getItem(SORT_DIR_KEY) as SortDir | null;
-const sortMode = signal<SortMode>(storedMode && SORT_MODES.includes(storedMode) ? storedMode : "added");
-const sortDir = signal<SortDir>(storedDir && SORT_DIRS.includes(storedDir) ? storedDir : "asc");
 const filterText = signal("");
 // Search is hidden behind a header button; the filter row only renders while
 // open. It opens focused and closes when it loses focus while empty (or on
@@ -238,15 +230,6 @@ function closeSearch() {
 // being inline-renamed in its header.
 const selectionAnchor = signal<string | null>(null);
 const editingBinId = signal<string | null>(null);
-
-function setSortMode(mode: SortMode) {
-  sortMode.value = mode;
-  localStorage.setItem(SORT_MODE_KEY, mode);
-}
-function setSortDir(dir: SortDir) {
-  sortDir.value = dir;
-  localStorage.setItem(SORT_DIR_KEY, dir);
-}
 
 /** Apply the active sort + filter to a media array, as the panel displays it.
  *  Shared by the render and by removeMediaIds' selection fallback so both
