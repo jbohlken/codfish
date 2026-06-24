@@ -686,51 +686,34 @@ fn basename(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-/// Walk `dir`, pushing media files to `media` and the basenames of everything
-/// it couldn't import to `skipped` (so nothing is dropped silently). Recurses
-/// real subdirectories only — entry file types (not `is_dir`, which follows
-/// links) are checked so a symlink can't loop; a media-looking symlink is
-/// reported rather than followed.
-fn collect_recursive(
-    dir: &std::path::Path,
-    exts: &[String],
-    media: &mut Vec<String>,
-    skipped: &mut Vec<String>,
-) {
+/// Walk `dir`, collecting importable media files into `media`. Recurses real
+/// subdirectories only — entry file types (not `is_dir`, which follows links)
+/// are checked so a symlink can't loop. Files found INSIDE a dropped folder
+/// that aren't importable media — sidecars (.srt), thumbnails, OS cruft
+/// (Thumbs.db, .DS_Store), and symlinks — are incidental and intentionally NOT
+/// reported: only the paths the user explicitly dropped are surfaced (see
+/// collect_dropped_media), so a normal folder drop stays quiet.
+fn collect_recursive(dir: &std::path::Path, exts: &[String], media: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
-        let report_skipped = |skipped: &mut Vec<String>| {
-            let b = basename(&path);
-            if !b.is_empty() {
-                skipped.push(b);
-            }
-        };
         if ft.is_dir() {
-            collect_recursive(&path, exts, media, skipped);
-        } else if ft.is_file() {
-            if has_media_ext(&path, exts) {
-                match path.to_str() {
-                    Some(s) => media.push(s.to_string()),
-                    // Non-UTF8 path can't be handed back as a usable string —
-                    // report instead of silently dropping it.
-                    None => report_skipped(skipped),
-                }
-            } else {
-                report_skipped(skipped);
+            collect_recursive(&path, exts, media);
+        } else if ft.is_file() && has_media_ext(&path, exts) {
+            if let Some(s) = path.to_str() {
+                media.push(s.to_string());
             }
-        } else if ft.is_symlink() && has_media_ext(&path, exts) {
-            // We don't follow symlinks (cycle safety); surface a media-looking
-            // one so it isn't silently skipped.
-            report_skipped(skipped);
         }
     }
 }
 
 /// Classify dropped paths for import: loose media files, a flattened media list
-/// per dropped folder (recursed), and the basenames of everything unsupported
-/// (at any depth) so the UI can turn folders into bins and list what it left out.
+/// per dropped folder (recursed), and the basenames of the explicitly-dropped
+/// paths that couldn't be imported (a loose non-media file, or a folder holding
+/// no media) so the UI can turn folders into bins and report what it left out.
+/// Incidental non-media found by recursing INTO a folder is not reported (see
+/// collect_recursive), so dropping a normal media folder is quiet.
 #[tauri::command]
 fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia {
     let mut files: Vec<String> = Vec::new();
@@ -739,9 +722,8 @@ fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia 
     for p in paths {
         let path = std::path::Path::new(&p);
         if path.is_dir() {
-            let before = skipped.len();
             let mut media: Vec<String> = Vec::new();
-            collect_recursive(path, &exts, &mut media, &mut skipped);
+            collect_recursive(path, &exts, &mut media);
             media.sort();
             if !media.is_empty() {
                 let name = basename(path);
@@ -749,10 +731,9 @@ fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia 
                     name: if name.is_empty() { "Folder".to_string() } else { name },
                     media,
                 });
-            } else if skipped.len() == before {
-                // Folder yielded nothing importable and nothing to report from
-                // inside — surface the folder itself so an empty/irrelevant
-                // dropped folder isn't a silent no-op.
+            } else {
+                // A dropped folder that yielded no importable media — surface
+                // the folder itself so the drop isn't a silent no-op.
                 let b = basename(path);
                 skipped.push(if b.is_empty() { p } else { b });
             }
