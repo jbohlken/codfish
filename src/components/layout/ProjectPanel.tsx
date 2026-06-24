@@ -319,7 +319,7 @@ async function checkMissingMedia(items: MediaItem[]) {
   missingIds.value = new Set(results.filter((r) => r.missing).map((r) => r.id));
 }
 
-function removeMediaIds(mediaIds: string[], opts?: { removeBinIds?: string[]; label?: string }) {
+function removeMediaIds(mediaIds: string[], opts?: { removeBinIds?: string[]; label?: string; visibleOrderIds?: string[] }) {
   const proj = project.value;
   const removeBinIds = opts?.removeBinIds;
   if (!proj || (mediaIds.length === 0 && !removeBinIds?.length)) return;
@@ -327,15 +327,17 @@ function removeMediaIds(mediaIds: string[], opts?: { removeBinIds?: string[]; la
   const active = selectedMediaId.value;
   const removingActive = active !== null && removing.has(active);
   // When removing the active item, move selection to the nearest surviving
-  // neighbour in *visible* (sorted/filtered) order — under a non-default sort
-  // or active filter the media array order diverges from what the user sees.
+  // neighbour in the order the panel actually shows. Callers pass the
+  // reveal-aware visible order (so a clip surfaced by a bin-name search match —
+  // whose own name doesn't match the query — is included); falls back to the
+  // name-filtered flat order.
   let nextId = active;
   if (removingActive) {
-    const visibleBefore = visibleOrder(proj.media);
-    const pos = visibleBefore.findIndex((m) => removing.has(m.id));
-    const after = visibleBefore.slice(pos + 1).find((m) => !removing.has(m.id));
-    const before = [...visibleBefore.slice(0, pos)].reverse().find((m) => !removing.has(m.id));
-    nextId = after?.id ?? before?.id ?? null;
+    const order = opts?.visibleOrderIds ?? visibleOrder(proj.media).map((m) => m.id);
+    const pos = order.findIndex((mid) => removing.has(mid));
+    const after = order.slice(pos + 1).find((mid) => !removing.has(mid));
+    const before = pos > 0 ? [...order.slice(0, pos)].reverse().find((mid) => !removing.has(mid)) : undefined;
+    nextId = after ?? before ?? null;
   }
   const updated = proj.media.filter((m) => !removing.has(m.id));
   const label = opts?.label ?? (mediaIds.length > 1 ? `Remove ${mediaIds.length} media` : "Remove media");
@@ -653,7 +655,11 @@ export function ProjectPanel() {
       );
       if (choice !== "save") return;
     }
-    removeMediaIds([...removeMedia], { removeBinIds: [...subtreeBins], label: "Remove from project" });
+    removeMediaIds([...removeMedia], {
+      removeBinIds: [...subtreeBins],
+      label: "Remove from project",
+      visibleOrderIds: visibleMedia.map((m) => m.id),
+    });
     if (subtreeBins.size) {
       forgetBinCollapse(subtreeBins);
       deselectBins(subtreeBins);
