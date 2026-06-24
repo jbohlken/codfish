@@ -514,6 +514,20 @@ export function ProjectPanel() {
   // a shift-range can span both. selectedMediaId — the clip the editor follows —
   // only moves when a clip is the target, so selecting bins leaves the editor
   // on its last clip.
+  // Select exactly one row (ignoring modifiers) — the plain-click behaviour,
+  // also used when a drag grabs a row outside the current selection.
+  const selectOnly = (id: string, kind: "media" | "bin") => {
+    if (kind === "media") {
+      selectedMediaId.value = id;
+      selectedMediaIds.value = new Set([id]);
+      selectedBinIds.value = new Set();
+    } else {
+      selectedBinIds.value = new Set([id]);
+      selectedMediaIds.value = new Set();
+    }
+    selectionAnchor.value = id;
+  };
+
   const selectRowId = (id: string, kind: "media" | "bin", e: MouseEvent) => {
     if (e.shiftKey && selectionAnchor.value) {
       const range = rangeSelect(orderedRowIds, selectionAnchor.value, id);
@@ -541,15 +555,7 @@ export function ProjectPanel() {
       }
       selectionAnchor.value = id;
     } else {
-      if (kind === "media") {
-        selectedMediaId.value = id;
-        selectedMediaIds.value = new Set([id]);
-        selectedBinIds.value = new Set();
-      } else {
-        selectedBinIds.value = new Set([id]);
-        selectedMediaIds.value = new Set();
-      }
-      selectionAnchor.value = id;
+      selectOnly(id, kind);
     }
   };
   const selectRow = (item: MediaItem, e: MouseEvent) => selectRowId(item.id, "media", e);
@@ -801,7 +807,9 @@ export function ProjectPanel() {
       let binIds = [...selectedBinIds.peek()];
       const inSelection = kind === "media" ? mediaIds.includes(id) : binIds.includes(id);
       if (!inSelection) {
-        selectRowId(id, kind, e); // select just this row first
+        // Grabbing an unselected row selects just it — plain, ignoring any held
+        // Ctrl/Shift (else the highlight and the dragged payload would diverge).
+        selectOnly(id, kind);
         mediaIds = kind === "media" ? [id] : [];
         binIds = kind === "bin" ? [id] : [];
       }
