@@ -826,8 +826,19 @@ export function ProjectPanel() {
             {hasMedia && !showSearch && (
               <button
                 class="btn btn-ghost btn-icon"
-                data-tooltip="New bin"
-                onClick={() => { const id = createBin(); if (id) editingBinId.value = id; }}
+                // With exactly one bin highlighted, make the new bin a sub-bin
+                // of it; otherwise (none, or an ambiguous multi-selection) a
+                // top-level bin.
+                data-tooltip={selBinIds.size === 1 ? "New sub-bin" : "New bin"}
+                onClick={() => {
+                  const sel = [...selectedBinIds.peek()];
+                  const parentId = sel.length === 1 ? sel[0] : undefined;
+                  const id = createBin(undefined, parentId);
+                  if (id) {
+                    if (parentId) expandBin(parentId);
+                    editingBinId.value = id;
+                  }
+                }}
               >
                 <FolderPlus size={14} />
               </button>
