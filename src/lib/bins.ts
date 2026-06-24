@@ -174,13 +174,18 @@ export function rangeSelect(orderedIds: string[], anchorId: string, targetId: st
 
 // ── Collapse state (per-user view state, localStorage) ────────────────────
 // Bins default to COLLAPSED, so what's persisted is the set of EXPANDED ids per
-// project (keyed by createdAt) — "no entry" therefore means all collapsed, and
-// any bin not explicitly expanded (including ones created later) stays
-// collapsed. Persisted across sessions; never written to the .cod. `expanded`
-// is recomputed from the live bin list on each write, so deleted bins drop out
-// automatically. The active project's collapsed set lives in `collapsedBins`.
+// project — "no entry" therefore means all collapsed, and any bin not explicitly
+// expanded (including ones created later) stays collapsed. The project key is
+// its file path (so two on-disk copies of a .cod stay independent, and a
+// save-as gets a fresh context), falling back to createdAt for an unsaved
+// project. Persisted across sessions; never written to the .cod. `expanded` is
+// recomputed from the live bin list on each write, so deleted bins drop out.
+// The active project's collapsed set lives in `collapsedBins`.
 
 const EXPANDED_KEY = "codfish:expandedBins";
+// Bound localStorage growth: keep at most this many projects' entries, evicting
+// the least-recently-written when exceeded.
+const MAX_REMEMBERED_PROJECTS = 64;
 // Retire the previous (collapsed-ids) storage so its inverted meaning can't be
 // misread; collapse state resets once on upgrade (harmless view state).
 try { localStorage.removeItem("codfish:collapsedBins"); } catch { /* ignore */ }
@@ -204,11 +209,16 @@ function persistCollapsed(next: Set<string>): void {
   if (currentProjectKey === null) return;
   try {
     const map = loadExpandedMap();
+    // Delete-then-reinsert so this project moves to the most-recent (last)
+    // insertion slot — the basis for LRU eviction below.
+    delete map[currentProjectKey];
     // Store the expanded bins (the exceptions to the collapsed default),
     // recomputed from the current bin list so deleted bins fall away.
     const expanded = (project.peek()?.bins ?? []).map((b) => b.id).filter((id) => !next.has(id));
     if (expanded.length) map[currentProjectKey] = expanded;
-    else delete map[currentProjectKey];
+    // Evict the oldest entries (front of insertion order) past the cap.
+    const keys = Object.keys(map);
+    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_REMEMBERED_PROJECTS))) delete map[k];
     localStorage.setItem(EXPANDED_KEY, JSON.stringify(map));
   } catch {
     // view state is best-effort

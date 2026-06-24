@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from "preact/hooks";
 import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal } from "@preact/signals";
-import { project, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory } from "../../store/app";
+import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
@@ -409,7 +409,10 @@ export function ProjectPanel() {
   // filter even though the project never changed. Done inline during render
   // (before `query` is read) rather than in an effect, so the new project
   // never renders one frame filtered by the old query.
-  const projectKey = proj?.createdAt ?? null;
+  // Identity is the file path (so two on-disk copies of a .cod, and a save-as,
+  // are distinct view-state contexts), falling back to createdAt for an unsaved
+  // project. Drives both the filter reset and the per-project collapse load.
+  const projectKey = proj ? (projectPath.value ?? proj.createdAt) : null;
   if (projectKey !== lastFilterResetKey) {
     lastFilterResetKey = projectKey;
     searchOpen.value = false;
