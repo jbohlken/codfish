@@ -737,10 +737,10 @@ export function ProjectPanel() {
   // otherwise).
   const beginPointerDrag = (id: string, kind: "media" | "bin", e: PointerEvent) => {
     if (e.button !== 0 || !hasBins) return;
-    // Capture the pointer so move/up still fire if the cursor leaves the window
-    // mid-drag — otherwise a release outside would strand the ghost.
+    // Captured only once a drag actually begins (see begin()), NOT on every
+    // press — capturing redirects the follow-up click to this row, which would
+    // swallow a plain click on the folder icon (its single-click toggle).
     const captureEl = e.currentTarget as HTMLElement | null;
-    captureEl?.setPointerCapture?.(e.pointerId);
     const startX = e.clientX;
     const startY = e.clientY;
     let dragging = false;
@@ -783,6 +783,9 @@ export function ProjectPanel() {
 
     const begin = () => {
       dragging = true;
+      // Capture now so move/up keep firing if the cursor leaves the window
+      // mid-drag (a release outside would otherwise strand the ghost).
+      captureEl?.setPointerCapture?.(e.pointerId);
       let mediaIds = [...selectedMediaIds.peek()];
       let binIds = [...selectedBinIds.peek()];
       const inSelection = kind === "media" ? mediaIds.includes(id) : binIds.includes(id);
