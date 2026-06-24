@@ -195,7 +195,18 @@ type ExpandedMap = Record<string, string[]>;
 function loadExpandedMap(): ExpandedMap {
   try {
     const raw = JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "{}");
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    // Keep only well-formed entries. We only ever write string[], but a
+    // hand-edited / corrupt value that isn't an array of strings would crash
+    // `new Set(value)` at the read site (e.g. `new Set(5)` throws), breaking the
+    // panel's render — so sanitize here, at the single boundary all callers use.
+    const clean: ExpandedMap = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (Array.isArray(value) && value.every((s) => typeof s === "string")) {
+        clean[key] = value as string[];
+      }
+    }
+    return clean;
   } catch {
     return {};
   }
