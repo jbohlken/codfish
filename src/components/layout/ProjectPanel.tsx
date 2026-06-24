@@ -839,6 +839,7 @@ export function ProjectPanel() {
     const startY = e.clientY;
     let dragging = false;
     let ghost: HTMLElement | null = null;
+    let lastX = startX;
     let lastY = startY;
     let scrollRAF = 0;
 
@@ -870,8 +871,14 @@ export function ProjectPanel() {
       if (!dragging || !body) return;
       const r = body.getBoundingClientRect();
       const margin = 28;
+      const before = body.scrollTop;
       if (lastY < r.top + margin) body.scrollTop -= 10;
       else if (lastY > r.bottom - margin) body.scrollTop += 10;
+      // Programmatic scrolling fires no pointermove, so when the list actually
+      // moved, the row under the (possibly stationary) cursor changed — re-run
+      // the hit-test so the drop target/highlight tracks the scrolled content
+      // instead of staying pinned to the last pointermove position.
+      if (body.scrollTop !== before) updateTarget(lastX, lastY);
       scrollRAF = requestAnimationFrame(autoScroll);
     };
 
@@ -903,6 +910,7 @@ export function ProjectPanel() {
     };
 
     const onMove = (ev: PointerEvent) => {
+      lastX = ev.clientX;
       lastY = ev.clientY;
       if (!dragging) {
         if (Math.abs(ev.clientX - startX) < 5 && Math.abs(ev.clientY - startY) < 5) return;
