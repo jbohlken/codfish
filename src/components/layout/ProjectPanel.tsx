@@ -13,7 +13,9 @@ import {
   VIDEO_EXTS,
 } from "../../lib/project";
 import {
-  groupMediaByBin,
+  buildBinForest,
+  sortBins,
+  collectSubtree,
   rangeSelect,
   collapsedBins,
   toggleBinCollapsed,
@@ -23,6 +25,7 @@ import {
   dissolveBin,
   moveMediaToBin,
   forgetBinCollapse,
+  type BinNode,
 } from "../../lib/bins";
 import { recentProjects } from "../../lib/recent";
 import { showContextMenu, type ContextMenuItem } from "../ContextMenu";
@@ -33,6 +36,9 @@ import { sortMedia, type SortMode, type SortDir } from "../../lib/mediaSort";
 import type { MediaItem, Bin } from "../../types/project";
 
 const missingIds = signal<ReadonlySet<string>>(new Set());
+
+// Pixels each bin-tree nesting level shifts its rows to the right.
+const BIN_INDENT_STEP = 16;
 
 // ── Panel resizing ──────────────────────────────────────────────────────────
 // The grid column is driven by --project-panel-width; dragging the handle
@@ -266,10 +272,10 @@ async function checkMissingMedia(items: MediaItem[]) {
   missingIds.value = new Set(results.filter((r) => r.missing).map((r) => r.id));
 }
 
-function removeMediaIds(mediaIds: string[], opts?: { removeBinId?: string; label?: string }) {
+function removeMediaIds(mediaIds: string[], opts?: { removeBinIds?: string[]; label?: string }) {
   const proj = project.value;
-  const removeBinId = opts?.removeBinId;
-  if (!proj || (mediaIds.length === 0 && !removeBinId)) return;
+  const removeBinIds = opts?.removeBinIds;
+  if (!proj || (mediaIds.length === 0 && !removeBinIds?.length)) return;
   const removing = new Set(mediaIds);
   const active = selectedMediaId.value;
   const removingActive = active !== null && removing.has(active);
@@ -288,11 +294,12 @@ function removeMediaIds(mediaIds: string[], opts?: { removeBinId?: string; label
   const label = opts?.label ?? (mediaIds.length > 1 ? `Remove ${mediaIds.length} media` : "Remove media");
   // Record the post-op selection so redo lands on the neighbour, not a
   // now-deleted id — pushHistory otherwise snapshots the current selection.
+  const dropBins = removeBinIds && removeBinIds.length ? new Set(removeBinIds) : null;
   pushHistory(
     {
       ...proj,
       media: updated,
-      ...(removeBinId ? { bins: (proj.bins ?? []).filter((b) => b.id !== removeBinId) } : {}),
+      ...(dropBins ? { bins: (proj.bins ?? []).filter((b) => !dropBins.has(b.id)) } : {}),
     },
     label,
     { selectedMediaId: nextId, selectedCaptionIndex: selectedCaptionIndex.value },
@@ -345,9 +352,16 @@ export function ProjectPanel() {
   const hasBins = bins.length > 0;
   const selIds = selectedMediaIds.value;
   const searching = query.length > 0;
-  const groups = groupMediaByBin(visibleMedia, bins);
+  // Sub-bins at each level follow the same sort as media; media keep the
+  // already-sorted order they arrive in. Bins first, then ungrouped media.
+  const forest = buildBinForest(visibleMedia, bins, (level) => sortBins(level, sMode, sDir));
   const collapsedSet = collapsedBins.value;
   const isCollapsed = (binId: string) => !searching && collapsedSet.has(binId);
+
+  // True when the bin or anything nested under it holds a (filtered-in) media
+  // item — used while searching to hide whole branches that match nothing.
+  const subtreeHasItems = (node: BinNode): boolean =>
+    node.items.length > 0 || node.children.some(subtreeHasItems);
 
   // Total membership per bin (from the full media list, not the filtered view)
   // — the badge and the bin's Generate/Export both mean "all members".
@@ -356,11 +370,20 @@ export function ProjectPanel() {
     if (mm.binId != null) binCounts.set(mm.binId, (binCounts.get(mm.binId) ?? 0) + 1);
   }
 
-  // Ids of the rows actually on screen (collapsed bins contribute none), so a
-  // shift-range can't silently pull in items hidden inside a collapsed bin.
-  const orderedIds = groups.flatMap((g) =>
-    g.bin && isCollapsed(g.bin.id) ? [] : g.items.map((m) => m.id),
-  );
+  // Ids of the rows actually on screen, in display order, so a shift-range
+  // can't silently pull in items hidden inside a collapsed (or search-hidden)
+  // bin. Mirrors the render: per node, sub-bins then this bin's media.
+  const orderedIds: string[] = [];
+  const collectVisible = (nodes: BinNode[]) => {
+    for (const node of nodes) {
+      if (searching && !subtreeHasItems(node)) continue;
+      if (isCollapsed(node.bin.id)) continue;
+      collectVisible(node.children);
+      for (const m of node.items) orderedIds.push(m.id);
+    }
+  };
+  collectVisible(forest.roots);
+  for (const m of forest.ungrouped) orderedIds.push(m.id);
 
   // Plain click selects one; Ctrl/Cmd toggles; Shift extends a range over the
   // visible (flattened) order from the last anchor. selectedMediaId stays the
@@ -420,11 +443,13 @@ export function ProjectPanel() {
     showContextMenu(e, items);
   };
 
-  // Delete a bin AND its media from the project (files on disk are untouched).
-  // Confirm only when there's media to lose; an empty bin deletes like Dissolve.
+  // Delete a bin, its entire sub-tree, AND all media anywhere within it from the
+  // project (files on disk are untouched). Confirm only when there's media to
+  // lose; an empty branch deletes like Dissolve.
   const deleteBin = async (bin: Bin) => {
     if (!proj) return;
-    const memberIds = proj.media.filter((m) => m.binId === bin.id).map((m) => m.id);
+    const subtree = collectSubtree(proj.bins ?? [], bin.id);
+    const memberIds = proj.media.filter((m) => m.binId != null && subtree.has(m.binId)).map((m) => m.id);
     if (memberIds.length > 0) {
       const choice = await confirmUnsavedChanges(
         `Delete “${bin.name}” and its ${memberIds.length} media item${memberIds.length === 1 ? "" : "s"} from the project? The original files on disk won't be deleted.`,
@@ -432,8 +457,8 @@ export function ProjectPanel() {
       );
       if (choice !== "save") return;
     }
-    removeMediaIds(memberIds, { removeBinId: bin.id, label: "Delete bin" });
-    forgetBinCollapse(bin.id);
+    removeMediaIds(memberIds, { removeBinIds: [...subtree], label: "Delete bin" });
+    forgetBinCollapse(subtree);
   };
 
   const openBinMenu = (e: MouseEvent, bin: Bin) => {
@@ -444,16 +469,43 @@ export function ProjectPanel() {
     ]);
   };
 
-  const renderRow = (item: MediaItem, inBin: boolean) => (
+  // depth = nesting level of the row (0 = top-level / ungrouped). Media inside a
+  // bin at level L render at depth L+1; the indent is computed from it.
+  const renderRow = (item: MediaItem, depth: number) => (
     <MediaRow
       key={item.id}
       item={item}
       query={query}
       selected={selIds.has(item.id)}
       missing={missingIds.value.has(item.id)}
-      inBin={inBin}
+      depth={depth}
       onSelect={(e) => selectRow(item, e)}
       onContextMenu={(e) => openRowMenu(e, item)}
+    />
+  );
+
+  // Render a bin node and (when expanded) its sub-bins then its media, recursing
+  // to any depth. depth drives indentation; the rest mirrors the flat version.
+  const renderNode = (node: BinNode, depth: number) => (
+    <BinGroup
+      key={node.bin.id}
+      bin={node.bin}
+      count={binCounts.get(node.bin.id) ?? 0}
+      depth={depth}
+      collapsed={isCollapsed(node.bin.id)}
+      // While searching, hide branches with no matches anywhere inside.
+      hidden={searching && !subtreeHasItems(node)}
+      editing={editingBinId.value === node.bin.id}
+      onToggle={() => toggleBinCollapsed(node.bin.id)}
+      onContextMenu={(e) => openBinMenu(e, node.bin)}
+      onRename={(name) => { renameBin(node.bin.id, name); editingBinId.value = null; }}
+      onCancelRename={() => { editingBinId.value = null; }}
+      renderItems={() => (
+        <>
+          {node.children.map((c) => renderNode(c, depth + 1))}
+          {node.items.map((m) => renderRow(m, depth + 1))}
+        </>
+      )}
     />
   );
 
@@ -562,33 +614,15 @@ export function ProjectPanel() {
           </div>
         ) : !hasBins ? (
           // No bins → flat list, exactly as before.
-          <div class="media-list">{visibleMedia.map((m) => renderRow(m, false))}</div>
+          <div class="media-list">{visibleMedia.map((m) => renderRow(m, 0))}</div>
         ) : (
           // Bins render as media-style rows (folder icon + media count); their
-          // members render indented beneath when expanded. Ungrouped media are
-          // plain top-level rows after the bins — no separate section header.
+          // sub-bins and members render indented beneath when expanded, to any
+          // depth. Ungrouped media are plain top-level rows after the bins —
+          // no separate section header.
           <div class="media-list">
-            {groups.map((group) =>
-              group.bin === null
-                ? group.items.map((m) => renderRow(m, false))
-                : (
-                  <BinGroup
-                    key={group.bin.id}
-                    bin={group.bin}
-                    count={binCounts.get(group.bin.id) ?? 0}
-                    // While searching, force-expand so matches aren't hidden,
-                    // and skip bins with no matches.
-                    collapsed={isCollapsed(group.bin.id)}
-                    hidden={searching && group.items.length === 0}
-                    editing={editingBinId.value === group.bin.id}
-                    onToggle={() => toggleBinCollapsed(group.bin!.id)}
-                    onContextMenu={(e) => openBinMenu(e, group.bin!)}
-                    onRename={(name) => { renameBin(group.bin!.id, name); editingBinId.value = null; }}
-                    onCancelRename={() => { editingBinId.value = null; }}
-                    renderItems={() => group.items.map((m) => renderRow(m, true))}
-                  />
-                )
-            )}
+            {forest.roots.map((node) => renderNode(node, 0))}
+            {forest.ungrouped.map((m) => renderRow(m, 0))}
           </div>
         )}
       </div>
@@ -596,9 +630,10 @@ export function ProjectPanel() {
   );
 }
 
-function BinGroup({ bin, count, collapsed, hidden, editing, onToggle, onContextMenu, onRename, onCancelRename, renderItems }: {
+function BinGroup({ bin, count, depth, collapsed, hidden, editing, onToggle, onContextMenu, onRename, onCancelRename, renderItems }: {
   bin: Bin;
   count: number;
+  depth: number;
   collapsed: boolean;
   hidden: boolean;
   editing: boolean;
@@ -637,9 +672,11 @@ function BinGroup({ bin, count, collapsed, hidden, editing, onToggle, onContextM
 
   return (
     <div>
-      {/* Styled like a media row; the caret + folder icon mark it as a bin. */}
+      {/* Styled like a media row; the caret + folder icon mark it as a bin.
+          Each nesting level shifts the row right by one indent step. */}
       <div
         class="media-row media-row--bin"
+        style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` } : undefined}
         onClick={() => { if (!editing) onToggle(); }}
         onContextMenu={onContextMenu}
       >
@@ -676,12 +713,12 @@ function BinGroup({ bin, count, collapsed, hidden, editing, onToggle, onContextM
   );
 }
 
-function MediaRow({ item, query, selected, missing, inBin, onSelect, onContextMenu }: {
+function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu }: {
   item: MediaItem;
   query: string;
   selected: boolean;
   missing: boolean;
-  inBin: boolean;
+  depth: number;
   onSelect: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
@@ -695,9 +732,18 @@ function MediaRow({ item, query, selected, missing, inBin, onSelect, onContextMe
     ? `${item.fps} fps${item.dropFrame != null ? (item.dropFrame ? " DF" : " NDF") : ""}`
     : null;
 
+  // Media in a bin at level L render at depth L+1. The first level of nesting
+  // gets a fixed offset that tucks the row under the bin's name (past the
+  // caret + folder icon); deeper levels add one indent step each.
+  const inBin = depth > 0;
+  const style = inBin
+    ? { paddingLeft: `calc(var(--space-3) + 22px + ${(depth - 1) * BIN_INDENT_STEP}px)` }
+    : undefined;
+
   return (
     <button
-      class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""} ${inBin ? "media-row--in-bin" : ""}`}
+      class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""}`}
+      style={style}
       data-tooltip={`${item.name}\n${item.path}`}
       onClick={onSelect}
       onContextMenu={onContextMenu}

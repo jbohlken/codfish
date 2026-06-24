@@ -584,10 +584,9 @@ body.col-resizing {
   color: var(--color-text-tertiary);
 }
 
-/* Members render indented beneath their bin row. */
-.media-row--in-bin {
-  padding-left: calc(var(--space-3) + 22px);
-}
+/* Bin members and sub-bins render indented beneath their bin row. The indent
+   is depth-driven and applied inline (paddingLeft) by ProjectPanel, since it
+   scales with nesting level — see BIN_INDENT_STEP. */
 
 .bin-row-input {
   width: 100%;

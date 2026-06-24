@@ -64,14 +64,25 @@ export interface MediaItem {
 
 export type TranscriptionModel = "tiny" | "base" | "small" | "medium" | "large-v3";
 
-/// A user-created folder/bin for organizing media within a project. Order in
-/// the array is the display order. Collapsed state is intentionally NOT stored
-/// here — it's per-user view state kept in localStorage, so toggling a bin
-/// open/closed never enters the undo history. Optional + additive on
-/// CodProject: older files have no `bins` and render everything ungrouped.
+/// A user-created folder/bin for organizing media within a project. Bins form
+/// an arbitrary-depth tree (Windows Explorer style): `parentId` points at the
+/// containing bin, or is absent for a top-level bin. Display order within a
+/// level is derived from the active sort (sub-bins first, then media), not the
+/// array order. Collapsed state is intentionally NOT stored here — it's
+/// per-user view state kept in localStorage, so toggling a bin open/closed
+/// never enters the undo history. Optional + additive on CodProject: older
+/// files have no `bins` and render everything ungrouped.
 export interface Bin {
   id: string;
   name: string;
+  /// Id of the containing bin. Absent — or referencing a bin that no longer
+  /// exists, or forming a cycle — means top-level (the forest builder is
+  /// defensive about both so a malformed tree never hides bins).
+  parentId?: string;
+  /// ISO timestamp of when the bin was created. Drives the "Date added" sort
+  /// for bins; absent on bins created before this field existed (they fall
+  /// back to array order via a stable sort).
+  createdAt?: string;
 }
 
 export interface CodProject {
