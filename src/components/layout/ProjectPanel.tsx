@@ -415,7 +415,7 @@ export function ProjectPanel() {
   // re-ran an N-file disk scan on every caption edit. media is append-only, so
   // the join order is stable and no sort is needed.
   const mediaPathSig = useMemo(
-    () => (proj?.media ?? []).map((m) => `${m.id} ${m.path}`).join(""),
+    () => (proj?.media ?? []).map((m) => `${m.id}\n${m.path}`).join(""),
     [proj?.media],
   );
   useEffect(() => {
