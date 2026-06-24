@@ -527,9 +527,14 @@ body.col-resizing {
   margin-top: 2px;
 }
 
+/* Name + status share one baseline-aligned row, so a short name is a single
+   line (status to its right) rather than two stacked lines. The name takes the
+   width; status keeps its natural width on the right. */
 .media-row-info {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex: 1;
   min-width: 0;
 }
 
@@ -538,6 +543,8 @@ body.col-resizing {
    would cut. overflow-wrap breaks within unbroken _-/. runs. The full name
    + path live in the row tooltip. */
 .media-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--text-base);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
@@ -556,16 +563,27 @@ body.col-resizing {
 }
 
 .media-row-meta {
+  flex-shrink: 0;
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-}
-
-.media-row-meta--warning {
-  color: var(--color-warning);
+  white-space: nowrap;
 }
 
 .media-row--missing .media-row-name {
   color: var(--color-text-tertiary);
+}
+
+/* Compact warning chip for a missing source file (replaces the caption count). */
+.media-row-missing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
 }
 
 .media-row-fps {

@@ -1046,11 +1046,9 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
   onDragStart: (e: DragEvent) => void;
   onDragEnd: () => void;
 }) {
-  const meta = missing
-    ? "File not found"
-    : item.captions.length > 0
-      ? `${item.captions.length} captions`
-      : "No captions";
+  const captionMeta = item.captions.length > 0
+    ? `${item.captions.length} captions`
+    : "No captions";
 
   const fpsLabel = item.fps != null
     ? `${item.fps} fps${item.dropFrame != null ? (item.dropFrame ? " DF" : " NDF") : ""}`
@@ -1077,12 +1075,14 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
       <span class="media-row-icon">{getMediaIcon(item.path)}</span>
       <span class="media-row-info">
         <span class="media-row-name">{highlightMatch(item.name, query)}</span>
-        <span class={`media-row-meta ${missing ? "media-row-meta--warning" : ""}`}>
-          {missing && <WarningCircle size={11} />}{meta}
-          {fpsLabel && !missing && (
-            <span class="media-row-fps">{fpsLabel}</span>
-          )}
-        </span>
+        {missing ? (
+          <span class="media-row-missing-badge"><WarningCircle size={11} /> Missing</span>
+        ) : (
+          <span class="media-row-meta">
+            {captionMeta}
+            {fpsLabel && <span class="media-row-fps">{fpsLabel}</span>}
+          </span>
+        )}
       </span>
     </button>
   );
