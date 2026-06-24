@@ -786,10 +786,10 @@ body.rows-dragging * {
   box-shadow: var(--shadow-lg);
   padding: var(--space-1);
   min-width: 160px;
-  /* Backstop if a root menu ever exceeds the viewport — scroll rather than let
-     the off-screen-clamp push its first items above the top edge. */
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
+  /* No overflow/scroll here: the root menu must keep overflow:visible so its
+     submenu flyout (.context-menu-submenu, positioned at left:100%) isn't
+     clipped — setting overflow-y also forces overflow-x off `visible`. The
+     flyout has its own max-height; root menus are short enough not to need one. */
 }
 
 /* Groups a submenu-parent's (optional) icon + label together, left of the
