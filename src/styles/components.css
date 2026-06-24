@@ -742,15 +742,34 @@ body.col-resizing {
 }
 
 /* ── Context Menu ───────────────────────────────────────────────────────── */
+/* Matches the menu-bar select dropdowns (.titlebar-select-menu): surface fill,
+   all-around padding, and individually rounded, compact options. */
 .context-menu {
   position: fixed;
   z-index: 2000;
-  background: var(--color-bg);
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  padding: var(--space-1) 0;
+  padding: var(--space-1);
   min-width: 160px;
+}
+
+.context-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.context-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.context-menu::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 3px;
+}
+
+.context-menu::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
 }
 
 .context-menu-item {
@@ -759,12 +778,14 @@ body.col-resizing {
   gap: var(--space-2);
   width: 100%;
   text-align: left;
-  padding: var(--space-2) var(--space-3);
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   color: var(--color-text-primary);
   background: transparent;
   border: none;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 /* Leading icon for tree-shaped pickers (e.g. "Move to bin"). */
