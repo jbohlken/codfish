@@ -8,10 +8,12 @@ import {
   openProjectGuarded,
   openRecent,
   importMedia,
+  importMediaPaths,
   relinkMediaItem,
   fileExists,
   VIDEO_EXTS,
 } from "../../lib/project";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   buildBinForest,
   sortBins,
@@ -68,6 +70,20 @@ function createDragGhost(label: string): HTMLElement {
   ghost.textContent = label;
   document.body.appendChild(ghost);
   return ghost;
+}
+
+// Resolve an OS file-drop position (physical px, from Tauri's drag-drop event)
+// to a target in the project panel: a bin (its data-bin-id), the panel itself
+// (ROOT_DROP = top level), or null when the drop is outside the panel or no
+// project is open. Reuses the same hit-test shape as the in-app pointer drag.
+function osDropTargetAt(pos: { x: number; y: number }): string | null {
+  if (!project.peek()) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const el = document.elementFromPoint(pos.x / dpr, pos.y / dpr) as HTMLElement | null;
+  if (!el) return null;
+  const binEl = el.closest("[data-bin-id]");
+  if (binEl) return binEl.getAttribute("data-bin-id");
+  return el.closest(".project-panel") ? ROOT_DROP : null;
 }
 
 // ── Panel resizing ──────────────────────────────────────────────────────────
@@ -350,6 +366,37 @@ export function ProjectPanel() {
   useEffect(() => {
     if (searchOpen.value) searchInputRef.current?.focus();
   }, [searchOpen.value]);
+
+  // OS file drop: dropping media files from the desktop onto the panel imports
+  // them (into a bin if dropped on one, else ungrouped). Tauri's window-level
+  // drag-drop gives real filesystem paths; we hit-test the drop position to
+  // scope it to the panel and reuse dropTarget for the same highlight as the
+  // in-app drag. Guarded so it's a no-op outside a Tauri webview (e.g. tests).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    try {
+      getCurrentWebview()
+        .onDragDropEvent((event) => {
+          const p = event.payload;
+          if (p.type === "leave") {
+            dropTarget.value = null;
+          } else if (p.type === "drop") {
+            const target = osDropTargetAt(p.position);
+            dropTarget.value = null;
+            if (target !== null) void importMediaPaths(p.paths, target === ROOT_DROP ? undefined : target);
+          } else {
+            // enter / over
+            dropTarget.value = osDropTargetAt(p.position);
+          }
+        })
+        .then((un) => { if (disposed) un(); else unlisten = un; })
+        .catch(() => {});
+    } catch {
+      // not running in a Tauri webview
+    }
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
 
   // Clear any leftover filter when a different project is opened — a stale
   // query that hides everything in the new project would be confusing. Keyed

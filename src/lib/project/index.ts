@@ -231,23 +231,24 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   return true;
 }
 
-export async function importMedia(): Promise<void> {
+/** Probe + append the given file paths as media (one undo step), optionally
+ *  into a bin, and select the first. Non-media paths (and dropped folders,
+ *  which have no media extension) are ignored. Shared by the Import dialog and
+ *  by OS file-drop onto the project panel. */
+export async function importMediaPaths(paths: string[], binId?: string): Promise<void> {
   const proj = project.value;
   if (!proj) return;
 
-  const result = await open({
-    title: "Import Media",
-    filters: [{ name: "Video & Audio", extensions: MEDIA_EXTS }],
-    multiple: true,
+  const mediaPaths = paths.filter((p) => {
+    const ext = p.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
+    return MEDIA_EXTS.includes(ext);
   });
-  if (!result) return;
-
-  const paths = Array.isArray(result) ? result : [result];
-  if (paths.length === 0) return;
+  if (mediaPaths.length === 0) return;
 
   const newItems = await Promise.all(
-    paths.map(async (p) => {
+    mediaPaths.map(async (p) => {
       const item = makeMediaItem(p);
+      if (binId) item.binId = binId;
       const probe = await probeFps(p);
       item.fps = probe.fps;
       if (probe.vfr) item.vfr = true;
@@ -264,6 +265,20 @@ export async function importMedia(): Promise<void> {
 
   // Auto-select the first imported item
   selectedMediaId.value = newItems[0].id;
+}
+
+export async function importMedia(): Promise<void> {
+  const proj = project.value;
+  if (!proj) return;
+
+  const result = await open({
+    title: "Import Media",
+    filters: [{ name: "Video & Audio", extensions: MEDIA_EXTS }],
+    multiple: true,
+  });
+  if (!result) return;
+
+  await importMediaPaths(Array.isArray(result) ? result : [result]);
 }
 
 export async function relinkMediaItem(mediaId: string): Promise<void> {
