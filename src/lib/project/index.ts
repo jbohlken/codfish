@@ -284,8 +284,14 @@ export async function importMediaPaths(paths: string[], binId?: string): Promise
   if (mediaPaths.length > 0) {
     const newItems = await buildMediaItems(mediaPaths, binId);
     const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
-    pushHistory({ ...proj, media: [...proj.media, ...newItems] }, label);
+    // Record the imported clip as the post-op selection so redo lands on it,
+    // not the clip that was active before the import.
+    pushHistory({ ...proj, media: [...proj.media, ...newItems] }, label, {
+      selectedMediaId: newItems[0].id,
+      selectedCaptionIndex: null,
+    });
     selectedMediaId.value = newItems[0].id;
+    selectedCaptionIndex.value = null;
   }
   notifySkipped(paths.filter((p) => !isMediaPath(p)).map(basenameOf));
 }
@@ -331,8 +337,10 @@ export async function importDrop(paths: string[], targetBinId?: string): Promise
         media: [...proj.media, ...newItems],
       },
       label,
+      { selectedMediaId: newItems[0].id, selectedCaptionIndex: null }, // redo lands on the import
     );
     selectedMediaId.value = newItems[0].id;
+    selectedCaptionIndex.value = null;
     if (newBins.length) rememberCollapseState(); // new bins are open — remember it
     // Reveal the import in a collapsed target bin (clips + any new sub-bins);
     // expandBin persists so it stays open across sessions.
