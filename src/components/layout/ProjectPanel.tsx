@@ -1018,7 +1018,6 @@ export function ProjectPanel() {
       collapsed={isCollapsed(node.bin.id)}
       // While searching, hide branches with no matches anywhere inside.
       hidden={searching && !binShown(node)}
-      editing={editingBinId.value === node.bin.id}
       query={query}
       onSelect={(e) => selectRowId(node.bin.id, "bin", e)}
       // Inert while searching: bins are force-expanded, so toggling would only
@@ -1189,13 +1188,12 @@ export function ProjectPanel() {
   );
 }
 
-function BinGroup({ bin, count, depth, collapsed, hidden, editing, query, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onPointerDownDrag, renderItems }: {
+function BinGroup({ bin, count, depth, collapsed, hidden, query, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onPointerDownDrag, renderItems }: {
   bin: Bin;
   count: number;
   depth: number;
   collapsed: boolean;
   hidden: boolean;
-  editing: boolean;
   query: string;
   onSelect: (e: MouseEvent) => void;
   onToggle: () => void;
@@ -1209,6 +1207,12 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, query, onSele
   // Guards a single commit: Enter/Escape and the blur that follows unmounting
   // the focused input must not both fire onRename. Reset each time editing opens.
   const committed = useRef(false);
+  // Subscribe to the rename state here rather than receiving it as a render-time
+  // prop: reading editingBinId in renderNode rebuilt the whole forest on every
+  // rename start/stop. A computed gives per-bin granularity (only the group whose
+  // editing-ness flips re-renders); editing drives an input/focus swap, so it
+  // needs a real re-render and can't be a class-bound signal like the others.
+  const editing = useComputed(() => editingBinId.value === bin.id).value;
   useEffect(() => {
     if (editing) {
       committed.current = false;
