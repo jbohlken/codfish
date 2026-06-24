@@ -614,17 +614,15 @@ export function ProjectPanel() {
         { label: "Delete bin", danger: true, onClick: () => { void removeSelection([], [id]); } },
       ];
     }
-    // Multi / mixed: cross-kind actions, plus Dissolve when bins are selected
-    // (it only affects the bins; clips are untouched). Destructive split off.
+    // Multi / mixed: cross-kind actions. Dissolve only shows for a bins-only
+    // selection — in a mixed one it would touch just the bins, which reads
+    // oddly next to a "Move/Remove N items" that means everything.
     const label = countLabel(mediaIds.length, binIds.length);
     const items: ContextMenuEntry[] = [
       { label: `Move ${label} to…`, submenu: buildMoveSubmenu(mediaIds, binIds) },
     ];
-    if (binIds.length) {
-      items.push({
-        label: binIds.length === 1 ? "Dissolve bin" : `Dissolve ${binIds.length} bins`,
-        onClick: () => dissolveBins(binIds),
-      });
+    if (binIds.length > 1 && mediaIds.length === 0) {
+      items.push({ label: `Dissolve ${binIds.length} bins`, onClick: () => dissolveBins(binIds) });
     }
     items.push(
       { separator: true },
