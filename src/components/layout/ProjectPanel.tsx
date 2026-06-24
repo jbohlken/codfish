@@ -724,6 +724,7 @@ export function ProjectPanel() {
           inside stopPropagation to claim their own, more specific target. */}
       <div
         class={`panel-body scrollable${dropTarget.value === ROOT_DROP ? " panel-body--drop-root" : ""}`}
+        onDragEnter={hasBins ? (e) => onTargetDragOver(null, e) : undefined}
         onDragOver={hasBins ? (e) => onTargetDragOver(null, e) : undefined}
         onDrop={hasBins ? (e) => onTargetDrop(null, e) : undefined}
       >
@@ -832,7 +833,9 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, o
   return (
     // The whole bin block (header + contents) is the drop zone for this bin;
     // nested bins inside it stopPropagation so the innermost one wins.
-    <div onDragOver={onDragOver} onDrop={onDrop}>
+    // dragenter shares dragover's handler so entering a child element keeps the
+    // drop allowed (without it the cursor flickers to no-drop on each crossing).
+    <div onDragEnter={onDragOver} onDragOver={onDragOver} onDrop={onDrop}>
       {/* Styled like a media row; the open/closed folder icon both marks it as
           a bin and shows its expanded state (no separate caret, so a bin row
           has the same [icon][name] layout as a clip and the two align). Each

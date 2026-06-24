@@ -588,8 +588,12 @@ body.col-resizing {
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 
+/* Outline (not inset box-shadow) so the ring paints on top of the rows — a
+   shadow would sit behind their backgrounds. Negative offset keeps it inside
+   the scroll container's edges rather than clipped away. */
 .panel-body--drop-root {
-  box-shadow: inset 0 0 0 2px var(--color-accent);
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 /* Custom drag image (see setDragImageLabel). Parked offscreen; the browser
