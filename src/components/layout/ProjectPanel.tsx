@@ -340,15 +340,29 @@ function SortMenu() {
   );
 }
 
+// Bumped on each scan so a slow scan (e.g. network paths) from an earlier media
+// set / project can't clobber missingIds when it resolves after a newer scan has
+// already published — media ids are globally unique, so a stale write would make
+// the current project's genuinely-missing rows silently lose their badge.
+let missingScanToken = 0;
+
 async function checkMissingMedia(items: MediaItem[]) {
+  const token = ++missingScanToken;
   if (items.length === 0) {
-    missingIds.value = new Set();
+    if (missingIds.peek().size > 0) missingIds.value = new Set();
     return;
   }
   const results = await Promise.all(
     items.map(async (m) => ({ id: m.id, missing: !(await fileExists(m.path)) }))
   );
-  missingIds.value = new Set(results.filter((r) => r.missing).map((r) => r.id));
+  if (token !== missingScanToken) return; // a newer scan superseded this one
+  const next = new Set(results.filter((r) => r.missing).map((r) => r.id));
+  const cur = missingIds.peek();
+  // Only publish when membership actually changed — every MediaRow reads
+  // missingIds in its render body, so a fresh-but-equal Set re-renders them all.
+  if (next.size !== cur.size || [...next].some((id) => !cur.has(id))) {
+    missingIds.value = next;
+  }
 }
 
 function removeMediaIds(mediaIds: string[], opts?: { removeBinIds?: string[]; label?: string; visibleOrderIds?: string[] }) {
@@ -396,9 +410,17 @@ export function ProjectPanel() {
   const dragCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => dragCleanupRef.current?.(), []);
 
+  // Re-scan for missing files only when the media set or a path actually
+  // changes (import / remove / relink) — keying on proj.media identity alone
+  // re-ran an N-file disk scan on every caption edit. media is append-only, so
+  // the join order is stable and no sort is needed.
+  const mediaPathSig = useMemo(
+    () => (proj?.media ?? []).map((m) => `${m.id} ${m.path}`).join(""),
+    [proj?.media],
+  );
   useEffect(() => {
     checkMissingMedia(proj?.media ?? []);
-  }, [proj?.media]);
+  }, [mediaPathSig]);
 
   // Focus the search field when it opens.
   useEffect(() => {
