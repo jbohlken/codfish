@@ -588,6 +588,18 @@ body.col-resizing {
    is depth-driven and applied inline (paddingLeft) by ProjectPanel, since it
    scales with nesting level — see BIN_INDENT_STEP. */
 
+/* Drag-and-drop affordances: a bin row highlights when a clip/bin is dragged
+   onto it; the list itself outlines when the drop would land at the top level. */
+.media-row--drop-target {
+  background: var(--color-accent-light);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.media-list--drop-root {
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+  border-radius: var(--radius-sm);
+}
+
 .bin-row-input {
   width: 100%;
   padding: 1px var(--space-1);

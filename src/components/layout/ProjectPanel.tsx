@@ -43,6 +43,17 @@ const missingIds = signal<ReadonlySet<string>>(new Set());
 // Pixels each bin-tree nesting level shifts its rows to the right.
 const BIN_INDENT_STEP = 16;
 
+// ── Drag-and-drop ─────────────────────────────────────────────────────────
+// What's currently being dragged, and the live drop target for highlighting.
+// Module-level signals so the row components can read them without prop drilling
+// (the actual move logic stays in ProjectPanel, where `bins` is in scope).
+type DragPayload = { kind: "media"; ids: string[] } | { kind: "bin"; id: string };
+const dragPayload = signal<DragPayload | null>(null);
+// dropTarget holds the hovered bin's id, ROOT_DROP for the top-level area, or
+// null for "no valid target under the cursor".
+const ROOT_DROP = "__root__";
+const dropTarget = signal<string | null>(null);
+
 // Indent a bin's name by its tree depth for the flat "Move to bin" pickers.
 // Non-breaking spaces so the leading indent isn't collapsed in the button text.
 const indentLabel = (depth: number, name: string) => `${"  ".repeat(depth)}${name}`;
@@ -515,6 +526,64 @@ export function ProjectPanel() {
     showContextMenu(e, items);
   };
 
+  // ── Drag-and-drop ──────────────────────────────────────────────────────
+  // Start dragging a clip. Dragging a row outside the current selection acts on
+  // just that row (and selects it); dragging a selected row carries the whole
+  // selection — so you can box-select and move a batch at once.
+  const startMediaDrag = (item: MediaItem, e: DragEvent) => {
+    let ids = [...selectedMediaIds.peek()];
+    if (!ids.includes(item.id)) {
+      selectedMediaId.value = item.id;
+      selectedMediaIds.value = new Set([item.id]);
+      selectionAnchor.value = item.id;
+      ids = [item.id];
+    }
+    dragPayload.value = { kind: "media", ids };
+    e.dataTransfer?.setData("text/plain", "");
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+  };
+
+  const startBinDrag = (bin: Bin, e: DragEvent) => {
+    dragPayload.value = { kind: "bin", id: bin.id };
+    e.dataTransfer?.setData("text/plain", "");
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+  };
+
+  const endDrag = () => { dragPayload.value = null; dropTarget.value = null; };
+
+  // Can the current payload drop on `targetBinId` (null = top level)? Media go
+  // anywhere; a bin can't drop on itself or anything in its own subtree (cycle).
+  const canDropOn = (targetBinId: string | null): boolean => {
+    const p = dragPayload.peek();
+    if (!p) return false;
+    if (p.kind === "media") return true;
+    return targetBinId === null || !isDescendant(bins, p.id, targetBinId);
+  };
+
+  // dragover decides the drop: preventDefault enables a drop here, and the
+  // event stops at the innermost bin so it doesn't also light up the root zone.
+  // An invalid target still stops propagation (so root doesn't catch it) but
+  // doesn't preventDefault, so no drop can land and the cursor shows no-drop.
+  const onTargetDragOver = (targetBinId: string | null, e: DragEvent) => {
+    if (targetBinId !== null) e.stopPropagation();
+    if (!canDropOn(targetBinId)) { if (targetBinId !== null) dropTarget.value = null; return; }
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    dropTarget.value = targetBinId ?? ROOT_DROP;
+  };
+
+  const onTargetDrop = (targetBinId: string | null, e: DragEvent) => {
+    e.preventDefault();
+    if (targetBinId !== null) e.stopPropagation();
+    const p = dragPayload.peek();
+    endDrag();
+    if (!p) return;
+    if (p.kind === "media") moveMediaToBin(p.ids, targetBinId);
+    // Re-check with the captured payload (endDrag cleared the signal): a bin
+    // can't land on itself or its own subtree.
+    else if (targetBinId === null || !isDescendant(bins, p.id, targetBinId)) moveBin(p.id, targetBinId);
+  };
+
   // depth = nesting level of the row (0 = top-level / ungrouped). Media inside a
   // bin at level L render at depth L+1; the indent is computed from it.
   const renderRow = (item: MediaItem, depth: number) => (
@@ -527,6 +596,8 @@ export function ProjectPanel() {
       depth={depth}
       onSelect={(e) => selectRow(item, e)}
       onContextMenu={(e) => openRowMenu(e, item)}
+      onDragStart={(e) => startMediaDrag(item, e)}
+      onDragEnd={endDrag}
     />
   );
 
@@ -542,10 +613,15 @@ export function ProjectPanel() {
       // While searching, hide branches with no matches anywhere inside.
       hidden={searching && !subtreeHasItems(node)}
       editing={editingBinId.value === node.bin.id}
+      dropActive={dropTarget.value === node.bin.id}
       onToggle={() => toggleBinCollapsed(node.bin.id)}
       onContextMenu={(e) => openBinMenu(e, node.bin)}
       onRename={(name) => { renameBin(node.bin.id, name); editingBinId.value = null; }}
       onCancelRename={() => { editingBinId.value = null; }}
+      onDragStartBin={(e) => startBinDrag(node.bin, e)}
+      onDragEnd={endDrag}
+      onDragOver={(e) => onTargetDragOver(node.bin.id, e)}
+      onDrop={(e) => onTargetDrop(node.bin.id, e)}
       renderItems={() => (
         <>
           {node.children.map((c) => renderNode(c, depth + 1))}
@@ -665,8 +741,14 @@ export function ProjectPanel() {
           // Bins render as media-style rows (folder icon + media count); their
           // sub-bins and members render indented beneath when expanded, to any
           // depth. Ungrouped media are plain top-level rows after the bins —
-          // no separate section header.
-          <div class="media-list">
+          // no separate section header. The list itself is the top-level drop
+          // zone: dropping here pulls a clip/bin out to the root. Inner bins
+          // stopPropagation on dragover/drop so they win over this.
+          <div
+            class={`media-list${dropTarget.value === ROOT_DROP ? " media-list--drop-root" : ""}`}
+            onDragOver={(e) => onTargetDragOver(null, e)}
+            onDrop={(e) => onTargetDrop(null, e)}
+          >
             {forest.roots.map((node) => renderNode(node, 0))}
             {forest.ungrouped.map((m) => renderRow(m, 0))}
           </div>
@@ -676,17 +758,22 @@ export function ProjectPanel() {
   );
 }
 
-function BinGroup({ bin, count, depth, collapsed, hidden, editing, onToggle, onContextMenu, onRename, onCancelRename, renderItems }: {
+function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, onToggle, onContextMenu, onRename, onCancelRename, onDragStartBin, onDragEnd, onDragOver, onDrop, renderItems }: {
   bin: Bin;
   count: number;
   depth: number;
   collapsed: boolean;
   hidden: boolean;
   editing: boolean;
+  dropActive: boolean;
   onToggle: () => void;
   onContextMenu: (e: MouseEvent) => void;
   onRename: (name: string) => void;
   onCancelRename: () => void;
+  onDragStartBin: (e: DragEvent) => void;
+  onDragEnd: () => void;
+  onDragOver: (e: DragEvent) => void;
+  onDrop: (e: DragEvent) => void;
   renderItems: () => ComponentChildren;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -717,12 +804,18 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, onToggle, onC
   const meta = count === 0 ? "Empty" : `${count} item${count === 1 ? "" : "s"}`;
 
   return (
-    <div>
+    // The whole bin block (header + contents) is the drop zone for this bin;
+    // nested bins inside it stopPropagation so the innermost one wins.
+    <div onDragOver={onDragOver} onDrop={onDrop}>
       {/* Styled like a media row; the caret + folder icon mark it as a bin.
-          Each nesting level shifts the row right by one indent step. */}
+          Each nesting level shifts the row right by one indent step. The row
+          itself is the drag handle and shows the drop highlight. */}
       <div
-        class="media-row media-row--bin"
+        class={`media-row media-row--bin${dropActive ? " media-row--drop-target" : ""}`}
         style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` } : undefined}
+        draggable={!editing}
+        onDragStart={onDragStartBin}
+        onDragEnd={onDragEnd}
         onClick={() => { if (!editing) onToggle(); }}
         onContextMenu={onContextMenu}
       >
@@ -759,7 +852,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, onToggle, onC
   );
 }
 
-function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu }: {
+function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu, onDragStart, onDragEnd }: {
   item: MediaItem;
   query: string;
   selected: boolean;
@@ -767,6 +860,8 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
   depth: number;
   onSelect: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
+  onDragStart: (e: DragEvent) => void;
+  onDragEnd: () => void;
 }) {
   const meta = missing
     ? "File not found"
@@ -790,9 +885,12 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
     <button
       class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""}`}
       style={style}
+      draggable
       data-tooltip={`${item.name}\n${item.path}`}
       onClick={onSelect}
       onContextMenu={onContextMenu}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
     >
       <span class="media-row-icon">{getMediaIcon(item.path)}</span>
       <span class="media-row-info">
