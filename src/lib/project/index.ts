@@ -255,13 +255,21 @@ async function buildMediaItems(paths: string[], binId?: string): Promise<MediaIt
   );
 }
 
-/** Tell the user how many dropped items couldn't be imported (unsupported file,
- *  or a folder with no media). No-op when none. */
-function notifySkipped(count: number): void {
-  if (count <= 0) return;
+function basenameOf(p: string): string {
+  return p.replace(/\\/g, "/").split("/").pop() || p;
+}
+
+/** Tell the user which dropped items couldn't be imported (unsupported files,
+ *  at any depth), listing them. No-op when none. */
+function notifySkipped(names: string[]): void {
+  if (names.length === 0) return;
+  const MAX = 12;
+  const shown = names.slice(0, MAX);
+  const more = names.length - shown.length;
+  const list = shown.map((n) => `•  ${n}`).join("\n") + (more > 0 ? `\n•  …and ${more} more` : "");
   showNotice(
-    "Some items weren’t imported",
-    `${count === 1 ? "1 item was" : `${count} items were`} skipped — Codfish imports video and audio files (${MEDIA_EXTS.join(", ")}).`,
+    names.length === 1 ? "1 item wasn’t imported" : `${names.length} items weren’t imported`,
+    `Only video and audio files (${MEDIA_EXTS.join(", ")}) can be imported.\n\n${list}`,
   );
 }
 
@@ -279,13 +287,13 @@ export async function importMediaPaths(paths: string[], binId?: string): Promise
     pushHistory({ ...proj, media: [...proj.media, ...newItems] }, label);
     selectedMediaId.value = newItems[0].id;
   }
-  notifySkipped(paths.length - mediaPaths.length);
+  notifySkipped(paths.filter((p) => !isMediaPath(p)).map(basenameOf));
 }
 
 interface DroppedMedia {
   files: string[];
   folders: { name: string; media: string[] }[];
-  skipped: number;
+  skipped: string[];
 }
 
 /** Import an OS file-drop: loose media files go to the drop target, and each

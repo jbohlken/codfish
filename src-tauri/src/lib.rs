@@ -667,9 +667,9 @@ struct DroppedMedia {
     files: Vec<String>,
     /// Dropped folders that contain media (recursed, flattened per folder).
     folders: Vec<DroppedFolder>,
-    /// Count of top-level dropped items that yielded no media — an unsupported
-    /// file, or a folder with nothing importable — so the UI can report them.
-    skipped: u32,
+    /// Basenames of dropped items that can't be imported — unsupported files at
+    /// any depth, including inside dropped folders — so the UI can list them.
+    skipped: Vec<String>,
 }
 
 fn has_media_ext(path: &std::path::Path, exts: &[String]) -> bool {
@@ -679,55 +679,75 @@ fn has_media_ext(path: &std::path::Path, exts: &[String]) -> bool {
         .unwrap_or(false)
 }
 
-/// Collect media files under `dir`, recursing real subdirectories only — entry
-/// file types (not `is_dir`, which follows links) are checked so a symlink
-/// can't send us into a cycle.
-fn collect_media_recursive(dir: &std::path::Path, exts: &[String], out: &mut Vec<String>) {
+fn basename(path: &std::path::Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Walk `dir`, pushing media files to `media` and the basenames of unsupported
+/// files to `skipped`. Recurses real subdirectories only — entry file types
+/// (not `is_dir`, which follows links) are checked so a symlink can't loop.
+fn collect_recursive(
+    dir: &std::path::Path,
+    exts: &[String],
+    media: &mut Vec<String>,
+    skipped: &mut Vec<String>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
         if ft.is_dir() {
-            collect_media_recursive(&path, exts, out);
-        } else if ft.is_file() && has_media_ext(&path, exts) {
-            if let Some(s) = path.to_str() {
-                out.push(s.to_string());
+            collect_recursive(&path, exts, media, skipped);
+        } else if ft.is_file() {
+            if has_media_ext(&path, exts) {
+                if let Some(s) = path.to_str() {
+                    media.push(s.to_string());
+                }
+            } else {
+                let b = basename(&path);
+                if !b.is_empty() {
+                    skipped.push(b);
+                }
             }
         }
     }
 }
 
-/// Classify dropped paths for import: loose media files, plus a flattened media
-/// list per dropped folder (recursed). Lets the UI turn each dropped folder
-/// into a bin and report whatever couldn't be imported.
+/// Classify dropped paths for import: loose media files, a flattened media list
+/// per dropped folder (recursed), and the basenames of everything unsupported
+/// (at any depth) so the UI can turn folders into bins and list what it left out.
 #[tauri::command]
 fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia {
     let mut files: Vec<String> = Vec::new();
     let mut folders: Vec<DroppedFolder> = Vec::new();
-    let mut skipped: u32 = 0;
+    let mut skipped: Vec<String> = Vec::new();
     for p in paths {
         let path = std::path::Path::new(&p);
         if path.is_dir() {
             let mut media: Vec<String> = Vec::new();
-            collect_media_recursive(path, &exts, &mut media);
+            collect_recursive(path, &exts, &mut media, &mut skipped);
             media.sort();
-            if media.is_empty() {
-                skipped += 1;
-            } else {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("Folder")
-                    .to_string();
-                folders.push(DroppedFolder { name, media });
+            if !media.is_empty() {
+                let name = basename(path);
+                folders.push(DroppedFolder {
+                    name: if name.is_empty() { "Folder".to_string() } else { name },
+                    media,
+                });
             }
-        } else if has_media_ext(path, &exts) {
-            files.push(p);
-        } else {
-            skipped += 1;
+        } else if path.is_file() {
+            if has_media_ext(path, &exts) {
+                files.push(p);
+            } else {
+                let b = basename(path);
+                skipped.push(if b.is_empty() { p } else { b });
+            }
         }
     }
     files.sort();
+    skipped.sort();
     DroppedMedia { files, folders, skipped }
 }
 
