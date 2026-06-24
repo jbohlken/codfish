@@ -1046,14 +1046,17 @@ export function ProjectPanel() {
                 <MagnifyingGlass size={14} />
               </button>
             )}
-            {hasMedia && !showSearch && (
+            {hasMedia && (
               <button
                 class="btn btn-ghost btn-icon"
                 // With exactly one bin highlighted, make the new bin a sub-bin
                 // of it; otherwise (none, or an ambiguous multi-selection) a
-                // top-level bin.
+                // top-level bin. Stays available while searching — but creating
+                // a bin exits search first, so the new (empty) bin isn't hidden
+                // by the active filter and can be named right away.
                 data-tooltip={newBinTooltip}
                 onClick={() => {
+                  closeSearch();
                   const sel = [...selectedBinIds.peek()];
                   const parentId = sel.length === 1 ? sel[0] : undefined;
                   const id = createBin(undefined, parentId);
