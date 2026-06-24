@@ -474,8 +474,20 @@ export function ProjectPanel() {
   // While searching, a bin shows when it (or a sub-bin) was name-matched, when
   // it holds a revealed clip, or when it's on the path to one — so a match is
   // always reachable. revealedBins already covers matched bins + their contents.
-  const binShown = (node: BinNode): boolean =>
-    revealedBins.has(node.bin.id) || node.items.length > 0 || node.children.some(binShown);
+  // Precomputed once in a single post-order pass (and only while searching), so
+  // the per-node check is an O(1) lookup rather than a subtree re-walk at each
+  // of its two call sites (collectVisible + renderNode).
+  const shownBins = new Set<string>();
+  if (searching) {
+    const mark = (node: BinNode): boolean => {
+      let shown = revealedBins.has(node.bin.id) || node.items.length > 0;
+      for (const c of node.children) if (mark(c)) shown = true; // visit all, don't short-circuit
+      if (shown) shownBins.add(node.bin.id);
+      return shown;
+    };
+    forest.roots.forEach(mark);
+  }
+  const binShown = (node: BinNode): boolean => shownBins.has(node.bin.id);
 
   // Direct item count per bin for its row badge: clips plus sub-bins (a bin is
   // an item too). Counted from the full project, not the filtered view, and
