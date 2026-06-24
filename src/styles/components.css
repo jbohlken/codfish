@@ -620,12 +620,15 @@ body.col-resizing {
   outline-offset: -2px;
 }
 
-/* Custom drag image (see setDragImageLabel). Parked offscreen; the browser
-   snapshots it for the drag preview, then it's removed. */
+/* Floating label that follows the cursor during a pointer-based row drag (see
+   createDragGhost). pointer-events:none so it never blocks the elementFromPoint
+   hit-test; positioned inline on each pointermove. */
 .drag-ghost {
   position: fixed;
   top: -1000px;
   left: -1000px;
+  z-index: 3000;
+  pointer-events: none;
   padding: var(--space-1) var(--space-2);
   background: var(--color-accent);
   color: #fff;
@@ -635,6 +638,12 @@ body.col-resizing {
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
   box-shadow: var(--shadow-md, 0 2px 8px rgba(0, 0, 0, 0.3));
+}
+
+/* Grabbing cursor everywhere while a row drag is in progress. */
+body.rows-dragging,
+body.rows-dragging * {
+  cursor: grabbing !important;
 }
 
 .bin-row-input {

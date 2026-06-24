@@ -58,19 +58,16 @@ const dragPayload = signal<DragPayload | null>(null);
 const ROOT_DROP = "__root__";
 const dropTarget = signal<string | null>(null);
 
-// Replace the browser's default drag image (a faint snapshot of just the row
-// you grabbed) with a small label pill — so a multi-clip drag reads as "N
-// clips" rather than a single row. The element must be in the DOM and rendered
-// when setDragImage runs, so it's parked offscreen and removed on the next tick
-// (after the browser has snapshotted it).
-function setDragImageLabel(e: DragEvent, label: string) {
-  if (!e.dataTransfer) return;
+// Floating label that follows the cursor during a pointer-based row drag (a
+// small pill — "Clip name" or "N items"). Pointer-events:none (in CSS) so it
+// never intercepts the elementFromPoint hit-test that finds the drop target.
+// The caller positions it on each pointermove and removes it when the drag ends.
+function createDragGhost(label: string): HTMLElement {
   const ghost = document.createElement("div");
   ghost.className = "drag-ghost";
   ghost.textContent = label;
   document.body.appendChild(ghost);
-  e.dataTransfer.setDragImage(ghost, 12, 12);
-  setTimeout(() => ghost.remove(), 0);
+  return ghost;
 }
 
 // ── Panel resizing ──────────────────────────────────────────────────────────
@@ -343,6 +340,7 @@ function removeMediaIds(mediaIds: string[], opts?: { removeBinIds?: string[]; la
 export function ProjectPanel() {
   const proj = project.value;
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const panelBodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     checkMissingMedia(proj?.media ?? []);
@@ -670,30 +668,10 @@ export function ProjectPanel() {
   const openRowMenu = (e: MouseEvent, item: MediaItem) => openContextMenuFor(e, item.id, "media");
   const openBinMenu = (e: MouseEvent, bin: Bin) => openContextMenuFor(e, bin.id, "bin");
 
-  // ── Drag-and-drop ──────────────────────────────────────────────────────
-  // Start dragging a row. Dragging a row outside the current selection acts on
-  // just that row (and selects it); dragging a selected row carries the whole
-  // mixed selection — clips and bins — so a batch moves at once.
-  const startRowDrag = (id: string, kind: "media" | "bin", e: DragEvent) => {
-    let mediaIds = [...selectedMediaIds.peek()];
-    let binIds = [...selectedBinIds.peek()];
-    const inSelection = kind === "media" ? mediaIds.includes(id) : binIds.includes(id);
-    if (!inSelection) {
-      selectRowId(id, kind, e); // select just this row first
-      mediaIds = kind === "media" ? [id] : [];
-      binIds = kind === "bin" ? [id] : [];
-    }
-    dragPayload.value = { mediaIds, binIds };
-    e.dataTransfer?.setData("text/plain", "");
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-    const count = mediaIds.length + binIds.length;
-    const name = kind === "media"
-      ? proj?.media.find((m) => m.id === id)?.name
-      : bins.find((b) => b.id === id)?.name;
-    setDragImageLabel(e, count > 1 ? `${count} items` : (name ?? "1 item"));
-  };
-
-  const endDrag = () => { dragPayload.value = null; dropTarget.value = null; };
+  // ── Drag-and-drop (pointer-based) ───────────────────────────────────────
+  // HTML5 drag events are disabled while Tauri's OS-file-drop is on, so rows are
+  // dragged manually with pointer events + a hit-test. The move/cycle/selection
+  // rules are unchanged — only the input mechanism is.
 
   // Can the current payload drop on `targetBinId` (null = top level)? Clips go
   // anywhere; a bin can't drop on itself or anything in its own subtree (cycle),
@@ -705,26 +683,122 @@ export function ProjectPanel() {
     return !p.binIds.some((bid) => isDescendant(bins, bid, targetBinId));
   };
 
-  // dragover decides the drop: preventDefault enables a drop here, and the
-  // event stops at the innermost bin so it doesn't also light up the root zone.
-  // An invalid target still stops propagation (so root doesn't catch it) but
-  // doesn't preventDefault, so no drop can land and the cursor shows no-drop.
-  const onTargetDragOver = (targetBinId: string | null, e: DragEvent) => {
-    if (targetBinId !== null) e.stopPropagation();
-    if (!canDropOn(targetBinId)) { if (targetBinId !== null) dropTarget.value = null; return; }
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    dropTarget.value = targetBinId ?? ROOT_DROP;
-  };
+  // Begin a potential drag from a row. Nothing happens until the pointer moves
+  // past a small threshold, so a plain click still selects. Dragging a row
+  // outside the selection selects just it; dragging a selected row carries the
+  // whole mixed selection. Only meaningful when bins exist (nowhere to move to
+  // otherwise).
+  const beginPointerDrag = (id: string, kind: "media" | "bin", e: PointerEvent) => {
+    if (e.button !== 0 || !hasBins) return;
+    // Capture the pointer so move/up still fire if the cursor leaves the window
+    // mid-drag — otherwise a release outside would strand the ghost.
+    const captureEl = e.currentTarget as HTMLElement | null;
+    captureEl?.setPointerCapture?.(e.pointerId);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragging = false;
+    let ghost: HTMLElement | null = null;
+    let lastY = startY;
+    let scrollRAF = 0;
 
-  const onTargetDrop = (targetBinId: string | null, e: DragEvent) => {
-    e.preventDefault();
-    if (targetBinId !== null) e.stopPropagation();
-    const p = dragPayload.peek();
-    endDrag();
-    if (!p) return;
-    // moveItemsToBin guards cycles, no-ops, and selection-as-a-block semantics.
-    moveItemsToBin(p.mediaIds, p.binIds, targetBinId);
+    // Swallow the click that fires after a drag so it doesn't also select.
+    const swallowClick = (ev: MouseEvent) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      document.removeEventListener("click", swallowClick, true);
+    };
+
+    // Resolve the cursor position to a drop target: a bin (data-bin-id, innermost
+    // wins), the top level (anywhere else in the panel body), or null (outside).
+    const updateTarget = (x: number, y: number) => {
+      const el = document.elementFromPoint(x, y) as HTMLElement | null;
+      const binEl = el?.closest("[data-bin-id]");
+      if (binEl) {
+        const t = binEl.getAttribute("data-bin-id");
+        dropTarget.value = t && canDropOn(t) ? t : null;
+      } else if (el && panelBodyRef.current?.contains(el)) {
+        dropTarget.value = canDropOn(null) ? ROOT_DROP : null;
+      } else {
+        dropTarget.value = null;
+      }
+    };
+
+    // Continuous auto-scroll while the pointer rests near the panel's edges.
+    const autoScroll = () => {
+      const body = panelBodyRef.current;
+      if (!dragging || !body) return;
+      const r = body.getBoundingClientRect();
+      const margin = 28;
+      if (lastY < r.top + margin) body.scrollTop -= 10;
+      else if (lastY > r.bottom - margin) body.scrollTop += 10;
+      scrollRAF = requestAnimationFrame(autoScroll);
+    };
+
+    const begin = () => {
+      dragging = true;
+      let mediaIds = [...selectedMediaIds.peek()];
+      let binIds = [...selectedBinIds.peek()];
+      const inSelection = kind === "media" ? mediaIds.includes(id) : binIds.includes(id);
+      if (!inSelection) {
+        selectRowId(id, kind, e); // select just this row first
+        mediaIds = kind === "media" ? [id] : [];
+        binIds = kind === "bin" ? [id] : [];
+      }
+      dragPayload.value = { mediaIds, binIds };
+      const count = mediaIds.length + binIds.length;
+      const name = kind === "media"
+        ? proj?.media.find((m) => m.id === id)?.name
+        : bins.find((b) => b.id === id)?.name;
+      ghost = createDragGhost(count > 1 ? `${count} items` : (name ?? "1 item"));
+      document.body.classList.add("rows-dragging");
+      document.addEventListener("click", swallowClick, true);
+      scrollRAF = requestAnimationFrame(autoScroll);
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      lastY = ev.clientY;
+      if (!dragging) {
+        if (Math.abs(ev.clientX - startX) < 5 && Math.abs(ev.clientY - startY) < 5) return;
+        begin();
+      }
+      if (ghost) {
+        ghost.style.left = `${ev.clientX + 12}px`;
+        ghost.style.top = `${ev.clientY + 12}px`;
+      }
+      updateTarget(ev.clientX, ev.clientY);
+    };
+
+    const finish = (drop: boolean) => {
+      const wasDragging = dragging;
+      dragging = false;
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onCancel);
+      document.removeEventListener("keydown", onKey);
+      if (captureEl?.hasPointerCapture?.(e.pointerId)) captureEl.releasePointerCapture(e.pointerId);
+      cancelAnimationFrame(scrollRAF);
+      ghost?.remove();
+      document.body.classList.remove("rows-dragging");
+      const p = dragPayload.peek();
+      const target = dropTarget.peek();
+      dragPayload.value = null;
+      dropTarget.value = null;
+      if (drop && wasDragging && p && target !== null) {
+        moveItemsToBin(p.mediaIds, p.binIds, target === ROOT_DROP ? null : target);
+      }
+      // If a click follows (drag started on this row), swallowClick eats it;
+      // otherwise tidy the listener up next tick.
+      if (wasDragging) setTimeout(() => document.removeEventListener("click", swallowClick, true), 0);
+    };
+
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") finish(false); };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onCancel);
+    document.addEventListener("keydown", onKey);
   };
 
   // depth = nesting level of the row (0 = top-level / ungrouped). Media inside a
@@ -739,8 +813,7 @@ export function ProjectPanel() {
       depth={depth}
       onSelect={(e) => selectRow(item, e)}
       onContextMenu={(e) => openRowMenu(e, item)}
-      onDragStart={(e) => startRowDrag(item.id, "media", e)}
-      onDragEnd={endDrag}
+      onPointerDownDrag={(e) => beginPointerDrag(item.id, "media", e)}
     />
   );
 
@@ -767,10 +840,7 @@ export function ProjectPanel() {
       onContextMenu={(e) => openBinMenu(e, node.bin)}
       onRename={(name) => { renameBin(node.bin.id, name); editingBinId.value = null; }}
       onCancelRename={() => { editingBinId.value = null; }}
-      onDragStartBin={(e) => startRowDrag(node.bin.id, "bin", e)}
-      onDragEnd={endDrag}
-      onDragOver={(e) => onTargetDragOver(node.bin.id, e)}
-      onDrop={(e) => onTargetDrop(node.bin.id, e)}
+      onPointerDownDrag={(e) => { if (editingBinId.value !== node.bin.id) beginPointerDrag(node.bin.id, "bin", e); }}
       renderItems={() => (
         <>
           {node.children.map((c) => renderNode(c, depth + 1))}
@@ -856,15 +926,12 @@ export function ProjectPanel() {
         <PanelResizeHandle />
       </div>
 
-      {/* The whole scrollable body is the top-level drop zone (only when bins
-          exist), so dragover always lands on a handler — no uncovered gaps
-          between/below rows where the cursor would flick to "no-drop". Bins
-          inside stopPropagation to claim their own, more specific target. */}
+      {/* The whole scrollable body is the top-level drop zone: a pointer drag
+          that ends here (outside any bin) drops to the root. The drag hit-test
+          finds bins by their data-bin-id and falls back to this element. */}
       <div
+        ref={panelBodyRef}
         class={`panel-body scrollable${dropTarget.value === ROOT_DROP ? " panel-body--drop-root" : ""}`}
-        onDragEnter={hasBins ? (e) => onTargetDragOver(null, e) : undefined}
-        onDragOver={hasBins ? (e) => onTargetDragOver(null, e) : undefined}
-        onDrop={hasBins ? (e) => onTargetDrop(null, e) : undefined}
       >
         {!proj ? (
           <div class="empty-state">
@@ -923,7 +990,7 @@ export function ProjectPanel() {
   );
 }
 
-function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dropActive, query, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onDragStartBin, onDragEnd, onDragOver, onDrop, renderItems }: {
+function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dropActive, query, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onPointerDownDrag, renderItems }: {
   bin: Bin;
   count: number;
   depth: number;
@@ -938,10 +1005,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
   onContextMenu: (e: MouseEvent) => void;
   onRename: (name: string) => void;
   onCancelRename: () => void;
-  onDragStartBin: (e: DragEvent) => void;
-  onDragEnd: () => void;
-  onDragOver: (e: DragEvent) => void;
-  onDrop: (e: DragEvent) => void;
+  onPointerDownDrag: (e: PointerEvent) => void;
   renderItems: () => ComponentChildren;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -974,11 +1038,10 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
   const meta = count === 0 ? "Empty" : `${count} item${count === 1 ? "" : "s"}`;
 
   return (
-    // The whole bin block (header + contents) is the drop zone for this bin;
-    // nested bins inside it stopPropagation so the innermost one wins.
-    // dragenter shares dragover's handler so entering a child element keeps the
-    // drop allowed (without it the cursor flickers to no-drop on each crossing).
-    <div onDragEnter={onDragOver} onDragOver={onDragOver} onDrop={onDrop}>
+    // The whole bin block (header + contents) is this bin's drop zone — the drag
+    // hit-test matches data-bin-id, and nested bins carry their own so the
+    // innermost one under the cursor wins.
+    <div data-bin-id={bin.id}>
       {/* Styled like a media row; the open/closed folder icon both marks it as
           a bin and is its expand/collapse control (no separate caret, so a bin
           row has the same [icon][name] layout as a clip and the two align).
@@ -989,9 +1052,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
       <div
         class={`media-row media-row--bin${selected ? " media-row--selected" : ""}${dropActive ? " media-row--drop-target" : ""}`}
         style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + min(${depth * BIN_INDENT_STEP}px, 45%))` } : undefined}
-        draggable={!editing}
-        onDragStart={onDragStartBin}
-        onDragEnd={onDragEnd}
+        onPointerDown={onPointerDownDrag}
         onClick={(e) => { if (!editing) onSelect(e); }}
         onDblClick={() => { if (!editing) onToggle(); }}
         onContextMenu={onContextMenu}
@@ -1035,7 +1096,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
   );
 }
 
-function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu, onDragStart, onDragEnd }: {
+function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu, onPointerDownDrag }: {
   item: MediaItem;
   query: string;
   selected: boolean;
@@ -1043,8 +1104,7 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
   depth: number;
   onSelect: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
-  onDragStart: (e: DragEvent) => void;
-  onDragEnd: () => void;
+  onPointerDownDrag: (e: PointerEvent) => void;
 }) {
   const captionMeta = item.captions.length > 0
     ? `${item.captions.length} captions`
@@ -1065,12 +1125,10 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
     <button
       class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""}`}
       style={style}
-      draggable
       data-tooltip={`${item.name}\n${item.path}${fpsLabel ? `\n${fpsLabel}` : ""}`}
       onClick={onSelect}
       onContextMenu={onContextMenu}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      onPointerDown={onPointerDownDrag}
     >
       <span class="media-row-icon">{getMediaIcon(item.path)}</span>
       <span class="media-row-info">
