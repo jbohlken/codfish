@@ -22,7 +22,7 @@ import {
   toggleBinCollapsed,
   expandBin,
   createBin,
-  createBinWithMedia,
+  createBinWithItems,
   renameBin,
   dissolveBin,
   moveBin,
@@ -483,109 +483,150 @@ export function ProjectPanel() {
   };
   const selectRow = (item: MediaItem, e: MouseEvent) => selectRowId(item.id, "media", e);
 
-  const openRowMenu = (e: MouseEvent, item: MediaItem) => {
-    // Right-clicking a row outside the current selection acts on just that row
-    // (and drops any bin selection so the menu's actions are unambiguous).
-    if (!selectedMediaIds.peek().has(item.id)) {
-      selectedMediaId.value = item.id;
-      selectedMediaIds.value = new Set([item.id]);
-      selectedBinIds.value = new Set();
-      selectionAnchor.value = item.id;
-    }
-    const ids = [...selectedMediaIds.peek()];
-    const multi = ids.length > 1;
-    const moveSubmenu: ContextMenuItem[] = [
-      ...orderedBinList.map(({ bin: b, depth }) => ({
-        label: b.name,
+  // Phrase a clip+bin count, e.g. "2 clips", "1 bin", "2 clips and 1 bin".
+  const countLabel = (clips: number, bins_: number): string => {
+    const parts: string[] = [];
+    if (clips) parts.push(`${clips} clip${clips === 1 ? "" : "s"}`);
+    if (bins_) parts.push(`${bins_} bin${bins_ === 1 ? "" : "s"}`);
+    return parts.join(" and ") || "0 items";
+  };
+
+  // "Move to bin" submenu for a selection of clips and/or bins. Targets exclude
+  // any selected bin and anything inside one (a bin can't move into its own
+  // subtree). "New bin…" creates a bin and moves the whole selection into it.
+  const buildMoveSubmenu = (mediaIds: string[], binIds: string[]): ContextMenuItem[] => {
+    const targets = orderedBinList.filter(({ bin: t }) => !binIds.some((bid) => isDescendant(bins, bid, t.id)));
+    return [
+      ...targets.map(({ bin: t, depth }) => ({
+        label: t.name,
         icon: <Folder size={12} />,
         indent: depth,
-        onClick: () => moveMediaToBin(ids, b.id),
+        onClick: () => moveItemsToBin(mediaIds, binIds, t.id),
       })),
       {
         label: "New bin…",
         icon: <FolderPlus size={12} />,
         onClick: () => {
-          // One undo step (create + move together), auto-named without collision.
-          const id = createBinWithMedia(ids);
+          const id = createBinWithItems(mediaIds, binIds);
           if (id) editingBinId.value = id;
         },
       },
     ];
-    const anyBinned = ids.some((id) => proj!.media.find((m) => m.id === id)?.binId != null);
-    const items: ContextMenuItem[] = [];
-    if (!multi) {
-      items.push({ label: "Settings…", onClick: () => { mediaSettingsId.value = item.id; } });
-      items.push({ label: "Re-link file…", onClick: () => relinkMediaItem(item.id) });
-    }
-    items.push({ label: multi ? `Move ${ids.length} to bin` : "Move to bin", submenu: moveSubmenu });
-    if (anyBinned) items.push({ label: "Remove from bin", onClick: () => moveMediaToBin(ids, null) });
-    items.push({
-      label: multi ? `Remove ${ids.length} from project` : "Remove from project",
-      danger: true,
-      onClick: () => removeMediaIds(ids),
-    });
-    showContextMenu(e, items);
   };
 
-  // Delete a bin, its entire sub-tree, AND all media anywhere within it from the
-  // project (files on disk are untouched). Confirm only when there's media to
-  // lose; an empty branch deletes like Dissolve.
-  const deleteBin = async (bin: Bin) => {
+  // Remove a selection of clips and/or bins from the project (bins take their
+  // whole sub-tree and the media inside). Files on disk are untouched. Confirms
+  // only when media would be lost; an empty bin removes silently, like Dissolve.
+  const removeSelection = async (mediaIds: string[], binIds: string[]) => {
     if (!proj) return;
-    const subtree = collectSubtree(proj.bins ?? [], bin.id);
-    const memberIds = proj.media.filter((m) => m.binId != null && subtree.has(m.binId)).map((m) => m.id);
-    if (memberIds.length > 0) {
+    const subtreeBins = new Set<string>();
+    for (const id of binIds) for (const x of collectSubtree(proj.bins ?? [], id)) subtreeBins.add(x);
+    const removeMedia = new Set(mediaIds);
+    for (const mm of proj.media) if (mm.binId != null && subtreeBins.has(mm.binId)) removeMedia.add(mm.id);
+    if (removeMedia.size > 0) {
       const choice = await confirmUnsavedChanges(
-        `Delete “${bin.name}” and its ${memberIds.length} media item${memberIds.length === 1 ? "" : "s"} from the project? The original files on disk won't be deleted.`,
-        { title: "Delete bin?", hideDiscard: true, confirmLabel: "Delete" },
+        `Remove ${countLabel(removeMedia.size, subtreeBins.size)} from the project? The original files on disk won't be deleted.`,
+        { title: "Remove from project?", hideDiscard: true, confirmLabel: "Remove" },
       );
       if (choice !== "save") return;
     }
-    removeMediaIds(memberIds, { removeBinIds: [...subtree], label: "Delete bin" });
-    forgetBinCollapse(subtree);
+    removeMediaIds([...removeMedia], { removeBinIds: [...subtreeBins], label: "Remove from project" });
+    if (subtreeBins.size) {
+      forgetBinCollapse(subtreeBins);
+      // Drop the now-deleted bins from the selection (removeMediaIds only tends
+      // the media selection); leftover ids would just highlight nothing.
+      const stillSelected = [...selectedBinIds.peek()].filter((id) => !subtreeBins.has(id));
+      if (stillSelected.length !== selectedBinIds.peek().size) selectedBinIds.value = new Set(stillSelected);
+    }
   };
 
-  const openBinMenu = (e: MouseEvent, bin: Bin) => {
-    // Right-clicking a bin selects just it (the menu's actions operate on this
-    // bin), unless it's already part of the selection.
-    if (!selectedBinIds.peek().has(bin.id)) {
-      selectedBinIds.value = new Set([bin.id]);
-      selectedMediaIds.value = new Set();
-      selectionAnchor.value = bin.id;
+  // Single, selection-aware context menu. Right-clicking a row outside the
+  // selection resets to just it; right-clicking inside keeps the whole
+  // selection. The contents adapt: a lone clip or lone bin get their full
+  // single-item menu; a multi/mixed selection gets only the actions that make
+  // sense across kinds (move, remove), so right-clicking a clip vs a bin in the
+  // same mixed selection yields the same menu.
+  const openContextMenuFor = (e: MouseEvent, clickedId: string, clickedKind: "media" | "bin") => {
+    const inSelection = clickedKind === "media"
+      ? selectedMediaIds.peek().has(clickedId)
+      : selectedBinIds.peek().has(clickedId);
+    if (!inSelection) {
+      if (clickedKind === "media") {
+        selectedMediaId.value = clickedId;
+        selectedMediaIds.value = new Set([clickedId]);
+        selectedBinIds.value = new Set();
+      } else {
+        selectedBinIds.value = new Set([clickedId]);
+        selectedMediaIds.value = new Set();
+      }
+      selectionAnchor.value = clickedId;
     }
-    // "Move to" can target any bin that isn't this one or nested inside it
-    // (that would make a cycle), plus the top level when it's currently nested.
-    const moveTargets = orderedBinList.filter(({ bin: t }) => !isDescendant(bins, bin.id, t.id));
-    const moveSubmenu: ContextMenuItem[] = [];
-    if (bin.parentId != null) {
-      moveSubmenu.push({ label: "Top level", icon: <FolderOpen size={12} />, onClick: () => moveBin(bin.id, null) });
-    }
-    moveSubmenu.push(
-      ...moveTargets.map(({ bin: t, depth }) => ({
-        label: t.name,
-        icon: <Folder size={12} />,
-        indent: depth,
-        onClick: () => moveBin(bin.id, t.id),
-      })),
-    );
-    const items: ContextMenuItem[] = [
-      {
-        label: "New sub-bin",
-        icon: <FolderPlus size={12} />,
-        onClick: () => {
-          const id = createBin(undefined, bin.id);
-          if (id) { expandBin(bin.id); editingBinId.value = id; }
-        },
-      },
-      { label: "Rename", onClick: () => { editingBinId.value = bin.id; } },
-    ];
-    if (moveSubmenu.length) items.push({ label: "Move to…", submenu: moveSubmenu });
-    items.push(
-      { label: "Dissolve bin", onClick: () => dissolveBin(bin.id) },
-      { label: "Delete bin", danger: true, onClick: () => { void deleteBin(bin); } },
-    );
-    showContextMenu(e, items);
+    const mediaIds = [...selectedMediaIds.peek()];
+    const binIds = [...selectedBinIds.peek()];
+    showContextMenu(e, buildSelectionMenu(mediaIds, binIds));
   };
+
+  const buildSelectionMenu = (mediaIds: string[], binIds: string[]): ContextMenuItem[] => {
+    // Single clip: full clip menu.
+    if (mediaIds.length === 1 && binIds.length === 0) {
+      const id = mediaIds[0];
+      const binned = proj!.media.find((m) => m.id === id)?.binId != null;
+      const items: ContextMenuItem[] = [
+        { label: "Settings…", onClick: () => { mediaSettingsId.value = id; } },
+        { label: "Re-link file…", onClick: () => relinkMediaItem(id) },
+        { label: "Move to bin", submenu: buildMoveSubmenu(mediaIds, binIds) },
+      ];
+      if (binned) items.push({ label: "Remove from bin", onClick: () => moveMediaToBin(mediaIds, null) });
+      items.push({ label: "Remove from project", danger: true, onClick: () => removeMediaIds(mediaIds) });
+      return items;
+    }
+    // Single bin: full bin menu.
+    if (binIds.length === 1 && mediaIds.length === 0) {
+      const id = binIds[0];
+      const bin = bins.find((b) => b.id === id)!;
+      const moveSubmenu: ContextMenuItem[] = [];
+      if (bin.parentId != null) {
+        moveSubmenu.push({ label: "Top level", icon: <FolderOpen size={12} />, onClick: () => moveBin(id, null) });
+      }
+      moveSubmenu.push(
+        ...orderedBinList
+          .filter(({ bin: t }) => !isDescendant(bins, id, t.id))
+          .map(({ bin: t, depth }) => ({
+            label: t.name,
+            icon: <Folder size={12} />,
+            indent: depth,
+            onClick: () => moveBin(id, t.id),
+          })),
+      );
+      const items: ContextMenuItem[] = [
+        {
+          label: "New sub-bin",
+          icon: <FolderPlus size={12} />,
+          onClick: () => { const nid = createBin(undefined, id); if (nid) { expandBin(id); editingBinId.value = nid; } },
+        },
+        { label: "Rename", onClick: () => { editingBinId.value = id; } },
+      ];
+      if (moveSubmenu.length) items.push({ label: "Move to…", submenu: moveSubmenu });
+      items.push(
+        { label: "Dissolve bin", onClick: () => dissolveBin(id) },
+        { label: "Delete bin", danger: true, onClick: () => { void removeSelection([], [id]); } },
+      );
+      return items;
+    }
+    // Multi / mixed: only cross-kind actions.
+    const label = countLabel(mediaIds.length, binIds.length);
+    const anyNested = mediaIds.some((id) => proj!.media.find((m) => m.id === id)?.binId != null)
+      || binIds.some((id) => bins.find((b) => b.id === id)?.parentId != null);
+    const items: ContextMenuItem[] = [
+      { label: `Move ${label} to bin`, submenu: buildMoveSubmenu(mediaIds, binIds) },
+    ];
+    if (anyNested) items.push({ label: "Move to top level", onClick: () => moveItemsToBin(mediaIds, binIds, null) });
+    items.push({ label: `Remove ${label} from project`, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } });
+    return items;
+  };
+
+  const openRowMenu = (e: MouseEvent, item: MediaItem) => openContextMenuFor(e, item.id, "media");
+  const openBinMenu = (e: MouseEvent, bin: Bin) => openContextMenuFor(e, bin.id, "bin");
 
   // ── Drag-and-drop ──────────────────────────────────────────────────────
   // Start dragging a row. Dragging a row outside the current selection acts on

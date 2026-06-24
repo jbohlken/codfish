@@ -253,18 +253,24 @@ export function createBin(name?: string, parentId?: string): string | null {
   return bin.id;
 }
 
-/** Create a bin AND move the given media into it in ONE undo step, so the
- *  "New bin…" move gesture isn't two separate history entries. */
-export function createBinWithMedia(mediaIds: string[], name?: string, parentId?: string): string | null {
+/** Create a bin AND move a selection of clips and/or bins into it in ONE undo
+ *  step, so the "New bin…" gesture isn't two separate history entries. Uses the
+ *  same selection-as-a-block rules as {@link moveItemsToBin} (a selected bin
+ *  whose ancestor is also selected, or a clip inside a selected bin, travels
+ *  with its parent). Returns the new bin's id. */
+export function createBinWithItems(mediaIds: string[], binIds: string[], parentId?: string): string | null {
   const proj = project.value;
   if (!proj) return null;
-  const bin = makeBin(proj.bins ?? [], name, parentId);
-  const ids = new Set(mediaIds);
+  const bin = makeBin(proj.bins ?? [], undefined, parentId);
+  const allBins = [...(proj.bins ?? []), bin];
+  const { reparentBinIds, moveMediaIds } = planItemMove(allBins, proj.media, mediaIds, binIds, bin.id);
+  const reparent = new Set(reparentBinIds);
+  const moveMedia = new Set(moveMediaIds);
   pushHistory(
     {
       ...proj,
-      bins: [...(proj.bins ?? []), bin],
-      media: proj.media.map((m) => (ids.has(m.id) ? { ...m, binId: bin.id } : m)),
+      bins: allBins.map((b) => (reparent.has(b.id) ? { ...b, parentId: bin.id } : b)),
+      media: proj.media.map((m) => (moveMedia.has(m.id) ? { ...m, binId: bin.id } : m)),
     },
     `New bin "${bin.name}"`,
   );
