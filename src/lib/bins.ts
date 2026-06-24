@@ -170,27 +170,56 @@ export function rangeSelect(orderedIds: string[], anchorId: string, targetId: st
 }
 
 // ── Collapse state (per-user view state, localStorage) ────────────────────
+// Stored per project (keyed by the project's createdAt) so reopening a project
+// — even after an app restart — restores its bins' open/closed state, while a
+// closed project's ids don't pile into one global list. The active project's
+// set lives in `collapsedBins`; loadCollapsedForProject swaps it on open.
 
 const COLLAPSED_KEY = "codfish:collapsedBins";
 
-function loadCollapsed(): Set<string> {
+type CollapsedMap = Record<string, string[]>;
+
+function loadCollapsedMap(): CollapsedMap {
   try {
-    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]");
-    return new Set(Array.isArray(raw) ? raw : []);
+    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}");
+    // Ignore the legacy flat-array format (pre per-project scoping) — collapse
+    // state resets once on upgrade, which is harmless view state.
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   } catch {
-    return new Set();
+    return {};
   }
 }
 
-export const collapsedBins = signal<Set<string>>(loadCollapsed());
+let currentProjectKey: string | null = null;
+export const collapsedBins = signal<Set<string>>(new Set());
 
 function persistCollapsed(next: Set<string>): void {
   collapsedBins.value = next;
+  if (currentProjectKey === null) return;
   try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+    const map = loadCollapsedMap();
+    if (next.size) map[currentProjectKey] = [...next];
+    else delete map[currentProjectKey];
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(map));
   } catch {
     // view state is best-effort
   }
+}
+
+/** Swap the active collapse set to the given project's, pruned to bins that
+ *  still exist (`validIds`) so ids of bins deleted while the project was closed
+ *  are dropped. Call whenever the open project changes (null when none). */
+export function loadCollapsedForProject(projectKey: string | null, validIds: Set<string>): void {
+  currentProjectKey = projectKey;
+  if (projectKey === null) {
+    collapsedBins.value = new Set();
+    return;
+  }
+  const stored = loadCollapsedMap()[projectKey] ?? [];
+  const pruned = stored.filter((id) => validIds.has(id));
+  collapsedBins.value = new Set(pruned);
+  // Write back only if pruning changed something, to drop stale ids.
+  if (pruned.length !== stored.length) persistCollapsed(collapsedBins.value);
 }
 
 export function toggleBinCollapsed(id: string): void {

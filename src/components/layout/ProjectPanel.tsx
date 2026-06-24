@@ -21,6 +21,7 @@ import {
   isDescendant,
   rangeSelect,
   collapsedBins,
+  loadCollapsedForProject,
   toggleBinCollapsed,
   expandBin,
   createBin,
@@ -411,6 +412,10 @@ export function ProjectPanel() {
     lastFilterResetKey = projectKey;
     searchOpen.value = false;
     filterText.value = "";
+    // Load this project's saved bin collapse state (pruned to its current
+    // bins). Inline like the filter reset, so the first frame already reflects
+    // the right state rather than flashing all-expanded.
+    loadCollapsedForProject(projectKey, new Set((proj?.bins ?? []).map((b) => b.id)));
   }
 
   // Closed search never filters, even if filterText somehow lingers.
