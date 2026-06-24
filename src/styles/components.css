@@ -291,7 +291,7 @@
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary);
   padding: var(--space-1) var(--space-2);
 }
 
