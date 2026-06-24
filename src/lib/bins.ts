@@ -332,21 +332,15 @@ export function dissolveBins(binIds: string[]): void {
 }
 
 /**
- * Move a mixed selection of clips and bins to a target bin (or the top level
- * when null), in ONE undo step — for drag-and-drop of a multi-selection.
- *
- * Selection-as-a-block semantics, so dragging a branch keeps its shape:
+ * Pure planner for {@link moveItemsToBin}: decide which selected bins actually
+ * reparent and which selected clips actually move, given the current tree.
+ * Exposed (and unit-tested) because the selection-as-a-block rules are subtle:
  *  - A selected bin whose ancestor is also selected travels inside that
  *    ancestor (it isn't reparented on its own).
  *  - A selected clip inside a selected bin travels with the bin (not yanked out
  *    to the target).
  *  - Bins can't move into themselves or their own subtree (cycle), and no-op
- *    moves are dropped. If nothing would change, history isn't touched.
- */
-/**
- * Pure planner for {@link moveItemsToBin}: decide which selected bins actually
- * reparent and which selected clips actually move, given the current tree.
- * Exposed (and unit-tested) because the selection-as-a-block rules are subtle.
+ *    moves are dropped.
  */
 export function planItemMove(
   allBins: Bin[],
@@ -390,6 +384,10 @@ export function planItemMove(
   return { reparentBinIds, moveMediaIds };
 }
 
+/** Move a mixed selection of clips and bins to a target bin (or the top level
+ *  when null) in ONE undo step — for drag-and-drop. Defers the selection-as-a-
+ *  block and cycle/no-op decisions to {@link planItemMove}; if nothing would
+ *  change, history isn't touched. */
 export function moveItemsToBin(mediaIds: string[], binIds: string[], targetBinId: string | null): void {
   const proj = project.value;
   if (!proj) return;
