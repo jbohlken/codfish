@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "preact/hooks";
-import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, CaretDownIcon as CaretDown, CaretRightIcon as CaretRight, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
+import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal } from "@preact/signals";
 import { project, selectedMediaId, selectedMediaIds, selectedCaptionIndex, pushHistory } from "../../store/app";
@@ -40,12 +40,13 @@ import type { MediaItem, Bin } from "../../types/project";
 
 const missingIds = signal<ReadonlySet<string>>(new Set());
 
-// Pixels each bin-tree nesting level shifts its rows to the right — one
-// disclosure caret (12px) + the row's flex gap (--space-2, 8px), so a child's
-// caret sits under its parent's icon, Explorer-style. Bins and media at the
-// same depth share this, and media carry a caret-width spacer (so their icon
-// lines up with a bin's icon) — keeping the two row kinds perfectly aligned.
-const BIN_INDENT_STEP = 20;
+// Pixels each bin-tree nesting level shifts its rows to the right — one icon
+// (14px) + the row's flex gap (--space-2, 8px), so a child's icon sits under
+// its parent's name. Bins and media share this one formula and have the same
+// [icon][name] layout (a bin's open/closed folder icon doubles as its
+// disclosure control), so the two row kinds align with no extra gutter — and a
+// top-level clip never shifts just because a bin was added.
+const BIN_INDENT_STEP = 22;
 
 // ── Drag-and-drop ─────────────────────────────────────────────────────────
 // What's currently being dragged, and the live drop target for highlighting.
@@ -57,6 +58,21 @@ const dragPayload = signal<DragPayload | null>(null);
 // null for "no valid target under the cursor".
 const ROOT_DROP = "__root__";
 const dropTarget = signal<string | null>(null);
+
+// Replace the browser's default drag image (a faint snapshot of just the row
+// you grabbed) with a small label pill — so a multi-clip drag reads as "N
+// clips" rather than a single row. The element must be in the DOM and rendered
+// when setDragImage runs, so it's parked offscreen and removed on the next tick
+// (after the browser has snapshotted it).
+function setDragImageLabel(e: DragEvent, label: string) {
+  if (!e.dataTransfer) return;
+  const ghost = document.createElement("div");
+  ghost.className = "drag-ghost";
+  ghost.textContent = label;
+  document.body.appendChild(ghost);
+  e.dataTransfer.setDragImage(ghost, 12, 12);
+  setTimeout(() => ghost.remove(), 0);
+}
 
 // Indent a bin's name by its tree depth for the flat "Move to bin" pickers.
 // Non-breaking spaces so the leading indent isn't collapsed in the button text.
@@ -545,12 +561,14 @@ export function ProjectPanel() {
     dragPayload.value = { kind: "media", ids };
     e.dataTransfer?.setData("text/plain", "");
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    setDragImageLabel(e, ids.length > 1 ? `${ids.length} clips` : item.name);
   };
 
   const startBinDrag = (bin: Bin, e: DragEvent) => {
     dragPayload.value = { kind: "bin", id: bin.id };
     e.dataTransfer?.setData("text/plain", "");
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    setDragImageLabel(e, bin.name);
   };
 
   const endDrag = () => { dragPayload.value = null; dropTarget.value = null; };
@@ -598,7 +616,6 @@ export function ProjectPanel() {
       selected={selIds.has(item.id)}
       missing={missingIds.value.has(item.id)}
       depth={depth}
-      tree={hasBins}
       onSelect={(e) => selectRow(item, e)}
       onContextMenu={(e) => openRowMenu(e, item)}
       onDragStart={(e) => startMediaDrag(item, e)}
@@ -812,9 +829,11 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, o
     // The whole bin block (header + contents) is the drop zone for this bin;
     // nested bins inside it stopPropagation so the innermost one wins.
     <div onDragOver={onDragOver} onDrop={onDrop}>
-      {/* Styled like a media row; the caret + folder icon mark it as a bin.
-          Each nesting level shifts the row right by one indent step. The row
-          itself is the drag handle and shows the drop highlight. */}
+      {/* Styled like a media row; the open/closed folder icon both marks it as
+          a bin and shows its expanded state (no separate caret, so a bin row
+          has the same [icon][name] layout as a clip and the two align). Each
+          nesting level shifts the row right by one indent step. The row itself
+          is the drag handle and shows the drop highlight. */}
       <div
         class={`media-row media-row--bin${dropActive ? " media-row--drop-target" : ""}`}
         style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` } : undefined}
@@ -824,10 +843,9 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, o
         onClick={() => { if (!editing) onToggle(); }}
         onContextMenu={onContextMenu}
       >
-        <span class="bin-row-caret">
-          {collapsed ? <CaretRight size={12} /> : <CaretDown size={12} />}
+        <span class="media-row-icon">
+          {collapsed ? <Folder size={14} /> : <FolderOpen size={14} />}
         </span>
-        <span class="media-row-icon"><Folder size={14} /></span>
         <span class="media-row-info">
           {editing ? (
             // Uncontrolled (defaultValue): a controlled value would be reset to
@@ -857,15 +875,12 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, o
   );
 }
 
-function MediaRow({ item, query, selected, missing, depth, tree, onSelect, onContextMenu, onDragStart, onDragEnd }: {
+function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMenu, onDragStart, onDragEnd }: {
   item: MediaItem;
   query: string;
   selected: boolean;
   missing: boolean;
   depth: number;
-  // True whenever bins exist, so the row reserves a caret-width gutter and its
-  // icon lines up with bin icons (even at depth 0, alongside top-level bins).
-  tree: boolean;
   onSelect: (e: MouseEvent) => void;
   onContextMenu: (e: MouseEvent) => void;
   onDragStart: (e: DragEvent) => void;
@@ -881,9 +896,8 @@ function MediaRow({ item, query, selected, missing, depth, tree, onSelect, onCon
     ? `${item.fps} fps${item.dropFrame != null ? (item.dropFrame ? " DF" : " NDF") : ""}`
     : null;
 
-  // Same indent formula as bin rows, so a clip and a sub-bin at the same depth
-  // line up exactly. The caret-width spacer below keeps the icon aligned with
-  // bin icons (which sit after their disclosure caret).
+  // Same indent formula and [icon][name] layout as bin rows, so a clip and a
+  // sub-bin at the same depth line up exactly.
   const style = depth > 0
     ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` }
     : undefined;
@@ -899,9 +913,6 @@ function MediaRow({ item, query, selected, missing, depth, tree, onSelect, onCon
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
-      {/* Empty caret-width gutter so the icon aligns with bin icons (which sit
-          past their disclosure caret). Only when bins exist. */}
-      {tree && <span class="media-row-caret-spacer" aria-hidden="true" />}
       <span class="media-row-icon">{getMediaIcon(item.path)}</span>
       <span class="media-row-info">
         <span class="media-row-name">{highlightMatch(item.name, query)}</span>
