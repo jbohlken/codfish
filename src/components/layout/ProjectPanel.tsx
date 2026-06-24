@@ -1066,7 +1066,7 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
       class={`media-row ${selected ? "media-row--selected" : ""} ${missing ? "media-row--missing" : ""}`}
       style={style}
       draggable
-      data-tooltip={`${item.name}\n${item.path}`}
+      data-tooltip={`${item.name}\n${item.path}${fpsLabel ? `\n${fpsLabel}` : ""}`}
       onClick={onSelect}
       onContextMenu={onContextMenu}
       onDragStart={onDragStart}
@@ -1078,10 +1078,7 @@ function MediaRow({ item, query, selected, missing, depth, onSelect, onContextMe
         {missing ? (
           <span class="media-row-missing-badge"><WarningCircle size={11} /> Missing</span>
         ) : (
-          <span class="media-row-meta">
-            {captionMeta}
-            {fpsLabel && <span class="media-row-fps">{fpsLabel}</span>}
-          </span>
+          <span class="media-row-meta">{captionMeta}</span>
         )}
       </span>
     </button>

@@ -586,11 +586,6 @@ body.col-resizing {
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
 }
 
-.media-row-fps {
-  margin-left: var(--space-2);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-}
 
 /* ── Bins ───────────────────────────────────────────────────────────────── */
 /* Bin rows reuse .media-row; a disclosure caret + folder icon mark them, and
