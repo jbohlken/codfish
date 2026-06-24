@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory } from "../../store/app";
+import { project, projectPath, isDirty, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory } from "../../store/app";
 import { showError } from "../../components/ErrorModal";
 import { showNotice } from "../../components/NoticeModal";
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
@@ -554,15 +554,26 @@ export async function checkProfileCompatibility(proj: CodProject): Promise<void>
   }
 }
 
+/** Reset selection + playback to a clean slate for a freshly loaded project.
+ *  Clears the multi-selection sets explicitly: the coherence effect only fires
+ *  when selectedMediaId *changes*, so a prior bins-only selection (active
+ *  already null) would otherwise leave stale ids across the load. Shared by the
+ *  normal load path and the crash-recovery restore so both reset identically. */
+export function resetSelectionForLoad(): void {
+  selectedMediaId.value = null;
+  selectedMediaIds.value = new Set();
+  selectedBinIds.value = new Set();
+  selectedCaptionIndex.value = null;
+  playbackTime.value = 0;
+  isPlaying.value = false;
+}
+
 function loadIntoStore(proj: CodProject, filePath: string): void {
   resetHistory(proj);
   project.value = proj;
   projectPath.value = filePath;
   isDirty.value = false;
-  selectedMediaId.value = null;
-  selectedCaptionIndex.value = null;
-  playbackTime.value = 0;
-  isPlaying.value = false;
+  resetSelectionForLoad();
   // Fire-and-forget: every code path that loads a project (open, new, file
   // association, open-recent, recovery restore) flows through here, so this
   // is the single place to update the recent list.

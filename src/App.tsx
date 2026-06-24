@@ -17,7 +17,7 @@ import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel, commitActiveEdit, cancelActiveEdit } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory, isBatchRunning } from "./store/app";
-import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, revertProject, openRecent } from "./lib/project";
+import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, revertProject, openRecent, resetSelectionForLoad } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
 import { invoke } from "@tauri-apps/api/core";
@@ -74,6 +74,9 @@ export function App() {
           project.value = proj;
           projectPath.value = blob.original_path ?? null;
           isDirty.value = true;
+          // Match the normal load path's clean slate (recovery doesn't go
+          // through loadIntoStore), so no stale selection bleeds in.
+          resetSelectionForLoad();
         } catch (e) {
           console.error("recovery parse failed", e);
         }
