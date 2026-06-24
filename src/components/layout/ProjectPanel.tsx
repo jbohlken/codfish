@@ -530,8 +530,18 @@ export function ProjectPanel() {
     const subtreeBins = new Set<string>();
     for (const id of binIds) for (const x of collectSubtree(proj.bins ?? [], id)) subtreeBins.add(x);
     const removeMedia = new Set(mediaIds);
-    for (const mm of proj.media) if (mm.binId != null && subtreeBins.has(mm.binId)) removeMedia.add(mm.id);
-    if (removeMedia.size > 0) {
+    // Media swept in via a selected bin's sub-tree, beyond what was directly
+    // selected — this is the "surprise" the confirm guards against. Removing
+    // only explicitly-picked clips (any number) is undoable and files-safe, so
+    // it skips the prompt, matching how media removal has always worked.
+    let implicit = 0;
+    for (const mm of proj.media) {
+      if (mm.binId != null && subtreeBins.has(mm.binId) && !removeMedia.has(mm.id)) {
+        removeMedia.add(mm.id);
+        implicit++;
+      }
+    }
+    if (implicit > 0) {
       const choice = await confirmUnsavedChanges(
         `Remove ${countLabel(removeMedia.size, subtreeBins.size)} from the project? The original files on disk won't be deleted.`,
         { title: "Remove from project?", hideDiscard: true, confirmLabel: "Remove" },
@@ -584,7 +594,7 @@ export function ProjectPanel() {
         { separator: true },
         { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
         { separator: true },
-        { label: "Remove from project", danger: true, onClick: () => removeMediaIds(mediaIds) },
+        { label: "Remove from project", danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
       ];
     }
     // Single bin: full bin menu, grouped — create/rename · organize · destroy.
