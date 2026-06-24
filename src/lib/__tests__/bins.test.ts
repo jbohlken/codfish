@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildBinForest, sortBins, collectSubtree, isDescendant, rangeSelect } from "../bins";
+import { buildBinForest, sortBins, collectSubtree, isDescendant, rangeSelect, planItemMove } from "../bins";
 import type { BinNode } from "../bins";
 import type { Bin, MediaItem } from "../../types/project";
 
@@ -152,6 +152,47 @@ describe("isDescendant", () => {
   it("terminates on a cycle", () => {
     const cyclic = [bin("a", "b"), bin("b", "a")];
     expect(isDescendant(cyclic, "a", "b")).toBe(true);
+  });
+});
+
+describe("planItemMove", () => {
+  it("moves a clip into a bin", () => {
+    const plan = planItemMove([bin("b1")], [m("a")], ["a"], [], "b1");
+    expect(plan.moveMediaIds).toEqual(["a"]);
+    expect(plan.reparentBinIds).toEqual([]);
+  });
+
+  it("drops a no-op clip already in the target", () => {
+    const plan = planItemMove([bin("b1")], [m("a", "b1")], ["a"], [], "b1");
+    expect(plan.moveMediaIds).toEqual([]);
+  });
+
+  it("reparents a bin to the top level, dropping the no-op case", () => {
+    const bins = [bin("root"), bin("c1", "root"), bin("c2")];
+    expect(planItemMove(bins, [], [], ["c1"], null).reparentBinIds).toEqual(["c1"]);
+    // c2 is already top-level → no-op
+    expect(planItemMove(bins, [], [], ["c2"], null).reparentBinIds).toEqual([]);
+  });
+
+  it("moves only the top of a selected branch (descendants travel inside it)", () => {
+    const bins = [bin("p"), bin("c", "p"), bin("g", "c"), bin("dest")];
+    // Selecting p, c and g together and moving to dest → only p reparents.
+    const plan = planItemMove(bins, [], [], ["p", "c", "g"], "dest");
+    expect(plan.reparentBinIds).toEqual(["p"]);
+  });
+
+  it("leaves a clip inside a selected bin to travel with the bin", () => {
+    const bins = [bin("b1"), bin("dest")];
+    const media = [m("a", "b1")];
+    // Move bin b1 AND its clip a to dest → only b1 reparents; a stays in b1.
+    const plan = planItemMove(bins, media, ["a"], ["b1"], "dest");
+    expect(plan.reparentBinIds).toEqual(["b1"]);
+    expect(plan.moveMediaIds).toEqual([]);
+  });
+
+  it("refuses to move a bin into its own subtree (cycle)", () => {
+    const bins = [bin("a"), bin("b", "a")];
+    expect(planItemMove(bins, [], [], ["a"], "b").reparentBinIds).toEqual([]);
   });
 });
 

@@ -577,6 +577,12 @@ body.col-resizing {
   cursor: pointer;
 }
 
+/* The folder icon doubles as the expand/collapse control; brighten it on hover
+   so it reads as clickable (distinct from clicking the row to select). */
+.bin-row-toggle:hover {
+  color: var(--color-text-primary);
+}
+
 /* Bin members and sub-bins render indented beneath their bin row. The indent
    is depth-driven and applied inline (paddingLeft) by ProjectPanel, since it
    scales with nesting level — see BIN_INDENT_STEP. */

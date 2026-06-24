@@ -322,6 +322,83 @@ export function moveBin(binId: string, newParentId: string | null): void {
   );
 }
 
+/**
+ * Move a mixed selection of clips and bins to a target bin (or the top level
+ * when null), in ONE undo step — for drag-and-drop of a multi-selection.
+ *
+ * Selection-as-a-block semantics, so dragging a branch keeps its shape:
+ *  - A selected bin whose ancestor is also selected travels inside that
+ *    ancestor (it isn't reparented on its own).
+ *  - A selected clip inside a selected bin travels with the bin (not yanked out
+ *    to the target).
+ *  - Bins can't move into themselves or their own subtree (cycle), and no-op
+ *    moves are dropped. If nothing would change, history isn't touched.
+ */
+/**
+ * Pure planner for {@link moveItemsToBin}: decide which selected bins actually
+ * reparent and which selected clips actually move, given the current tree.
+ * Exposed (and unit-tested) because the selection-as-a-block rules are subtle.
+ */
+export function planItemMove(
+  allBins: Bin[],
+  media: MediaItem[],
+  mediaIds: string[],
+  binIds: string[],
+  targetBinId: string | null,
+): { reparentBinIds: string[]; moveMediaIds: string[] } {
+  const byId = new Map(allBins.map((b) => [b.id, b]));
+  const target = targetBinId ?? undefined;
+  const selectedBins = new Set(binIds);
+
+  const hasSelectedAncestor = (id: string): boolean => {
+    const seen = new Set<string>();
+    let cur = byId.get(id)?.parentId;
+    while (cur && !seen.has(cur)) {
+      if (selectedBins.has(cur)) return true;
+      seen.add(cur);
+      cur = byId.get(cur)?.parentId;
+    }
+    return false;
+  };
+
+  // Bins to actually reparent: selected, no selected ancestor (those travel
+  // inside it), not a no-op, and not into their own subtree (cycle).
+  const reparentBinIds = binIds.filter((id) => {
+    const bin = byId.get(id);
+    if (!bin || hasSelectedAncestor(id)) return false;
+    if ((bin.parentId ?? undefined) === target) return false;
+    if (targetBinId && isDescendant(allBins, id, targetBinId)) return false;
+    return true;
+  });
+  // Clips to move: selected, not already in target, and not inside a selected
+  // bin (those travel with their bin).
+  const moveMediaIds = mediaIds.filter((id) => {
+    const m = media.find((x) => x.id === id);
+    if (!m) return false;
+    if (m.binId != null && selectedBins.has(m.binId)) return false;
+    return (m.binId ?? undefined) !== target;
+  });
+  return { reparentBinIds, moveMediaIds };
+}
+
+export function moveItemsToBin(mediaIds: string[], binIds: string[], targetBinId: string | null): void {
+  const proj = project.value;
+  if (!proj) return;
+  const target = targetBinId ?? undefined;
+  const { reparentBinIds, moveMediaIds } = planItemMove(proj.bins ?? [], proj.media, mediaIds, binIds, targetBinId);
+  if (!reparentBinIds.length && !moveMediaIds.length) return;
+  const reparent = new Set(reparentBinIds);
+  const moveMedia = new Set(moveMediaIds);
+  pushHistory(
+    {
+      ...proj,
+      bins: (proj.bins ?? []).map((b) => (reparent.has(b.id) ? { ...b, parentId: target } : b)),
+      media: proj.media.map((m) => (moveMedia.has(m.id) ? { ...m, binId: target } : m)),
+    },
+    targetBinId ? "Move to bin" : "Move to top level",
+  );
+}
+
 /** Assign the given media to a bin (or ungroup them when binId is null). */
 export function moveMediaToBin(mediaIds: string[], binId: string | null): void {
   const proj = project.value;

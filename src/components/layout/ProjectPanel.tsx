@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from "preact/hooks";
 import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal } from "@preact/signals";
-import { project, selectedMediaId, selectedMediaIds, selectedCaptionIndex, pushHistory } from "../../store/app";
+import { project, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
@@ -27,6 +27,7 @@ import {
   dissolveBin,
   moveBin,
   moveMediaToBin,
+  moveItemsToBin,
   forgetBinCollapse,
   type BinNode,
 } from "../../lib/bins";
@@ -52,7 +53,7 @@ const BIN_INDENT_STEP = 22;
 // What's currently being dragged, and the live drop target for highlighting.
 // Module-level signals so the row components can read them without prop drilling
 // (the actual move logic stays in ProjectPanel, where `bins` is in scope).
-type DragPayload = { kind: "media"; ids: string[] } | { kind: "bin"; id: string };
+type DragPayload = { mediaIds: string[]; binIds: string[] };
 const dragPayload = signal<DragPayload | null>(null);
 // dropTarget holds the hovered bin's id, ROOT_DROP for the top-level area, or
 // null for "no valid target under the cursor".
@@ -385,6 +386,7 @@ export function ProjectPanel() {
   const bins = proj?.bins ?? [];
   const hasBins = bins.length > 0;
   const selIds = selectedMediaIds.value;
+  const selBinIds = selectedBinIds.value;
   const searching = query.length > 0;
   // Sub-bins at each level follow the same sort as media; media keep the
   // already-sorted order they arrive in. Bins first, then ungrouped media.
@@ -404,20 +406,24 @@ export function ProjectPanel() {
     if (mm.binId != null) binCounts.set(mm.binId, (binCounts.get(mm.binId) ?? 0) + 1);
   }
 
-  // Ids of the rows actually on screen, in display order, so a shift-range
-  // can't silently pull in items hidden inside a collapsed (or search-hidden)
-  // bin. Mirrors the render: per node, sub-bins then this bin's media.
-  const orderedIds: string[] = [];
+  // Rows actually on screen, in display order (the bin row, then its sub-bins
+  // and media when expanded), so a shift-range / drag selection never pulls in
+  // rows hidden inside a collapsed (or search-hidden) bin. Each row carries its
+  // kind so a range can mix clips and bins.
+  const orderedRows: { id: string; kind: "media" | "bin" }[] = [];
   const collectVisible = (nodes: BinNode[]) => {
     for (const node of nodes) {
       if (searching && !subtreeHasItems(node)) continue;
+      orderedRows.push({ id: node.bin.id, kind: "bin" });
       if (isCollapsed(node.bin.id)) continue;
       collectVisible(node.children);
-      for (const m of node.items) orderedIds.push(m.id);
+      for (const m of node.items) orderedRows.push({ id: m.id, kind: "media" });
     }
   };
   collectVisible(forest.roots);
-  for (const m of forest.ungrouped) orderedIds.push(m.id);
+  for (const m of forest.ungrouped) orderedRows.push({ id: m.id, kind: "media" });
+  const orderedRowIds = orderedRows.map((r) => r.id);
+  const rowKind = new Map(orderedRows.map((r) => [r.id, r.kind] as const));
 
   // Bins flattened in display (tree) order with their nesting depth — the
   // source for the "Move to bin" pickers, which indent each entry by depth so
@@ -431,33 +437,59 @@ export function ProjectPanel() {
   };
   flattenBins(forest.roots, 0);
 
-  // Plain click selects one; Ctrl/Cmd toggles; Shift extends a range over the
-  // visible (flattened) order from the last anchor. selectedMediaId stays the
-  // active item the editor follows; selectedMediaIds is the bulk-action set.
-  const selectRow = (item: MediaItem, e: MouseEvent) => {
-    const current = selectedMediaIds.peek();
+  // Selection. Plain click selects just the row; Ctrl/Cmd toggles it; Shift
+  // extends a range over the visible order from the anchor. Clips and bins live
+  // in separate sets (selectedMediaIds / selectedBinIds) but select together, so
+  // a shift-range can span both. selectedMediaId — the clip the editor follows —
+  // only moves when a clip is the target, so selecting bins leaves the editor
+  // on its last clip.
+  const selectRowId = (id: string, kind: "media" | "bin", e: MouseEvent) => {
     if (e.shiftKey && selectionAnchor.value) {
-      selectedMediaIds.value = new Set(rangeSelect(orderedIds, selectionAnchor.value, item.id));
-      selectedMediaId.value = item.id;
+      const range = rangeSelect(orderedRowIds, selectionAnchor.value, id);
+      selectedMediaIds.value = new Set(range.filter((rid) => rowKind.get(rid) === "media"));
+      selectedBinIds.value = new Set(range.filter((rid) => rowKind.get(rid) === "bin"));
+      if (kind === "media") selectedMediaId.value = id;
     } else if (e.ctrlKey || e.metaKey) {
-      const next = new Set(current);
-      if (next.has(item.id)) next.delete(item.id);
-      else next.add(item.id);
-      selectedMediaIds.value = next;
-      selectedMediaId.value = next.has(item.id) ? item.id : (orderedIds.find((id) => next.has(id)) ?? null);
-      selectionAnchor.value = item.id;
+      if (kind === "media") {
+        const next = new Set(selectedMediaIds.peek());
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        selectedMediaIds.value = next;
+        if (next.has(id)) selectedMediaId.value = id;
+        else {
+          // Removed the active clip — fall back to another selected clip if any,
+          // else leave the editor where it is.
+          const fallback = orderedRows.find((r) => r.kind === "media" && next.has(r.id));
+          if (fallback) selectedMediaId.value = fallback.id;
+        }
+      } else {
+        const next = new Set(selectedBinIds.peek());
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        selectedBinIds.value = next;
+      }
+      selectionAnchor.value = id;
     } else {
-      selectedMediaId.value = item.id;
-      selectedMediaIds.value = new Set([item.id]);
-      selectionAnchor.value = item.id;
+      if (kind === "media") {
+        selectedMediaId.value = id;
+        selectedMediaIds.value = new Set([id]);
+        selectedBinIds.value = new Set();
+      } else {
+        selectedBinIds.value = new Set([id]);
+        selectedMediaIds.value = new Set();
+      }
+      selectionAnchor.value = id;
     }
   };
+  const selectRow = (item: MediaItem, e: MouseEvent) => selectRowId(item.id, "media", e);
 
   const openRowMenu = (e: MouseEvent, item: MediaItem) => {
-    // Right-clicking a row outside the current selection acts on just that row.
+    // Right-clicking a row outside the current selection acts on just that row
+    // (and drops any bin selection so the menu's actions are unambiguous).
     if (!selectedMediaIds.peek().has(item.id)) {
       selectedMediaId.value = item.id;
       selectedMediaIds.value = new Set([item.id]);
+      selectedBinIds.value = new Set();
       selectionAnchor.value = item.id;
     }
     const ids = [...selectedMediaIds.peek()];
@@ -514,6 +546,13 @@ export function ProjectPanel() {
   };
 
   const openBinMenu = (e: MouseEvent, bin: Bin) => {
+    // Right-clicking a bin selects just it (the menu's actions operate on this
+    // bin), unless it's already part of the selection.
+    if (!selectedBinIds.peek().has(bin.id)) {
+      selectedBinIds.value = new Set([bin.id]);
+      selectedMediaIds.value = new Set();
+      selectionAnchor.value = bin.id;
+    }
     // "Move to" can target any bin that isn't this one or nested inside it
     // (that would make a cycle), plus the top level when it's currently nested.
     const moveTargets = orderedBinList.filter(({ bin: t }) => !isDescendant(bins, bin.id, t.id));
@@ -549,39 +588,38 @@ export function ProjectPanel() {
   };
 
   // ── Drag-and-drop ──────────────────────────────────────────────────────
-  // Start dragging a clip. Dragging a row outside the current selection acts on
+  // Start dragging a row. Dragging a row outside the current selection acts on
   // just that row (and selects it); dragging a selected row carries the whole
-  // selection — so you can box-select and move a batch at once.
-  const startMediaDrag = (item: MediaItem, e: DragEvent) => {
-    let ids = [...selectedMediaIds.peek()];
-    if (!ids.includes(item.id)) {
-      selectedMediaId.value = item.id;
-      selectedMediaIds.value = new Set([item.id]);
-      selectionAnchor.value = item.id;
-      ids = [item.id];
+  // mixed selection — clips and bins — so a batch moves at once.
+  const startRowDrag = (id: string, kind: "media" | "bin", e: DragEvent) => {
+    let mediaIds = [...selectedMediaIds.peek()];
+    let binIds = [...selectedBinIds.peek()];
+    const inSelection = kind === "media" ? mediaIds.includes(id) : binIds.includes(id);
+    if (!inSelection) {
+      selectRowId(id, kind, e); // select just this row first
+      mediaIds = kind === "media" ? [id] : [];
+      binIds = kind === "bin" ? [id] : [];
     }
-    dragPayload.value = { kind: "media", ids };
+    dragPayload.value = { mediaIds, binIds };
     e.dataTransfer?.setData("text/plain", "");
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-    setDragImageLabel(e, ids.length > 1 ? `${ids.length} clips` : item.name);
-  };
-
-  const startBinDrag = (bin: Bin, e: DragEvent) => {
-    dragPayload.value = { kind: "bin", id: bin.id };
-    e.dataTransfer?.setData("text/plain", "");
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-    setDragImageLabel(e, bin.name);
+    const count = mediaIds.length + binIds.length;
+    const name = kind === "media"
+      ? proj?.media.find((m) => m.id === id)?.name
+      : bins.find((b) => b.id === id)?.name;
+    setDragImageLabel(e, count > 1 ? `${count} items` : (name ?? "1 item"));
   };
 
   const endDrag = () => { dragPayload.value = null; dropTarget.value = null; };
 
-  // Can the current payload drop on `targetBinId` (null = top level)? Media go
-  // anywhere; a bin can't drop on itself or anything in its own subtree (cycle).
+  // Can the current payload drop on `targetBinId` (null = top level)? Clips go
+  // anywhere; a bin can't drop on itself or anything in its own subtree (cycle),
+  // so the target must not be inside any dragged bin.
   const canDropOn = (targetBinId: string | null): boolean => {
     const p = dragPayload.peek();
     if (!p) return false;
-    if (p.kind === "media") return true;
-    return targetBinId === null || !isDescendant(bins, p.id, targetBinId);
+    if (targetBinId === null) return true;
+    return !p.binIds.some((bid) => isDescendant(bins, bid, targetBinId));
   };
 
   // dragover decides the drop: preventDefault enables a drop here, and the
@@ -602,10 +640,8 @@ export function ProjectPanel() {
     const p = dragPayload.peek();
     endDrag();
     if (!p) return;
-    if (p.kind === "media") moveMediaToBin(p.ids, targetBinId);
-    // Re-check with the captured payload (endDrag cleared the signal): a bin
-    // can't land on itself or its own subtree.
-    else if (targetBinId === null || !isDescendant(bins, p.id, targetBinId)) moveBin(p.id, targetBinId);
+    // moveItemsToBin guards cycles, no-ops, and selection-as-a-block semantics.
+    moveItemsToBin(p.mediaIds, p.binIds, targetBinId);
   };
 
   // depth = nesting level of the row (0 = top-level / ungrouped). Media inside a
@@ -620,7 +656,7 @@ export function ProjectPanel() {
       depth={depth}
       onSelect={(e) => selectRow(item, e)}
       onContextMenu={(e) => openRowMenu(e, item)}
-      onDragStart={(e) => startMediaDrag(item, e)}
+      onDragStart={(e) => startRowDrag(item.id, "media", e)}
       onDragEnd={endDrag}
     />
   );
@@ -637,12 +673,14 @@ export function ProjectPanel() {
       // While searching, hide branches with no matches anywhere inside.
       hidden={searching && !subtreeHasItems(node)}
       editing={editingBinId.value === node.bin.id}
+      selected={selBinIds.has(node.bin.id)}
       dropActive={dropTarget.value === node.bin.id}
+      onSelect={(e) => selectRowId(node.bin.id, "bin", e)}
       onToggle={() => toggleBinCollapsed(node.bin.id)}
       onContextMenu={(e) => openBinMenu(e, node.bin)}
       onRename={(name) => { renameBin(node.bin.id, name); editingBinId.value = null; }}
       onCancelRename={() => { editingBinId.value = null; }}
-      onDragStartBin={(e) => startBinDrag(node.bin, e)}
+      onDragStartBin={(e) => startRowDrag(node.bin.id, "bin", e)}
       onDragEnd={endDrag}
       onDragOver={(e) => onTargetDragOver(node.bin.id, e)}
       onDrop={(e) => onTargetDrop(node.bin.id, e)}
@@ -787,14 +825,16 @@ export function ProjectPanel() {
   );
 }
 
-function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, onToggle, onContextMenu, onRename, onCancelRename, onDragStartBin, onDragEnd, onDragOver, onDrop, renderItems }: {
+function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dropActive, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onDragStartBin, onDragEnd, onDragOver, onDrop, renderItems }: {
   bin: Bin;
   count: number;
   depth: number;
   collapsed: boolean;
   hidden: boolean;
   editing: boolean;
+  selected: boolean;
   dropActive: boolean;
+  onSelect: (e: MouseEvent) => void;
   onToggle: () => void;
   onContextMenu: (e: MouseEvent) => void;
   onRename: (name: string) => void;
@@ -839,20 +879,27 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, dropActive, o
     // drop allowed (without it the cursor flickers to no-drop on each crossing).
     <div onDragEnter={onDragOver} onDragOver={onDragOver} onDrop={onDrop}>
       {/* Styled like a media row; the open/closed folder icon both marks it as
-          a bin and shows its expanded state (no separate caret, so a bin row
-          has the same [icon][name] layout as a clip and the two align). Each
-          nesting level shifts the row right by one indent step. The row itself
-          is the drag handle and shows the drop highlight. */}
+          a bin and is its expand/collapse control (no separate caret, so a bin
+          row has the same [icon][name] layout as a clip and the two align).
+          Clicking the row selects it like a clip; the folder icon or a
+          double-click toggles open/closed. Each nesting level shifts the row
+          right by one indent step. The row is the drag handle and shows both
+          the selected and drop-target highlights. */}
       <div
-        class={`media-row media-row--bin${dropActive ? " media-row--drop-target" : ""}`}
+        class={`media-row media-row--bin${selected ? " media-row--selected" : ""}${dropActive ? " media-row--drop-target" : ""}`}
         style={depth > 0 ? { paddingLeft: `calc(var(--space-3) + ${depth * BIN_INDENT_STEP}px)` } : undefined}
         draggable={!editing}
         onDragStart={onDragStartBin}
         onDragEnd={onDragEnd}
-        onClick={() => { if (!editing) onToggle(); }}
+        onClick={(e) => { if (!editing) onSelect(e); }}
+        onDblClick={() => { if (!editing) onToggle(); }}
         onContextMenu={onContextMenu}
       >
-        <span class="media-row-icon">
+        <span
+          class="media-row-icon bin-row-toggle"
+          data-tooltip={collapsed ? "Expand" : "Collapse"}
+          onClick={(e) => { if (!editing) { e.stopPropagation(); onToggle(); } }}
+        >
           {collapsed ? <Folder size={14} /> : <FolderOpen size={14} />}
         </span>
         <span class="media-row-info">
