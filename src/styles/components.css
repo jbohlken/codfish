@@ -588,9 +588,8 @@ body.col-resizing {
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 
-.media-list--drop-root {
+.panel-body--drop-root {
   box-shadow: inset 0 0 0 2px var(--color-accent);
-  border-radius: var(--radius-sm);
 }
 
 /* Custom drag image (see setDragImageLabel). Parked offscreen; the browser

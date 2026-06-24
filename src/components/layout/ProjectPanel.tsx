@@ -718,7 +718,15 @@ export function ProjectPanel() {
         <PanelResizeHandle />
       </div>
 
-      <div class="panel-body scrollable">
+      {/* The whole scrollable body is the top-level drop zone (only when bins
+          exist), so dragover always lands on a handler — no uncovered gaps
+          between/below rows where the cursor would flick to "no-drop". Bins
+          inside stopPropagation to claim their own, more specific target. */}
+      <div
+        class={`panel-body scrollable${dropTarget.value === ROOT_DROP ? " panel-body--drop-root" : ""}`}
+        onDragOver={hasBins ? (e) => onTargetDragOver(null, e) : undefined}
+        onDrop={hasBins ? (e) => onTargetDrop(null, e) : undefined}
+      >
         {!proj ? (
           <div class="empty-state">
             <span class="empty-state-title">No project open</span>
@@ -763,14 +771,10 @@ export function ProjectPanel() {
           // Bins render as media-style rows (folder icon + media count); their
           // sub-bins and members render indented beneath when expanded, to any
           // depth. Ungrouped media are plain top-level rows after the bins —
-          // no separate section header. The list itself is the top-level drop
-          // zone: dropping here pulls a clip/bin out to the root. Inner bins
-          // stopPropagation on dragover/drop so they win over this.
-          <div
-            class={`media-list${dropTarget.value === ROOT_DROP ? " media-list--drop-root" : ""}`}
-            onDragOver={(e) => onTargetDragOver(null, e)}
-            onDrop={(e) => onTargetDrop(null, e)}
-          >
+          // no separate section header. The top-level drop zone is the whole
+          // panel body (above); dropping outside any bin pulls a clip/bin out
+          // to the root.
+          <div class="media-list">
             {forest.roots.map((node) => renderNode(node, 0))}
             {forest.ungrouped.map((m) => renderRow(m, 0))}
           </div>
