@@ -311,23 +311,6 @@ export function dissolveBin(id: string): void {
   forgetBinCollapse(id);
 }
 
-/** Reparent a bin (or send it to the top level when `newParentId` is null).
- *  Refuses to move a bin into itself or any of its own descendants — that would
- *  orphan the branch into a cycle. No-op when the parent is unchanged. */
-export function moveBin(binId: string, newParentId: string | null): void {
-  const proj = project.value;
-  if (!proj?.bins) return;
-  const bin = proj.bins.find((b) => b.id === binId);
-  if (!bin) return;
-  const target = newParentId ?? undefined;
-  if ((bin.parentId ?? undefined) === target) return; // no-op
-  if (newParentId && isDescendant(proj.bins, binId, newParentId)) return; // would cycle
-  pushHistory(
-    { ...proj, bins: proj.bins.map((b) => (b.id === binId ? { ...b, parentId: target } : b)) },
-    "Move bin",
-  );
-}
-
 /**
  * Move a mixed selection of clips and bins to a target bin (or the top level
  * when null), in ONE undo step — for drag-and-drop of a multi-selection.
@@ -402,22 +385,5 @@ export function moveItemsToBin(mediaIds: string[], binIds: string[], targetBinId
       media: proj.media.map((m) => (moveMedia.has(m.id) ? { ...m, binId: target } : m)),
     },
     targetBinId ? "Move to bin" : "Move to top level",
-  );
-}
-
-/** Assign the given media to a bin (or ungroup them when binId is null). */
-export function moveMediaToBin(mediaIds: string[], binId: string | null): void {
-  const proj = project.value;
-  if (!proj || mediaIds.length === 0) return;
-  const ids = new Set(mediaIds);
-  const target = binId ?? undefined;
-  // No-op when every targeted item is already in the target bin.
-  if (!proj.media.some((m) => ids.has(m.id) && (m.binId ?? undefined) !== target)) return;
-  pushHistory(
-    {
-      ...proj,
-      media: proj.media.map((m) => (ids.has(m.id) ? { ...m, binId: target } : m)),
-    },
-    binId ? "Move to bin" : "Remove from bin",
   );
 }

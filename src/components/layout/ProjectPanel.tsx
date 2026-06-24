@@ -25,14 +25,12 @@ import {
   createBinWithItems,
   renameBin,
   dissolveBin,
-  moveBin,
-  moveMediaToBin,
   moveItemsToBin,
   forgetBinCollapse,
   type BinNode,
 } from "../../lib/bins";
 import { recentProjects } from "../../lib/recent";
-import { showContextMenu, type ContextMenuItem, type ContextMenuEntry } from "../ContextMenu";
+import { showContextMenu, type ContextMenuEntry } from "../ContextMenu";
 import { hideTooltip } from "../Tooltip";
 import { confirmUnsavedChanges } from "../UnsavedChanges";
 import { mediaSettingsId } from "../MediaSettings";
@@ -491,27 +489,37 @@ export function ProjectPanel() {
     return parts.join(" and ") || "0 items";
   };
 
-  // "Move to bin" submenu for a selection of clips and/or bins. Targets exclude
+  // "Move to…" submenu for a selection of clips and/or bins: Top level (when
+  // anything is currently nested) → the bin tree → New bin…. Targets exclude
   // any selected bin and anything inside one (a bin can't move into its own
   // subtree). "New bin…" creates a bin and moves the whole selection into it.
-  const buildMoveSubmenu = (mediaIds: string[], binIds: string[]): ContextMenuItem[] => {
+  const buildMoveSubmenu = (mediaIds: string[], binIds: string[]): ContextMenuEntry[] => {
     const targets = orderedBinList.filter(({ bin: t }) => !binIds.some((bid) => isDescendant(bins, bid, t.id)));
-    return [
+    const anyNested = mediaIds.some((id) => proj!.media.find((m) => m.id === id)?.binId != null)
+      || binIds.some((id) => bins.find((b) => b.id === id)?.parentId != null);
+    const entries: ContextMenuEntry[] = [];
+    if (anyNested) {
+      entries.push({ label: "Top level", icon: <FolderOpen size={12} />, onClick: () => moveItemsToBin(mediaIds, binIds, null) });
+      if (targets.length) entries.push({ separator: true });
+    }
+    entries.push(
       ...targets.map(({ bin: t, depth }) => ({
         label: t.name,
         icon: <Folder size={12} />,
         indent: depth,
         onClick: () => moveItemsToBin(mediaIds, binIds, t.id),
       })),
-      {
-        label: "New bin…",
-        icon: <FolderPlus size={12} />,
-        onClick: () => {
-          const id = createBinWithItems(mediaIds, binIds);
-          if (id) editingBinId.value = id;
-        },
+    );
+    if (entries.length) entries.push({ separator: true });
+    entries.push({
+      label: "New bin…",
+      icon: <FolderPlus size={12} />,
+      onClick: () => {
+        const id = createBinWithItems(mediaIds, binIds);
+        if (id) editingBinId.value = id;
       },
-    ];
+    });
+    return entries;
   };
 
   // Remove a selection of clips and/or bins from the project (bins take their
@@ -570,39 +578,19 @@ export function ProjectPanel() {
     // Single clip: full clip menu, grouped — item actions · organize · destroy.
     if (mediaIds.length === 1 && binIds.length === 0) {
       const id = mediaIds[0];
-      const binned = proj!.media.find((m) => m.id === id)?.binId != null;
-      const items: ContextMenuEntry[] = [
+      return [
         { label: "Settings…", onClick: () => { mediaSettingsId.value = id; } },
         { label: "Re-link file…", onClick: () => relinkMediaItem(id) },
         { separator: true },
-        { label: "Move to bin", submenu: buildMoveSubmenu(mediaIds, binIds) },
-      ];
-      if (binned) items.push({ label: "Remove from bin", onClick: () => moveMediaToBin(mediaIds, null) });
-      items.push(
+        { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
         { separator: true },
         { label: "Remove from project", danger: true, onClick: () => removeMediaIds(mediaIds) },
-      );
-      return items;
+      ];
     }
     // Single bin: full bin menu, grouped — create/rename · organize · destroy.
     if (binIds.length === 1 && mediaIds.length === 0) {
       const id = binIds[0];
-      const bin = bins.find((b) => b.id === id)!;
-      const moveSubmenu: ContextMenuItem[] = [];
-      if (bin.parentId != null) {
-        moveSubmenu.push({ label: "Top level", icon: <FolderOpen size={12} />, onClick: () => moveBin(id, null) });
-      }
-      moveSubmenu.push(
-        ...orderedBinList
-          .filter(({ bin: t }) => !isDescendant(bins, id, t.id))
-          .map(({ bin: t, depth }) => ({
-            label: t.name,
-            icon: <Folder size={12} />,
-            indent: depth,
-            onClick: () => moveBin(id, t.id),
-          })),
-      );
-      const items: ContextMenuEntry[] = [
+      return [
         {
           label: "New sub-bin",
           icon: <FolderPlus size={12} />,
@@ -610,28 +598,19 @@ export function ProjectPanel() {
         },
         { label: "Rename", onClick: () => { editingBinId.value = id; } },
         { separator: true },
-      ];
-      if (moveSubmenu.length) items.push({ label: "Move to…", submenu: moveSubmenu });
-      items.push(
+        { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
         { label: "Dissolve bin", onClick: () => dissolveBin(id) },
         { separator: true },
         { label: "Delete bin", danger: true, onClick: () => { void removeSelection([], [id]); } },
-      );
-      return items;
+      ];
     }
     // Multi / mixed: only cross-kind actions, with the destructive one split off.
     const label = countLabel(mediaIds.length, binIds.length);
-    const anyNested = mediaIds.some((id) => proj!.media.find((m) => m.id === id)?.binId != null)
-      || binIds.some((id) => bins.find((b) => b.id === id)?.parentId != null);
-    const items: ContextMenuEntry[] = [
-      { label: `Move ${label} to bin`, submenu: buildMoveSubmenu(mediaIds, binIds) },
-    ];
-    if (anyNested) items.push({ label: "Move to top level", onClick: () => moveItemsToBin(mediaIds, binIds, null) });
-    items.push(
+    return [
+      { label: `Move ${label} to…`, submenu: buildMoveSubmenu(mediaIds, binIds) },
       { separator: true },
       { label: `Remove ${label} from project`, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
-    );
-    return items;
+    ];
   };
 
   const openRowMenu = (e: MouseEvent, item: MediaItem) => openContextMenuFor(e, item.id, "media");
