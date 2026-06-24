@@ -374,28 +374,46 @@ export function ProjectPanel() {
   const media = proj?.media;
   const sMode = sortMode.value;
   const sDir = sortDir.value;
-  const visibleMedia = useMemo(
-    () => (media ? visibleOrder(media) : []),
-    [media, sMode, sDir, query],
-  );
+  const bins = proj?.bins ?? [];
+  const hasBins = bins.length > 0;
+  const searching = query.length > 0;
+
+  // Search matches clip names AND bin names. A matched bin reveals its whole
+  // sub-tree — every clip and sub-bin inside shows regardless of their own
+  // names — so `revealedBins` is the matched bins plus everything under them.
+  // A clip also shows on its own name match. Sort + filter together so the
+  // sort runs once per change, not per re-render.
+  const { visibleMedia, revealedBins } = useMemo(() => {
+    if (!media) return { visibleMedia: [] as MediaItem[], revealedBins: new Set<string>() };
+    const sorted = sortMedia(media, sMode, sDir);
+    if (!query) return { visibleMedia: sorted, revealedBins: new Set<string>() };
+    const revealed = new Set<string>();
+    for (const b of bins) {
+      if (b.name.toLowerCase().includes(query)) {
+        for (const x of collectSubtree(bins, b.id)) revealed.add(x);
+      }
+    }
+    const vm = sorted.filter(
+      (m) => m.name.toLowerCase().includes(query) || (m.binId != null && revealed.has(m.binId)),
+    );
+    return { visibleMedia: vm, revealedBins: revealed };
+  }, [media, bins, sMode, sDir, query]);
 
   const showSearch = !!proj && hasMedia && searchOpen.value;
 
-  const bins = proj?.bins ?? [];
-  const hasBins = bins.length > 0;
   const selIds = selectedMediaIds.value;
   const selBinIds = selectedBinIds.value;
-  const searching = query.length > 0;
   // Sub-bins at each level follow the same sort as media; media keep the
   // already-sorted order they arrive in. Bins first, then ungrouped media.
   const forest = buildBinForest(visibleMedia, bins, (level) => sortBins(level, sMode, sDir));
   const collapsedSet = collapsedBins.value;
   const isCollapsed = (binId: string) => !searching && collapsedSet.has(binId);
 
-  // True when the bin or anything nested under it holds a (filtered-in) media
-  // item — used while searching to hide whole branches that match nothing.
-  const subtreeHasItems = (node: BinNode): boolean =>
-    node.items.length > 0 || node.children.some(subtreeHasItems);
+  // While searching, a bin shows when it (or a sub-bin) was name-matched, when
+  // it holds a revealed clip, or when it's on the path to one — so a match is
+  // always reachable. revealedBins already covers matched bins + their contents.
+  const binShown = (node: BinNode): boolean =>
+    revealedBins.has(node.bin.id) || node.items.length > 0 || node.children.some(binShown);
 
   // Total membership per bin (from the full media list, not the filtered view)
   // — the badge and the bin's Generate/Export both mean "all members".
@@ -411,7 +429,7 @@ export function ProjectPanel() {
   const orderedRows: { id: string; kind: "media" | "bin" }[] = [];
   const collectVisible = (nodes: BinNode[]) => {
     for (const node of nodes) {
-      if (searching && !subtreeHasItems(node)) continue;
+      if (searching && !binShown(node)) continue;
       orderedRows.push({ id: node.bin.id, kind: "bin" });
       if (isCollapsed(node.bin.id)) continue;
       collectVisible(node.children);
@@ -736,8 +754,9 @@ export function ProjectPanel() {
       depth={depth}
       collapsed={isCollapsed(node.bin.id)}
       // While searching, hide branches with no matches anywhere inside.
-      hidden={searching && !subtreeHasItems(node)}
+      hidden={searching && !binShown(node)}
       editing={editingBinId.value === node.bin.id}
+      query={query}
       selected={selBinIds.has(node.bin.id)}
       dropActive={dropTarget.value === node.bin.id}
       onSelect={(e) => selectRowId(node.bin.id, "bin", e)}
@@ -771,7 +790,7 @@ export function ProjectPanel() {
               ref={searchInputRef}
               class="panel-filter-input"
               type="text"
-              placeholder="Search media…"
+              placeholder="Search project…"
               value={filterText.value}
               onInput={(e) => { filterText.value = (e.target as HTMLInputElement).value; }}
               onKeyDown={(e) => { if (e.key === "Escape") closeSearch(); }}
@@ -795,7 +814,7 @@ export function ProjectPanel() {
             {hasMedia && !showSearch && (
               <button
                 class="btn btn-ghost btn-icon"
-                data-tooltip="Search media"
+                data-tooltip="Search project"
                 onClick={() => { openSearch(); searchInputRef.current?.focus(); }}
               >
                 <MagnifyingGlass size={14} />
@@ -865,10 +884,10 @@ export function ProjectPanel() {
             <span class="empty-state-title">No media</span>
             <span class="empty-state-body">Import a video or audio file to begin.</span>
           </div>
-        ) : visibleMedia.length === 0 ? (
+        ) : searching && visibleMedia.length === 0 && revealedBins.size === 0 ? (
           <div class="empty-state">
-            <span class="empty-state-title">No matches</span>
-            <span class="empty-state-body">No media matches “{filterText.value.trim()}”.</span>
+            <span class="empty-state-title">No items found</span>
+            <span class="empty-state-body">Nothing matches “{filterText.value.trim()}”.</span>
           </div>
         ) : !hasBins ? (
           // No bins → flat list, exactly as before.
@@ -890,7 +909,7 @@ export function ProjectPanel() {
   );
 }
 
-function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dropActive, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onDragStartBin, onDragEnd, onDragOver, onDrop, renderItems }: {
+function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dropActive, query, onSelect, onToggle, onContextMenu, onRename, onCancelRename, onDragStartBin, onDragEnd, onDragOver, onDrop, renderItems }: {
   bin: Bin;
   count: number;
   depth: number;
@@ -899,6 +918,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
   editing: boolean;
   selected: boolean;
   dropActive: boolean;
+  query: string;
   onSelect: (e: MouseEvent) => void;
   onToggle: () => void;
   onContextMenu: (e: MouseEvent) => void;
@@ -985,7 +1005,7 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, selected, dro
             />
           ) : (
             <>
-              <span class="media-row-name">{bin.name}</span>
+              <span class="media-row-name">{highlightMatch(bin.name, query)}</span>
               <span class="media-row-meta">{meta}</span>
             </>
           )}
