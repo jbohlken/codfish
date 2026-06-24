@@ -492,6 +492,8 @@ body.col-resizing {
   border: none;
   border-radius: 0;
   cursor: pointer;
+  /* Positioning context for the --open accent bar (::before). */
+  position: relative;
   text-align: left;
   transition: background 0.1s;
   /* Suppress the default focus ring on the <button> media rows (the same as
@@ -512,6 +514,21 @@ body.col-resizing {
 
 .media-row--selected {
   background: var(--color-accent-light);
+}
+
+/* Marks the clip currently open in the editor with a left accent bar — or, when
+   that clip is hidden inside a collapsed bin, marks the bin standing in for it.
+   A left gutter bar reads on top of the selection fill and on an unselected bin
+   alike, and doesn't disturb the row's [icon][name] layout. */
+.media-row--open::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-accent);
+  border-radius: 0 2px 2px 0;
 }
 
 .media-row--selected:hover {

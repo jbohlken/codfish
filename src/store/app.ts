@@ -52,6 +52,20 @@ export const playbackTime = signal(0);   // seconds
 export const isPlaying = signal(false);
 export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 
+/** Clear every selection and close the editor: no clip open, nothing
+ *  highlighted, playback reset. Used when the user clicks empty space in the
+ *  project panel. (Setting selectedMediaId to null also makes the coherence
+ *  effect above drop the selection sets, but we clear them explicitly here so
+ *  the intent reads locally and doesn't depend on effect ordering.) */
+export function deselectAll() {
+  selectedMediaId.value = null;
+  selectedMediaIds.value = new Set();
+  selectedBinIds.value = new Set();
+  selectedCaptionIndex.value = null;
+  playbackTime.value = 0;
+  isPlaying.value = false;
+}
+
 // ── Profiles ───────────────────────────────────────────────────────────────
 export const profiles = signal<CaptionProfile[]>([]);
 export const selectedProfile = signal<string>("Codfish");

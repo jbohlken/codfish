@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useMemo } from "preact/hooks";
 import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
-import { signal, useComputed } from "@preact/signals";
-import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory } from "../../store/app";
+import { signal, computed, useComputed } from "@preact/signals";
+import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory, deselectAll } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
@@ -189,6 +189,38 @@ const filterText = signal("");
 // Escape / project switch). Closing always clears the query so there's never
 // a hidden filter.
 const searchOpen = signal(false);
+
+// Which row should show the "open in editor" marker: the open clip's own row
+// when it's visible, or — when that clip is hidden inside a collapsed bin — the
+// shallowest collapsed ancestor standing in for it (that bin's row is the one
+// actually rendered). null when nothing is open. Read per-row in the class
+// computeds (so it never re-renders the forest), the same way selection/drop are.
+const openIndicatorId = computed<string | null>(() => {
+  const openId = selectedMediaId.value;
+  if (!openId) return null;
+  // Searching force-expands the tree and filters the list, so collapse-ancestor
+  // logic is moot — just mark the open clip's own row if it's in the results.
+  if (filterText.value.trim().length > 0) return openId;
+  const proj = project.value;
+  const clip = proj?.media.find((m) => m.id === openId);
+  if (!clip?.binId) return openId; // ungrouped, or not found → its own row
+  // Walk the bin-ancestor chain (innermost → outermost); the outermost collapsed
+  // one is the visible stand-in. If none are collapsed, the clip's row shows.
+  const binById = new Map((proj?.bins ?? []).map((b) => [b.id, b]));
+  const collapsed = collapsedBins.value;
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let bid: string | undefined = clip.binId;
+  while (bid && binById.has(bid) && !seen.has(bid)) {
+    seen.add(bid);
+    chain.push(bid);
+    bid = binById.get(bid)!.parentId;
+  }
+  for (let i = chain.length - 1; i >= 0; i--) {
+    if (collapsed.has(chain[i])) return chain[i];
+  }
+  return openId;
+});
 
 // The project key (createdAt) the filter was last reset for. Module-level so
 // it survives ProjectPanel remounts — see the reset block below.
@@ -1053,6 +1085,11 @@ export function ProjectPanel() {
       <div
         ref={panelBodyRef}
         class={panelBodyClass}
+        // A click that misses every row (empty space, the list padding) clears
+        // the selection and closes the editor — row clicks select and stop here
+        // by hitting .media-row first. (A drag's trailing click is swallowed, so
+        // dragging onto empty space won't deselect.)
+        onClick={(e) => { if (!(e.target as HTMLElement).closest(".media-row")) deselectAll(); }}
       >
         {!proj ? (
           <div class="empty-state">
@@ -1145,7 +1182,8 @@ function BinGroup({ bin, count, depth, collapsed, hidden, editing, query, onSele
   const rowClass = useComputed(
     () =>
       `media-row media-row--bin${selectedBinIds.value.has(bin.id) ? " media-row--selected" : ""}` +
-      `${dropTarget.value === bin.id ? " media-row--drop-target" : ""}`,
+      `${dropTarget.value === bin.id ? " media-row--drop-target" : ""}` +
+      `${openIndicatorId.value === bin.id ? " media-row--open" : ""}`,
   );
 
   if (hidden) return null;
@@ -1240,7 +1278,8 @@ function MediaRow({ item, query, depth, onSelect, onContextMenu, onPointerDownDr
   const rowClass = useComputed(
     () =>
       `media-row${selectedMediaIds.value.has(item.id) ? " media-row--selected" : ""}` +
-      `${missingIds.value.has(item.id) ? " media-row--missing" : ""}`,
+      `${missingIds.value.has(item.id) ? " media-row--missing" : ""}` +
+      `${openIndicatorId.value === item.id ? " media-row--open" : ""}`,
   );
 
   const captionMeta = item.captions.length > 0
