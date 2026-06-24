@@ -449,4 +449,7 @@ export function moveItemsToBin(mediaIds: string[], binIds: string[], targetBinId
     },
     targetBinId ? "Move to bin" : "Move to top level",
   );
+  // Reveal where the items landed — a collapsed target would otherwise hide
+  // them. expandBin persists, so the bin stays open across sessions.
+  if (targetBinId) expandBin(targetBinId);
 }

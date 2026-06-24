@@ -12,7 +12,7 @@ import { loadFormatSource, listFormats } from "../export";
 import { loadProfiles, loadProfileSource } from "../profiles";
 import type { CodProject, MediaItem, Bin } from "../../types/project";
 import { isDropFrameRate } from "../time";
-import { makeBin, rememberCollapseState } from "../bins";
+import { makeBin, rememberCollapseState, expandBin } from "../bins";
 import { cancelActiveEdit } from "../../components/layout/CaptionPanel";
 import { resetTimelineView } from "../../components/layout/Timeline";
 
@@ -334,6 +334,9 @@ export async function importDrop(paths: string[], targetBinId?: string): Promise
     );
     selectedMediaId.value = newItems[0].id;
     if (newBins.length) rememberCollapseState(); // new bins are open — remember it
+    // Reveal the import in a collapsed target bin (clips + any new sub-bins);
+    // expandBin persists so it stays open across sessions.
+    if (targetBinId) expandBin(targetBinId);
   }
   notifySkipped(result.skipped);
 }
