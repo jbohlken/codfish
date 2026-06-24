@@ -66,9 +66,9 @@ export function showContextMenu(e: MouseEvent, items: ContextMenuEntry[]) {
 }
 
 /** A divider (with optional group label) between menu sections. */
-function Divider({ label }: { label?: string }) {
+function Divider({ label, onMouseEnter }: { label?: string; onMouseEnter?: () => void }) {
   return (
-    <div class="context-menu-divider-wrap">
+    <div class="context-menu-divider-wrap" onMouseEnter={onMouseEnter}>
       <div class="context-menu-divider" />
       {label && <div class="context-menu-group-label">{label}</div>}
     </div>
@@ -120,7 +120,9 @@ export function ContextMenu() {
     >
       {state.items.map((item, i) =>
         isSeparator(item) ? (
-          <Divider key={i} label={item.label} />
+          // Hovering the divider closes any open flyout (it sits right under the
+          // submenu parent in the single-clip menu).
+          <Divider key={i} label={item.label} onMouseEnter={() => setOpenIndex(null)} />
         ) : item.submenu ? (
           <div
             key={i}
@@ -130,8 +132,10 @@ export function ContextMenu() {
             <button
               class={`context-menu-item context-menu-item--parent ${item.danger ? "context-menu-item--danger" : ""}`}
               disabled={item.disabled}
+              // Open on click too (hover-only excludes touch/trackpad taps).
+              onClick={() => setOpenIndex(openIndex === i ? null : i)}
             >
-              <span>{item.label}</span>
+              <span class="context-menu-item-parent-label"><ItemBody item={item} /></span>
               <CaretRight size={12} />
             </button>
             {openIndex === i && item.submenu.length > 0 && (

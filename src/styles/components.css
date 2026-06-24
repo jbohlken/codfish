@@ -786,6 +786,19 @@ body.rows-dragging * {
   box-shadow: var(--shadow-lg);
   padding: var(--space-1);
   min-width: 160px;
+  /* Backstop if a root menu ever exceeds the viewport — scroll rather than let
+     the off-screen-clamp push its first items above the top edge. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+/* Groups a submenu-parent's (optional) icon + label together, left of the
+   flyout caret (the row uses justify-content: space-between). */
+.context-menu-item-parent-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .context-menu::-webkit-scrollbar {
