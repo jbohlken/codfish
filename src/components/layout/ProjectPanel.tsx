@@ -414,6 +414,13 @@ export function ProjectPanel() {
     lastFilterResetKey = projectKey;
     searchOpen.value = false;
     filterText.value = "";
+    // Switching projects keeps this panel mounted, so clear per-project view
+    // state that would otherwise bleed across: a mid-rename, the shift anchor,
+    // and any in-flight drag. (selection sets are reset by the load path.)
+    editingBinId.value = null;
+    selectionAnchor.value = null;
+    dragPayload.value = null;
+    dropTarget.value = null;
     // Load this project's saved bin collapse state (pruned to its current
     // bins). Inline like the filter reset, so the first frame already reflects
     // the right state rather than flashing all-expanded.
