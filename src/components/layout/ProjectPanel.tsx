@@ -465,11 +465,16 @@ export function ProjectPanel() {
   const binShown = (node: BinNode): boolean =>
     revealedBins.has(node.bin.id) || node.items.length > 0 || node.children.some(binShown);
 
-  // Total membership per bin (from the full media list, not the filtered view)
-  // — the badge and the bin's Generate/Export both mean "all members".
+  // Direct item count per bin for its row badge: clips plus sub-bins (a bin is
+  // an item too). Counted from the full project, not the filtered view, and
+  // direct children only — like a file explorer's "N items".
   const binCounts = new Map<string, number>();
+  const bumpCount = (id: string) => binCounts.set(id, (binCounts.get(id) ?? 0) + 1);
   for (const mm of proj?.media ?? []) {
-    if (mm.binId != null) binCounts.set(mm.binId, (binCounts.get(mm.binId) ?? 0) + 1);
+    if (mm.binId != null) bumpCount(mm.binId);
+  }
+  for (const b of bins) {
+    if (b.parentId != null) bumpCount(b.parentId);
   }
 
   // Rows actually on screen, in display order (the bin row, then its sub-bins
