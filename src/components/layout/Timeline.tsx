@@ -47,6 +47,11 @@ export function resetTimelineView(): void {
 }
 type WaveformState = "idle" | "loading" | "ready" | "failed" | "no-audio";
 const waveformState = signal<WaveformState>("idle");
+// The sidecar/ffmpeg-reported audio length for the current clip's peaks. The
+// <video> element's duration (mediaDuration) is 0 mid-switch and unreliable for
+// asset:// media (the reason peaks come from the sidecar at all), so this is the
+// timeline length used when the video clock hasn't reported one.
+const waveformAudioDuration = signal(0);
 
 const SNAP_THRESHOLD_PX = 8;
 
@@ -95,12 +100,13 @@ export function Timeline() {
   const captionDuration = media?.captions.length
     ? media.captions[media.captions.length - 1].end
     : 0;
-  const duration = mediaDuration.value || captionDuration;
+  const duration = mediaDuration.value || waveformAudioDuration.value || captionDuration;
 
   // Init / reinit the waveform painter when media changes
   useEffect(() => {
     const canvas = waveCanvasRef.current;
     const scrollEl = scrollRef.current;
+    waveformAudioDuration.value = 0; // reset for the new clip; set once peaks load
 
     if (!canvas || !scrollEl || !media) {
       waveformState.value = "idle";
@@ -127,7 +133,7 @@ export function Timeline() {
       rowEl: canvas.parentElement as HTMLElement,
     });
     painterRef.current = painter;
-    painter.setLayoutDuration(mediaDuration.peek() || captionDuration);
+    painter.setLayoutDuration(duration);
 
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
@@ -178,6 +184,7 @@ export function Timeline() {
         flog(`generated bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
       }
       painter.setPeaks(peaks, audioDuration);
+      waveformAudioDuration.value = audioDuration;
       waveformState.value = "ready";
       flog(`painter ready audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
     })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
@@ -189,16 +196,15 @@ export function Timeline() {
     };
   }, [media?.path]);
 
-  // Keep the painter's layout axis synced to the live timeline duration. This
-  // is what makes the waveform align with the ruler/blocks/playhead, and — by
-  // tracking the signal rather than a value captured when the pipeline
-  // resolved — it self-corrects after a media switch, when <video> duration
-  // momentarily holds the previous item's value (or 0) before metadata loads.
-  useSignalEffect(() => {
-    const m = selectedMedia.value;
-    const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
-    painterRef.current?.setLayoutDuration(mediaDuration.value || capDur);
-  });
+  // Keep the painter's layout axis on the SAME duration the ruler/blocks/playhead
+  // use, so the waveform always shares their scale. Driven by a post-render effect
+  // on `duration` (not a signal effect): a signal effect can fire mid-switch while
+  // painterRef still points at the outgoing clip's painter, leaving the freshly
+  // created painter stuck at its seed (e.g. captionDuration, when the <video> clock
+  // is momentarily 0). A render effect runs once painterRef holds the new painter.
+  useEffect(() => {
+    painterRef.current?.setLayoutDuration(duration);
+  }, [duration]);
 
   // Scroll- and zoom-driven repaints are owned by the painter itself: it
   // listens to the outer container's scroll and observes the waveform row
