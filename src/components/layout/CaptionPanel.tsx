@@ -392,7 +392,7 @@ export function CaptionPanel() {
           <div class="empty-state">
             <span class="empty-state-title">No captions yet</span>
             {!canGenerate ? (
-              <span class="empty-state-body">This file has no audio track.</span>
+              <span class="empty-state-body">This media has no audio track.</span>
             ) : (
               <button class="btn btn-primary btn-sm" onClick={generateSelectedMedia}>
                 Generate

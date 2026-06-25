@@ -173,8 +173,8 @@ export async function runBatchGeneration(mediaIds: string[]): Promise<void> {
         const desc = total === 1
           ? "Generate captions"
           : success === total
-            ? `Generate captions (${total} files)`
-            : `Generate captions (${success} of ${total} files)`;
+            ? `Generate captions (${total} items)`
+            : `Generate captions (${success} of ${total} items)`;
         pushHistory(newProject, desc);
       }
     }
@@ -185,7 +185,7 @@ export async function runBatchGeneration(mediaIds: string[]): Promise<void> {
         return `• ${name}: ${msg}`;
       });
       const n = errors.size;
-      showError(`Failed to generate captions for ${n} file${n === 1 ? "" : "s"}:\n${lines.join("\n")}`);
+      showError(`Failed to generate captions for ${n} item${n === 1 ? "" : "s"}:\n${lines.join("\n")}`);
     }
   } finally {
     batchState.value = null;

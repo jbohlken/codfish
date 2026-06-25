@@ -52,7 +52,7 @@ export async function regenerateAllMedia(): Promise<void> {
   if (ids.length === 0) return;
 
   const choice = await confirmUnsavedChanges(
-    `This will regenerate captions for all ${ids.length} media file${ids.length === 1 ? "" : "s"}, replacing any existing captions and manual edits.`,
+    `This will regenerate captions for all ${ids.length} item${ids.length === 1 ? "" : "s"}, replacing any existing captions and manual edits.`,
     { title: "Regenerate everything?", hideDiscard: true, confirmLabel: "Regenerate everything" },
   );
   if (choice !== "save") return;
@@ -75,7 +75,7 @@ export async function regenerateSelection(): Promise<void> {
   if (ids.length === 0) return;
 
   const choice = await confirmUnsavedChanges(
-    `This will regenerate captions for ${ids.length} selected media file${ids.length === 1 ? "" : "s"}, replacing any existing captions and manual edits.`,
+    `This will regenerate captions for ${ids.length} selected item${ids.length === 1 ? "" : "s"}, replacing any existing captions and manual edits.`,
     { title: "Regenerate selection?", hideDiscard: true, confirmLabel: "Regenerate selection" },
   );
   if (choice !== "save") return;

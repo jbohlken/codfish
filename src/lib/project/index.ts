@@ -288,7 +288,7 @@ export async function importMediaPaths(paths: string[], binId?: string): Promise
     // truncate the redo branch.
     const cur = project.value;
     if (!cur) return;
-    const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
+    const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} items`;
     // Record the imported clip as the post-op selection so redo lands on it,
     // not the clip that was active before the import.
     pushHistory({ ...cur, media: [...cur.media, ...newItems] }, label, {
@@ -340,7 +340,7 @@ export async function importDrop(paths: string[], targetBinId?: string): Promise
     // appending them to the current bins can't collide.
     const cur = project.value;
     if (cur) {
-      const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
+      const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} items`;
       pushHistory(
         {
           ...cur,

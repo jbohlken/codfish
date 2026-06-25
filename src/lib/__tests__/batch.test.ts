@@ -258,7 +258,7 @@ describe("history descriptions", () => {
     spy.mockRestore();
   });
 
-  it("N=3 full success → 'Generate captions (3 files)'", async () => {
+  it("N=3 full success → 'Generate captions (3 items)'", async () => {
     project.value = makeProject([
       makeMedia({ id: "a", path: "/a" }),
       makeMedia({ id: "b", path: "/b" }),
@@ -267,11 +267,11 @@ describe("history descriptions", () => {
     const spy = vi.spyOn(storeModule, "pushHistory");
     await runBatchGeneration(["a", "b", "c"]);
     expect(spy).toHaveBeenCalledOnce();
-    expect(spy.mock.calls[0][1]).toBe("Generate captions (3 files)");
+    expect(spy.mock.calls[0][1]).toBe("Generate captions (3 items)");
     spy.mockRestore();
   });
 
-  it("partial (2 of 3) → 'Generate captions (2 of 3 files)'", async () => {
+  it("partial (2 of 3) → 'Generate captions (2 of 3 items)'", async () => {
     project.value = makeProject([
       makeMedia({ id: "a", path: "/a" }),
       makeMedia({ id: "b", path: "/b" }),
@@ -282,7 +282,7 @@ describe("history descriptions", () => {
     const spy = vi.spyOn(storeModule, "pushHistory");
     await runBatchGeneration(["a", "b", "c"]);
     expect(spy).toHaveBeenCalledOnce();
-    expect(spy.mock.calls[0][1]).toBe("Generate captions (2 of 3 files)");
+    expect(spy.mock.calls[0][1]).toBe("Generate captions (2 of 3 items)");
     spy.mockRestore();
   });
 });
@@ -335,9 +335,9 @@ describe("cancellation", () => {
     const spy = vi.spyOn(storeModule, "pushHistory");
     await runBatchGeneration(["a", "b", "c"]);
     expect(transcribeMediaMock).toHaveBeenCalledTimes(1); // only first ran
-    // Partial push with success=1, total=3 → "(1 of 3 files)"
+    // Partial push with success=1, total=3 → "(1 of 3 items)"
     expect(spy).toHaveBeenCalledOnce();
-    expect(spy.mock.calls[0][1]).toBe("Generate captions (1 of 3 files)");
+    expect(spy.mock.calls[0][1]).toBe("Generate captions (1 of 3 items)");
     spy.mockRestore();
     // batchState is cleared in finally; cancel signal also reset.
     expect(batchState.value).toBeNull();

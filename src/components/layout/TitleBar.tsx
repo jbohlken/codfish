@@ -127,11 +127,11 @@ export function TitleBar() {
   // are unreachable. Single source of truth.
   const generateItems: ActionMenuEntry[] = [
     {
-      label: selectedHasCaptions ? "Regenerate current file" : "Generate current file",
+      label: selectedHasCaptions ? "Regenerate current item" : "Generate current item",
       disabled: !media || !selectedHasAudio,
       disabledReason: !media
         ? "Select a media item first"
-        : "Selected file has no audio track",
+        : "Selected item has no audio track",
       onClick: generateSelectedMedia,
     },
     ...(selTranscribableCount > 0
@@ -141,7 +141,7 @@ export function TitleBar() {
             label: "Generate missing in selection",
             meta: `(${selMissingCount})`,
             disabled: selMissingCount === 0,
-            disabledReason: "Every file in the selection already has captions",
+            disabledReason: "Every item in the selection already has captions",
             onClick: generateMissingInSelection,
           },
           {
@@ -159,7 +159,7 @@ export function TitleBar() {
       label: "Generate missing",
       meta: `(${missingCount})`,
       disabled: missingCount === 0,
-      disabledReason: "All files already have captions",
+      disabledReason: "All items already have captions",
       onClick: generateMissingMedia,
     },
     {
@@ -174,9 +174,9 @@ export function TitleBar() {
 
   const exportItems: ActionMenuEntry[] = [
     {
-      label: "Export current file",
+      label: "Export current item",
       disabled: !selectedHasCaptions,
-      disabledReason: !media ? "Select a media item first" : "Selected file has no captions",
+      disabledReason: !media ? "Select a media item first" : "Selected item has no captions",
       onClick: exportSelectedMedia,
     },
     ...(selCaptionedCount > 0
