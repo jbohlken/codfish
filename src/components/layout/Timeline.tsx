@@ -450,7 +450,9 @@ export function Timeline() {
 
   return (
     <div class="timeline">
-      {/* Transport controls */}
+      {/* Transport controls — only shown with a clip loaded; every control here
+          acts on the active media, so there's nothing to operate on otherwise. */}
+      {media && (
       <div class="timeline-transport">
         <button
           class="timeline-btn"
@@ -497,7 +499,7 @@ export function Timeline() {
         )}
 
         <button
-          class={`timeline-btn${snapEnabled.value ? " timeline-btn--active" : ""}`}
+          class={`timeline-btn timeline-tools-start${snapEnabled.value ? " timeline-btn--active" : ""}`}
           onClick={() => { snapEnabled.value = !snapEnabled.value; }}
           data-tooltip={snapEnabled.value ? "Gap snapping on (G)" : "Gap snapping off (G)"}
         >
@@ -518,6 +520,7 @@ export function Timeline() {
 
         <ZoomControls scrollRef={scrollRef} zoomAroundPlayhead={zoomAroundPlayhead} />
       </div>
+      )}
 
       {/* Track area */}
       <div class="timeline-track-area">

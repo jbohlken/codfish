@@ -1324,12 +1324,10 @@ body.rows-dragging * {
 }
 
 .timeline-fps-badge {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--tl-text-secondary);
   user-select: none;
-  padding-right: var(--space-2);
 }
 
 .timeline-fps-badge--default {
@@ -1339,6 +1337,12 @@ body.rows-dragging * {
 
 .timeline-fps-badge--vfr {
   color: var(--color-warning, #e5a100);
+}
+
+/* Pushes the right-aligned tool group (snap, waveform style, zoom) to the far
+   edge of the transport bar, so the timecode + fps stay grouped on the left. */
+.timeline-tools-start {
+  margin-left: auto;
 }
 
 .timeline-btn--timecode {
