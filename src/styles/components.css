@@ -1363,6 +1363,9 @@ body.rows-dragging * {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Kill the macOS rubber-band/overshoot — it's disorienting on a timeline and
+     fights precise scrubbing. Also stops the scroll chaining to ancestors. */
+  overscroll-behavior-x: none;
 }
 
 .timeline-scroll-outer::-webkit-scrollbar {
