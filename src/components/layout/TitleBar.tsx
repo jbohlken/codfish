@@ -128,6 +128,9 @@ export function TitleBar() {
   const generateItems: ActionMenuEntry[] = [
     {
       label: selectedHasCaptions ? "Regenerate current item" : "Generate current item",
+      // Red only when it would replace existing captions/edits (a regenerate),
+      // matching "Regenerate selection/everything"; a fresh generate isn't.
+      danger: selectedHasCaptions,
       disabled: !media || !selectedHasAudio,
       disabledReason: !media
         ? "Select a media item first"

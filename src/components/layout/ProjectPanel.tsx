@@ -509,7 +509,7 @@ export function ProjectPanel() {
     return { visibleMedia: vm, revealedBins: revealed };
   }, [media, bins, sMode, sDir, query]);
 
-  const showSearch = !!proj && hasMedia && searchOpen.value;
+  const showSearch = !!proj && (hasMedia || hasBins) && searchOpen.value;
 
   // Selection and drop highlights are bound per-row to computed signals (see
   // MediaRow/BinGroup) rather than read here — so selecting or dragging updates
@@ -828,6 +828,7 @@ export function ProjectPanel() {
       return [
         {
           label: hasCaptions ? "Regenerate captions" : "Generate captions",
+          danger: hasCaptions, // red only when replacing existing captions/edits
           disabled: !hasAudio,
           onClick: () => { void generateSelectedMedia(); },
         },
@@ -1123,7 +1124,7 @@ export function ProjectPanel() {
         )}
         {proj && (
           <div class="panel-header-actions">
-            {hasMedia && !showSearch && (
+            {(hasMedia || hasBins) && !showSearch && (
               <button
                 class="btn btn-ghost btn-icon"
                 data-tooltip="Search project"
@@ -1132,37 +1133,33 @@ export function ProjectPanel() {
                 <MagnifyingGlass size={14} />
               </button>
             )}
-            {hasMedia && (
-              <button
-                class="btn btn-ghost btn-icon"
-                // With exactly one bin highlighted, make the new bin a sub-bin
-                // of it; otherwise (none, or an ambiguous multi-selection) a
-                // top-level bin. Stays available while searching — but creating
-                // a bin exits search first, so the new (empty) bin isn't hidden
-                // by the active filter and can be named right away.
-                data-tooltip={newBinTooltip}
-                onClick={() => {
-                  closeSearch();
-                  // Nest under a single selected bin; failing that, under a
-                  // single selected clip's parent bin (so "new bin" from a clip
-                  // lands beside it, not at the root); otherwise a top-level bin.
-                  const selBins = [...selectedBinIds.peek()];
-                  const selClips = [...selectedMediaIds.peek()];
-                  const parentId = selBins.length === 1
-                    ? selBins[0]
-                    : selClips.length === 1
-                      ? project.peek()?.media.find((m) => m.id === selClips[0])?.binId
-                      : undefined;
-                  const id = createBin(undefined, parentId);
-                  if (id) {
-                    if (parentId) expandBin(parentId);
-                    editingBinId.value = id;
-                  }
-                }}
-              >
-                <FolderPlus size={14} />
-              </button>
-            )}
+            {/* Always available, even in an empty project, so bins can be set
+                up before importing any media. */}
+            <button
+              class="btn btn-ghost btn-icon"
+              // With one bin highlighted, make the new bin a sub-bin of it; with
+              // one clip highlighted, a sub-bin of that clip's parent; otherwise
+              // a top-level bin. Exits search first so the new (empty) bin isn't
+              // hidden by the active filter and can be named right away.
+              data-tooltip={newBinTooltip}
+              onClick={() => {
+                closeSearch();
+                const selBins = [...selectedBinIds.peek()];
+                const selClips = [...selectedMediaIds.peek()];
+                const parentId = selBins.length === 1
+                  ? selBins[0]
+                  : selClips.length === 1
+                    ? project.peek()?.media.find((m) => m.id === selClips[0])?.binId
+                    : undefined;
+                const id = createBin(undefined, parentId);
+                if (id) {
+                  if (parentId) expandBin(parentId);
+                  editingBinId.value = id;
+                }
+              }}
+            >
+              <FolderPlus size={14} />
+            </button>
             <SortMenu />
             <button
               class="btn btn-ghost btn-icon"
@@ -1171,7 +1168,7 @@ export function ProjectPanel() {
             >
               <Plus size={14} />
             </button>
-            {hasMedia && (
+            {(hasMedia || hasBins) && (
               <button
                 class="btn btn-ghost btn-icon project-panel-trash"
                 data-tooltip={removeTooltip}
@@ -1231,7 +1228,7 @@ export function ProjectPanel() {
               </div>
             )}
           </div>
-        ) : proj.media.length === 0 ? (
+        ) : proj.media.length === 0 && !hasBins ? (
           <div class="empty-state">
             <span class="empty-state-title">No media</span>
             <span class="empty-state-body">Import a video or audio file to begin.</span>
