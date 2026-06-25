@@ -295,6 +295,15 @@
   padding: var(--space-1) var(--space-2);
 }
 
+/* The header trash reads as a neutral icon at rest (it's disabled with no
+   selection) and turns danger-colored on hover, so its destructive intent is
+   clear only when it's actually actionable. The extra .btn-ghost qualifier
+   outranks `.btn-ghost:hover:not(:disabled)` (global.css), which would otherwise
+   tie on specificity and force the color back to the default hover color. */
+.btn-ghost.project-panel-trash:hover:not(:disabled) {
+  color: var(--color-danger);
+}
+
 .panel-sort-option {
   display: flex;
   align-items: center;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "preact/hooks";
-import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, XIcon as X } from "@phosphor-icons/react";
+import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, TrashIcon as Trash, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal, computed, useComputed } from "@preact/signals";
 import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory, deselectAll, sortMode, sortDir, setSortMode, setSortDir } from "../../store/app";
@@ -32,6 +32,14 @@ import {
   forgetBinCollapse,
   type BinNode,
 } from "../../lib/bins";
+import {
+  generateSelectedMedia,
+  exportSelectedMedia,
+  generateMissingInSelection,
+  regenerateSelection,
+  exportSelection,
+} from "../../lib/actions";
+import { selectionEligibleIds, selectionTranscribableIds, selectionCaptionedMedia } from "../../lib/batch";
 import { recentProjects } from "../../lib/recent";
 import { showContextMenu, type ContextMenuEntry } from "../ContextMenu";
 import { hideTooltip } from "../Tooltip";
@@ -654,6 +662,15 @@ export function ProjectPanel() {
     return parts.join(" and ") || "0 items";
   };
 
+  // Header trash button state, bound via computeds so a selection change updates
+  // the button without re-rendering the panel (same approach as the row classes).
+  const removeDisabled = useComputed(() => selectedMediaIds.value.size === 0 && selectedBinIds.value.size === 0);
+  const removeTooltip = useComputed(() => {
+    const m = selectedMediaIds.value.size;
+    const b = selectedBinIds.value.size;
+    return m + b === 0 ? "Remove selected items" : `Remove ${countLabel(m, b)} from project`;
+  });
+
   // "Move to…" submenu for a selection of clips and/or bins: Top level (when
   // anything is currently nested) → the bin tree → New bin…. Targets exclude
   // any selected bin and anything inside one (a bin can't move into its own
@@ -777,11 +794,45 @@ export function ProjectPanel() {
     showContextMenu(e, buildSelectionMenu(mediaIds, binIds));
   };
 
+  // Scoped generate/export entries for the right-clicked scope. `scope` is the
+  // noun used in labels ("bin" for a single bin, "selection" for multi/mixed);
+  // the actions are the selection-scoped ones (right-click has already set the
+  // selection to match). Mirrors the header dropdowns. Empty when nothing in the
+  // scope is generatable/exportable, so an empty bin gets no dead rows. Counts
+  // live in the label (the context menu has no separate meta column).
+  const scopedGenExport = (scope: string): ContextMenuEntry[] => {
+    const out: ContextMenuEntry[] = [];
+    const missing = selectionEligibleIds.value.length;
+    const transcribable = selectionTranscribableIds.value.length;
+    const captioned = selectionCaptionedMedia.value.length;
+    if (transcribable > 0) {
+      out.push(
+        { label: `Generate missing in ${scope} (${missing})`, disabled: missing === 0, onClick: () => { void generateMissingInSelection(); } },
+        { label: `Regenerate ${scope} (${transcribable})`, danger: true, disabled: captioned === 0, onClick: () => { void regenerateSelection(); } },
+      );
+    }
+    if (captioned > 0) {
+      out.push({ label: `Export ${scope} (${captioned})`, onClick: () => { void exportSelection(); } });
+    }
+    if (out.length) out.push({ separator: true });
+    return out;
+  };
+
   const buildSelectionMenu = (mediaIds: string[], binIds: string[]): ContextMenuEntry[] => {
-    // Single clip: full clip menu, grouped — item actions · organize · destroy.
+    // Single clip: full clip menu, grouped — generate/export · item · organize · destroy.
     if (mediaIds.length === 1 && binIds.length === 0) {
       const id = mediaIds[0];
+      const clip = proj?.media.find((m) => m.id === id);
+      const hasAudio = clip?.hasAudio !== false;
+      const hasCaptions = (clip?.captions.length ?? 0) > 0;
       return [
+        {
+          label: hasCaptions ? "Regenerate captions" : "Generate captions",
+          disabled: !hasAudio,
+          onClick: () => { void generateSelectedMedia(); },
+        },
+        { label: "Export captions", disabled: !hasCaptions, onClick: () => { void exportSelectedMedia(); } },
+        { separator: true },
         { label: "Properties…", onClick: () => { mediaSettingsId.value = id; } },
         { label: "Re-link file…", onClick: () => relinkMediaItem(id) },
         { separator: true },
@@ -790,10 +841,11 @@ export function ProjectPanel() {
         { label: "Remove from project", danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
       ];
     }
-    // Single bin: full bin menu, grouped — create/rename · organize · destroy.
+    // Single bin: full bin menu, grouped — generate/export · create/rename · organize · destroy.
     if (binIds.length === 1 && mediaIds.length === 0) {
       const id = binIds[0];
       return [
+        ...scopedGenExport("bin"),
         {
           label: "New sub-bin",
           icon: <FolderPlus size={12} />,
@@ -812,6 +864,7 @@ export function ProjectPanel() {
     // oddly next to a "Move/Remove N items" that means everything.
     const label = countLabel(mediaIds.length, binIds.length);
     const items: ContextMenuEntry[] = [
+      ...scopedGenExport("selection"),
       { label: `Move ${label} to…`, submenu: buildMoveSubmenu(mediaIds, binIds) },
     ];
     if (binIds.length > 1 && mediaIds.length === 0) {
@@ -1118,6 +1171,19 @@ export function ProjectPanel() {
             >
               <Plus size={14} />
             </button>
+            {hasMedia && (
+              <button
+                class="btn btn-ghost btn-icon project-panel-trash"
+                data-tooltip={removeTooltip}
+                disabled={removeDisabled}
+                // Removes the current selection (clips and/or bins) — same path
+                // as the context menu, so it confirms only when a bin would sweep
+                // in extra clips, never deletes disk files, and is undoable.
+                onClick={() => { void removeSelection([...selectedMediaIds.peek()], [...selectedBinIds.peek()]); }}
+              >
+                <Trash size={14} />
+              </button>
+            )}
           </div>
         )}
         <PanelResizeHandle />
