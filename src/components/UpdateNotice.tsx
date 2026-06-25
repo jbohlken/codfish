@@ -16,6 +16,7 @@ import {
   isPlaying,
   mediaDuration,
   resetHistory,
+  flushOpenClipView,
 } from "../store/app";
 import { startDaemon } from "./Splash";
 import { saveCurrentProject } from "../lib/project";
@@ -57,6 +58,7 @@ export function isUpdating(): boolean {
 
 /** Close the currently open project entirely. Used before an update tears things down. */
 function closeCurrentProject(): void {
+  flushOpenClipView(); // remember the open clip's spot before tearing the project down
   cancelActiveEdit();
   resetHistory();
   project.value = null;

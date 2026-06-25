@@ -19,6 +19,7 @@ import {
   isBatchRunning,
 } from "../../store/app";
 import { snapToFrame, breakTextIntoLines } from "../../lib/pipeline";
+import { getClipView } from "../../lib/clipView";
 import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
 import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
@@ -319,6 +320,7 @@ export function CaptionPanel() {
 
   // Auto-scroll to playing caption during playback (only when caption changes)
   const lastPlayingScrollRef = useRef<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   useSignalEffect(() => {
     const time = playbackTime.value;
     const media = selectedMedia.value;
@@ -333,6 +335,35 @@ export function CaptionPanel() {
     }
   });
 
+  // On a clip switch, re-anchor the caption list to where you were in this clip:
+  // the remembered selected caption if any, otherwise the caption at (or nearest
+  // before) the restored playhead — so a clip left mid-scrub, even with the
+  // playhead in a gap and nothing selected, returns near that spot instead of
+  // jumping to the top. Only a clip with no captions falls through to the top.
+  // The playhead is read from the saved view state (not the live signal, which
+  // VideoPanel restores post-render) so there's no ordering race. Keying on media
+  // id also re-anchors when two clips share the selected index, which the
+  // value-keyed effect above would skip. (Re-arms the playback auto-scroll too.)
+  const scrolledMediaId = selectedMedia.value?.id ?? null;
+  useEffect(() => {
+    lastPlayingScrollRef.current = null;
+    const caps = selectedMedia.peek()?.captions ?? [];
+    let anchor = selectedCaptionIndex.peek();
+    if (anchor == null && caps.length) {
+      const t = getClipView(scrolledMediaId ?? undefined)?.playbackTime ?? 0;
+      let nearest = caps[0];
+      for (const c of caps) {
+        if (c.start <= t) nearest = c;
+        else break;
+      }
+      anchor = nearest.index;
+    }
+    if (anchor != null) {
+      document.querySelector(`[data-caption-index="${anchor}"]`)?.scrollIntoView({ block: "nearest" });
+    } else if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, [scrolledMediaId]);
 
   const media = selectedMedia.value;
   const hasCaptions = (media?.captions.length ?? 0) > 0;
@@ -383,7 +414,7 @@ export function CaptionPanel() {
         )}
       </div>
 
-      <div class="panel-body scrollable">
+      <div class="panel-body scrollable" ref={listRef}>
         {!media ? (
           <div class="empty-state">
             <span class="empty-state-body">Select a media item to view captions.</span>

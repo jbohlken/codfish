@@ -5,6 +5,7 @@ import { selectedMedia, playbackTime, isPlaying, mediaDuration, activeProfile } 
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
 import { findCaptionAt } from "../../lib/pipeline";
+import { getClipView } from "../../lib/clipView";
 
 function isAudioOnly(path: string): boolean {
   const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
@@ -32,9 +33,11 @@ export function VideoPanel() {
     ? editText.value.split("\n").filter((l) => l.trim())
     : activeCaption?.lines ?? null;
 
-  // Reset playback state when media changes
+  // On a clip switch, restore that clip's remembered playhead (0 if none) and
+  // stop playback. This owns playbackTime across media changes; the caption
+  // selection is restored separately by openClip.
   useEffect(() => {
-    playbackTime.value = 0;
+    playbackTime.value = getClipView(media?.id)?.playbackTime ?? 0;
     isPlaying.value = false;
     mediaDuration.value = 0;
   }, [media?.id]);
@@ -125,7 +128,13 @@ export function VideoPanel() {
               controls={false}
               disablePictureInPicture
               onContextMenu={(e) => e.preventDefault()}
-              onLoadedMetadata={(e) => { mediaDuration.value = e.currentTarget.duration; }}
+              onLoadedMetadata={(e) => {
+                mediaDuration.value = e.currentTarget.duration;
+                // Seek to the restored playhead once the video can actually seek
+                // (setting currentTime before metadata loads doesn't stick).
+                const t = playbackTime.peek();
+                if (t > 0) e.currentTarget.currentTime = Math.min(t, e.currentTarget.duration || t);
+              }}
               onPlay={() => { isPlaying.value = true; }}
               onPause={() => { isPlaying.value = false; }}
               onEnded={() => { isPlaying.value = false; }}

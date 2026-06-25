@@ -307,6 +307,29 @@ export function forgetBinCollapse(ids: string | Iterable<string>): void {
   persistCollapsed(next);
 }
 
+/** Copy a project's remembered bin-collapse state to a new storage key, keeping
+ *  the original. Save As writes a copy at a new path while the original file
+ *  still exists, so both keep their state; moving would wipe the original's on
+ *  reopen. The active key follows to the new project. Mirrors copyClipViewProject. */
+export function copyBinCollapseProject(oldKey: string, newKey: string): void {
+  if (oldKey === newKey) return;
+  try {
+    const map = loadExpandedMap();
+    const entry = map[oldKey];
+    if (entry) {
+      // Delete-then-reinsert newKey so it lands in the most-recent LRU slot.
+      delete map[newKey];
+      map[newKey] = [...entry];
+      const keys = Object.keys(map);
+      for (const k of keys.slice(0, Math.max(0, keys.length - MAX_REMEMBERED_PROJECTS))) delete map[k];
+      localStorage.setItem(EXPANDED_KEY, JSON.stringify(map));
+    }
+  } catch {
+    // view state is best-effort
+  }
+  if (currentProjectKey === oldKey) currentProjectKey = newKey;
+}
+
 // ── Mutations (undoable project edits) ────────────────────────────────────
 
 /** Default "Bin N" name where N is one past the highest existing "Bin N", so

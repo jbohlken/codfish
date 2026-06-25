@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from "preact/hooks";
 import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, TrashIcon as Trash, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal, computed, useComputed } from "@preact/signals";
-import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory, deselectAll, sortMode, sortDir, setSortMode, setSortDir } from "../../store/app";
+import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory, deselectAll, openClip, sortMode, sortDir, setSortMode, setSortDir } from "../../store/app";
 import {
   newProjectGuarded,
   openProjectGuarded,
@@ -40,6 +40,7 @@ import {
   exportSelection,
 } from "../../lib/actions";
 import { selectionEligibleIds, selectionTranscribableIds, selectionCaptionedMedia } from "../../lib/batch";
+import { loadClipViewForProject } from "../../lib/clipView";
 import { recentProjects } from "../../lib/recent";
 import { showContextMenu, type ContextMenuEntry } from "../ContextMenu";
 import { hideTooltip } from "../Tooltip";
@@ -388,9 +389,12 @@ function removeMediaIds(mediaIds: string[], opts?: { removeBinIds?: string[]; la
       ...(dropBins ? { bins: (proj.bins ?? []).filter((b) => !dropBins.has(b.id)) } : {}),
     },
     label,
-    { selectedMediaId: nextId, selectedCaptionIndex: selectedCaptionIndex.value },
+    { selectedMediaId: nextId, selectedCaptionIndex: removingActive ? null : selectedCaptionIndex.value },
   );
-  if (removingActive) selectedMediaId.value = nextId;
+  // Removing the active clip opens the neighbour via openClip, which first saves
+  // the removed clip's view state (so undo restores where you were in it) and
+  // then restores the neighbour's remembered spot.
+  if (removingActive) openClip(nextId);
 }
 
 export function ProjectPanel() {
@@ -476,6 +480,9 @@ export function ProjectPanel() {
     // bins). Inline like the filter reset, so the first frame already reflects
     // the right state rather than flashing all-expanded.
     loadCollapsedForProject(projectKey, new Set((proj?.bins ?? []).map((b) => b.id)));
+    // Same: load this project's saved per-clip view state (caption + playhead),
+    // pruned to its current media.
+    loadClipViewForProject(projectKey, new Set((proj?.media ?? []).map((m) => m.id)));
   }
 
   // Closed search never filters, even if filterText somehow lingers.
@@ -607,7 +614,7 @@ export function ProjectPanel() {
   // also used when a drag grabs a row outside the current selection.
   const selectOnly = (id: string, kind: "media" | "bin") => {
     if (kind === "media") {
-      selectedMediaId.value = id;
+      openClip(id);
       selectedMediaIds.value = new Set([id]);
       selectedBinIds.value = new Set();
     } else {
@@ -622,14 +629,14 @@ export function ProjectPanel() {
       const range = rangeSelect(orderedRowIds, selectionAnchor.value, id);
       selectedMediaIds.value = new Set(range.filter((rid) => rowKind.get(rid) === "media"));
       selectedBinIds.value = new Set(range.filter((rid) => rowKind.get(rid) === "bin"));
-      if (kind === "media") selectedMediaId.value = id;
+      if (kind === "media") openClip(id);
     } else if (e.ctrlKey || e.metaKey) {
       if (kind === "media") {
         const next = new Set(selectedMediaIds.peek());
         if (next.has(id)) next.delete(id);
         else next.add(id);
         selectedMediaIds.value = next;
-        if (next.has(id)) selectedMediaId.value = id;
+        if (next.has(id)) openClip(id);
         else {
           // Removed the active clip — move the editor to another still-selected
           // clip so the selection stays coherent: prefer a visible one, else any
@@ -639,7 +646,7 @@ export function ProjectPanel() {
           // coherence effect).
           const visible = orderedRows.find((r) => r.kind === "media" && next.has(r.id));
           const fallback = visible?.id ?? next.values().next().value;
-          if (fallback) selectedMediaId.value = fallback;
+          if (fallback) openClip(fallback);
         }
       } else {
         const next = new Set(selectedBinIds.peek());
@@ -780,7 +787,7 @@ export function ProjectPanel() {
       : selectedBinIds.peek().has(clickedId);
     if (!inSelection) {
       if (clickedKind === "media") {
-        selectedMediaId.value = clickedId;
+        openClip(clickedId);
         selectedMediaIds.value = new Set([clickedId]);
         selectedBinIds.value = new Set();
       } else {

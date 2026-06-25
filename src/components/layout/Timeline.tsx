@@ -10,6 +10,9 @@ import {
   selectedCaptionIndex,
   playbackTime,
   isPlaying,
+  scrubbing,
+  zoomLevel,
+  timelineScroll,
   mediaDuration,
   project,
   pushHistory,
@@ -32,15 +35,15 @@ const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored
 const snapEnabled = signal(true);
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
-const zoomLevel = signal(1);
-// Outer scroll position and viewport width, mirrored into signals so the
-// virtualized ruler can subscribe locally — the Timeline body itself stays
-// off the per-frame scroll/zoom hot path.
-const timelineScroll = signal(0);
+// Outer viewport width, mirrored into a signal so the virtualized ruler can
+// subscribe locally — the Timeline body itself stays off the per-frame
+// scroll/zoom hot path. (Scroll position lives in the store as timelineScroll so
+// it's part of the per-clip view memory.)
 const timelineViewport = signal(800);
 
 export function resetTimelineView(): void {
   zoomLevel.value = 1;
+  timelineScroll.value = 0;
 }
 type WaveformState = "idle" | "loading" | "ready" | "failed" | "no-audio";
 const waveformState = signal<WaveformState>("idle");
@@ -209,7 +212,9 @@ export function Timeline() {
     if (!el) return;
     const onScroll = () => { timelineScroll.value = el.scrollLeft; };
     const measure = () => { timelineViewport.value = el.clientWidth; };
-    onScroll();
+    // Don't re-read scrollLeft into the signal on a media change — openClip has
+    // already set timelineScroll to the incoming clip's remembered value, and the
+    // DOM restore below applies it. Reading the stale DOM here would clobber it.
     measure();
     el.addEventListener("scroll", onScroll, { passive: true });
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
@@ -219,6 +224,18 @@ export function Timeline() {
       ro?.disconnect();
     };
   }, [media?.path]);
+
+  // Restore the remembered horizontal scroll on a clip switch, after the
+  // zoom-driven content width has been laid out (rAF). openClip set timelineScroll
+  // to the incoming clip's value in its batch (so the persist effect stays
+  // consistent); this applies it to the DOM, and the scroll listener mirrors it
+  // back. Paired with zoom so a zoomed clip returns to the same region.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const raf = requestAnimationFrame(() => { el.scrollLeft = timelineScroll.peek(); });
+    return () => cancelAnimationFrame(raf);
+  }, [media?.id]);
 
   // Auto-scroll to keep playhead in view during playback
   useSignalEffect(() => {
@@ -290,6 +307,7 @@ export function Timeline() {
     if (e.button !== 0 || !duration) return;
     const el = e.currentTarget as HTMLElement;
 
+    scrubbing.value = true; // pause per-action view persistence until release
     const wasPlaying = isPlaying.peek();
     if (wasPlaying) isPlaying.value = false;
 
@@ -306,6 +324,7 @@ export function Timeline() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       if (wasPlaying) isPlaying.value = true;
+      scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);

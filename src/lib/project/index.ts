@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { project, projectPath, isDirty, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory } from "../../store/app";
+import { project, projectPath, isDirty, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory, openClip, flushOpenClipView } from "../../store/app";
 import { showError } from "../../components/ErrorModal";
 import { showNotice } from "../../components/NoticeModal";
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
@@ -12,7 +12,8 @@ import { loadFormatSource, listFormats } from "../export";
 import { loadProfiles, loadProfileSource } from "../profiles";
 import type { CodProject, MediaItem, Bin } from "../../types/project";
 import { isDropFrameRate } from "../time";
-import { makeBin, rememberCollapseState, expandBin } from "../bins";
+import { makeBin, rememberCollapseState, expandBin, copyBinCollapseProject } from "../bins";
+import { copyClipViewProject, loadClipViewForProject, getActiveClip } from "../clipView";
 import { cancelActiveEdit } from "../../components/layout/CaptionPanel";
 import { resetTimelineView } from "../../components/layout/Timeline";
 
@@ -59,6 +60,9 @@ export function closeProjectGuarded(): Promise<boolean> {
 
 /** Clear the current project from the store. Does not touch disk. */
 function closeProject(): void {
+  // Persist the open clip's view state into THIS project's store before the
+  // project key changes (the new project's load swaps the active clip-view map).
+  flushOpenClipView();
   cancelActiveEdit();
   resetTimelineView();
   resetHistory();
@@ -202,6 +206,7 @@ export async function saveCurrentProject(): Promise<boolean> {
   // No path yet — shouldn't happen with new/open flow, but fall back to Save As
   if (!path) return saveCurrentProjectAs();
 
+  flushOpenClipView(); // persist the open clip's spot so a later quit keeps it
   await writeToDisk(path, proj);
   isDirty.value = false;
   await clearRecovery();
@@ -219,12 +224,21 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   });
   if (!savePath) return false;
 
+  // The view-state stores (per-clip view, bin collapse) are keyed by project —
+  // path, falling back to createdAt. Capture the old key and flush the open
+  // clip's latest spot before the path changes, then COPY both stores to the new
+  // key so the new file has them while the original (still on disk) keeps its own.
+  const oldKey = projectPath.value ?? proj.createdAt;
+  flushOpenClipView();
+
   const name = pathToBasename(savePath);
   const updated: CodProject = { ...proj, name };
   await writeToDisk(savePath, updated);
   project.value = updated;
   projectPath.value = savePath;
   isDirty.value = false;
+  copyClipViewProject(oldKey, savePath);
+  copyBinCollapseProject(oldKey, savePath);
   await clearRecovery();
   // Save As switches the working file to the new path, so treat it like
   // any other load for recents purposes — otherwise the new file wouldn't
@@ -295,8 +309,7 @@ export async function importMediaPaths(paths: string[], binId?: string): Promise
       selectedMediaId: newItems[0].id,
       selectedCaptionIndex: null,
     });
-    selectedMediaId.value = newItems[0].id;
-    selectedCaptionIndex.value = null;
+    openClip(newItems[0].id);
   }
   notifySkipped(paths.filter((p) => !isMediaPath(p)).map(basenameOf));
 }
@@ -350,8 +363,7 @@ export async function importDrop(paths: string[], targetBinId?: string): Promise
         label,
         { selectedMediaId: newItems[0].id, selectedCaptionIndex: null }, // redo lands on the import
       );
-      selectedMediaId.value = newItems[0].id;
-      selectedCaptionIndex.value = null;
+      openClip(newItems[0].id);
       if (newBins.length) rememberCollapseState(); // new bins are open — remember it
       // Reveal the import in a collapsed target bin (clips + any new sub-bins);
       // expandBin persists so it stays open across sessions.
@@ -589,6 +601,15 @@ function loadIntoStore(proj: CodProject, filePath: string): void {
   projectPath.value = filePath;
   isDirty.value = false;
   resetSelectionForLoad();
+  // Resume the clip that was active when this project was last open, restored at
+  // its remembered view state — load the project's per-clip view store first so
+  // openClip can restore from it. Skip if that clip no longer exists (open
+  // nothing, as before). Import auto-opens the added clip; this gives load the
+  // matching "open the most relevant clip" behaviour instead of a blank editor.
+  const liveIds = new Set(proj.media.map((m) => m.id));
+  loadClipViewForProject(filePath, liveIds);
+  const resumeId = getActiveClip(filePath);
+  if (resumeId !== null && liveIds.has(resumeId)) openClip(resumeId);
   // Fire-and-forget: every code path that loads a project (open, new, file
   // association, open-recent, recovery restore) flows through here, so this
   // is the single place to update the recent list.

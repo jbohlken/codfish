@@ -16,7 +16,7 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { CaptionPanel, commitActiveEdit, cancelActiveEdit } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
-import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory, isBatchRunning } from "./store/app";
+import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory, isBatchRunning, flushOpenClipView } from "./store/app";
 import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, revertProject, openRecent, resetSelectionForLoad } from "./lib/project";
 import { loadProfiles } from "./lib/profiles";
 import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
@@ -102,6 +102,10 @@ export function App() {
           if (!saved) return false;
         }
       }
+      // Capture the open clip's live spot before teardown. The settle effect sits
+      // out during playback, so a quit/discard while playing would otherwise lose
+      // the position; flushOpenClipView reads it directly, so it's caught here.
+      flushOpenClipView();
       await clearRecovery();
       return true;
     };
