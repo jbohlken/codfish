@@ -1,10 +1,10 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet } from "@phosphor-icons/react";
+import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform } from "@phosphor-icons/react";
 import { useSignalEffect, signal } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
-import { createWaveformPainter } from "../../lib/waveform";
+import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
 import {
   selectedMedia,
   selectedCaptionIndex,
@@ -33,6 +33,8 @@ const VALID_MODES: TimecodeCycle[] = ["time", "smpte", "frames"];
 const stored = localStorage.getItem("codfish:timecodeMode") as TimecodeCycle;
 const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored : "time");
 const snapEnabled = signal(true);
+const storedWaveStyle = localStorage.getItem("codfish:waveformStyle");
+const waveformStyle = signal<WaveformStyle>(storedWaveStyle === "bars" ? "bars" : "continuous");
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 // Outer viewport width, mirrored into a signal so the virtualized ruler can
@@ -101,6 +103,7 @@ export function Timeline() {
     ? media.captions[media.captions.length - 1].end
     : 0;
   const duration = mediaDuration.value || waveformAudioDuration.value || captionDuration;
+  const waveStyle = waveformStyle.value;
 
   // Init / reinit the waveform painter when media changes
   useEffect(() => {
@@ -134,6 +137,7 @@ export function Timeline() {
     });
     painterRef.current = painter;
     painter.setLayoutDuration(duration);
+    painter.setStyle(waveStyle);
 
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
@@ -205,6 +209,12 @@ export function Timeline() {
   useEffect(() => {
     painterRef.current?.setLayoutDuration(duration);
   }, [duration]);
+
+  // Push the chosen render style to the painter (same post-render pattern as
+  // duration, so it lands on the current painter after a media switch).
+  useEffect(() => {
+    painterRef.current?.setStyle(waveStyle);
+  }, [waveStyle]);
 
   // Scroll- and zoom-driven repaints are owned by the painter itself: it
   // listens to the outer container's scroll and observes the waveform row
@@ -492,6 +502,18 @@ export function Timeline() {
           data-tooltip={snapEnabled.value ? "Gap snapping on (G)" : "Gap snapping off (G)"}
         >
           <Magnet size={14} />
+        </button>
+
+        <button
+          class="timeline-btn"
+          onClick={() => {
+            const next: WaveformStyle = waveformStyle.value === "continuous" ? "bars" : "continuous";
+            waveformStyle.value = next;
+            localStorage.setItem("codfish:waveformStyle", next);
+          }}
+          data-tooltip={waveformStyle.value === "continuous" ? "Waveform: continuous" : "Waveform: bars"}
+        >
+          {waveformStyle.value === "continuous" ? <WaveSine size={14} /> : <Waveform size={14} />}
         </button>
 
         <ZoomControls scrollRef={scrollRef} zoomAroundPlayhead={zoomAroundPlayhead} />
