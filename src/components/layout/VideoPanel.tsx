@@ -42,6 +42,17 @@ export function VideoPanel() {
     mediaDuration.value = 0;
   }, [media?.id]);
 
+  // Adopt the element's duration, but only a real (finite, positive) value.
+  // The first `loadedmetadata` for a file still streaming in (e.g. a freshly
+  // Dropbox-synced clip over the asset protocol, or an MP4 whose moov atom
+  // isn't faststart) can report Infinity/NaN or a provisional length, then
+  // emit `durationchange` with the true duration — so we listen to both and
+  // ignore bogus values rather than locking in the first reading.
+  const adoptDuration = (el: HTMLVideoElement) => {
+    const d = el.duration;
+    if (Number.isFinite(d) && d > 0) mediaDuration.value = d;
+  };
+
   // Sync isPlaying → video element, and drive playbackTime via rAF while playing.
   useEffect(() => {
     const video = videoRef.current;
@@ -129,12 +140,13 @@ export function VideoPanel() {
               disablePictureInPicture
               onContextMenu={(e) => e.preventDefault()}
               onLoadedMetadata={(e) => {
-                mediaDuration.value = e.currentTarget.duration;
+                adoptDuration(e.currentTarget);
                 // Seek to the restored playhead once the video can actually seek
                 // (setting currentTime before metadata loads doesn't stick).
                 const t = playbackTime.peek();
                 if (t > 0) e.currentTarget.currentTime = Math.min(t, e.currentTarget.duration || t);
               }}
+              onDurationChange={(e) => adoptDuration(e.currentTarget)}
               onPlay={() => { isPlaying.value = true; }}
               onPause={() => { isPlaying.value = false; }}
               onEnded={() => { isPlaying.value = false; }}
