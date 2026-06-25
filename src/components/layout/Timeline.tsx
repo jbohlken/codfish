@@ -401,14 +401,14 @@ export function Timeline() {
     });
   };
 
-  // Ctrl/Cmd +/- → zoom around playhead. Gated like the caption editor
-  // shortcuts in CaptionPanel: skipped in text inputs, no media, or an
-  // active caption edit. "=" covers unshifted; "+"/"_" cover shifted/numpad.
-  // Also gated on blockers (update / batch generation) — inert app-shell
-  // doesn't catch document-level keydown.
+  // Timeline keyboard shortcuts. Gated like the caption-panel shortcuts:
+  // skipped in text inputs, with no media, during an active caption edit, or
+  // while blocked (update / batch generation) — document-level keydown isn't
+  // caught by the inert app-shell.
+  //   G            → toggle gap snap
+  //   Ctrl/Cmd +/- → zoom around playhead ("=" unshifted; "+"/"_" shifted/numpad)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLSelectElement ||
@@ -417,10 +417,13 @@ export function Timeline() {
       if (isUpdating() || isBatchRunning.value) return;
       if (!selectedMedia.value) return;
       if (editingIndex.value !== null) return;
-      if (e.key === "=" || e.key === "+") {
+      if (e.key === "g" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        snapEnabled.value = !snapEnabled.value;
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
         zoomAroundPlayhead(1.5);
-      } else if (e.key === "-" || e.key === "_") {
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "-" || e.key === "_")) {
         e.preventDefault();
         zoomAroundPlayhead(1 / 1.5);
       }
@@ -480,7 +483,7 @@ export function Timeline() {
         <button
           class={`timeline-btn${snapEnabled.value ? " timeline-btn--active" : ""}`}
           onClick={() => { snapEnabled.value = !snapEnabled.value; }}
-          data-tooltip={snapEnabled.value ? "Snapping on" : "Snapping off"}
+          data-tooltip={snapEnabled.value ? "Gap snapping on (G)" : "Gap snapping off (G)"}
         >
           <Magnet size={14} />
         </button>
