@@ -11,6 +11,16 @@ export interface ActionMenuItem {
   onClick: () => void;
 }
 
+/** A scope divider with an optional uppercase group label (e.g. "Selection"). */
+export interface ActionMenuSeparator {
+  separator: true;
+  label?: string;
+}
+
+export type ActionMenuEntry = ActionMenuItem | ActionMenuSeparator;
+
+const isSeparator = (e: ActionMenuEntry): e is ActionMenuSeparator => "separator" in e;
+
 /** A header button that opens a small menu of actions. Visually matches the
  * SelectButton dropdowns, but triggers actions instead of selecting a value.
  *
@@ -29,7 +39,7 @@ export function ActionMenuButton({
   icon: Icon;
   label: string;
   tooltip?: string;
-  items: ActionMenuItem[];
+  items: ActionMenuEntry[];
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -56,21 +66,30 @@ export function ActionMenuButton({
       </button>
       {open && (
         <div class="titlebar-select-menu">
-          {items.map((item, i) => (
-            <button
-              key={i}
-              class={`titlebar-select-option${item.danger ? " titlebar-select-option--danger" : ""}`}
-              disabled={item.disabled}
-              data-tooltip={item.disabled ? item.disabledReason : undefined}
-              onClick={() => { setOpen(false); item.onClick(); }}
-            >
-              <span class="titlebar-select-option-text">
-                <span class="titlebar-select-option-name">{item.label}</span>
-                {item.description && <span class="titlebar-select-option-desc">{item.description}</span>}
-              </span>
-              {item.meta && <span class="titlebar-select-option-meta">{item.meta}</span>}
-            </button>
-          ))}
+          {items.map((item, i) =>
+            isSeparator(item) ? (
+              // Group label for a scope; the divider above it only when it's not
+              // the first entry (so the top group has no leading rule).
+              <div key={i}>
+                {i > 0 && <div class="titlebar-select-divider" />}
+                {item.label && <div class="titlebar-select-group-label">{item.label}</div>}
+              </div>
+            ) : (
+              <button
+                key={i}
+                class={`titlebar-select-option${item.danger ? " titlebar-select-option--danger" : ""}`}
+                disabled={item.disabled}
+                data-tooltip={item.disabled ? item.disabledReason : undefined}
+                onClick={() => { setOpen(false); item.onClick(); }}
+              >
+                <span class="titlebar-select-option-text">
+                  <span class="titlebar-select-option-name">{item.label}</span>
+                  {item.description && <span class="titlebar-select-option-desc">{item.description}</span>}
+                </span>
+                {item.meta && <span class="titlebar-select-option-meta">{item.meta}</span>}
+              </button>
+            )
+          )}
         </div>
       )}
     </div>

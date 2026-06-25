@@ -9,6 +9,9 @@ import type { MediaItem } from "../types/project";
 export type SortMode = "added" | "name";
 export type SortDir = "asc" | "desc";
 
+export const SORT_MODES: SortMode[] = ["added", "name"];
+export const SORT_DIRS: SortDir[] = ["asc", "desc"];
+
 const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 interface Indexed { item: MediaItem; index: number; }

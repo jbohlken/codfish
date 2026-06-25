@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { SelectButton } from "../SelectButton";
-import { ActionMenuButton, type ActionMenuItem } from "../ActionMenuButton";
+import { ActionMenuButton, type ActionMenuEntry } from "../ActionMenuButton";
 import {
   project,
   isDirty,
@@ -18,8 +18,24 @@ import { openFormatManager } from "../FormatManager";
 import { hasUpdate, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
 import { listModels } from "../../lib/transcription";
 import { listFormats } from "../../lib/export";
-import { eligibleMediaIds, allTranscribableMediaIds, captionedMediaCount } from "../../lib/batch";
-import { generateSelectedMedia, generateMissingMedia, regenerateAllMedia, exportSelectedMedia, exportAllMedia } from "../../lib/actions";
+import {
+  eligibleMediaIds,
+  allTranscribableMediaIds,
+  captionedMediaCount,
+  selectionEligibleIds,
+  selectionTranscribableIds,
+  selectionCaptionedMedia,
+} from "../../lib/batch";
+import {
+  generateSelectedMedia,
+  generateMissingMedia,
+  regenerateAllMedia,
+  generateMissingInSelection,
+  regenerateSelection,
+  exportSelectedMedia,
+  exportAllMedia,
+  exportSelection,
+} from "../../lib/actions";
 
 const TRANSCRIPTION_MODELS: { id: TranscriptionModel; label: string; size: string }[] = [
   { id: "tiny",     label: "Tiny",     size: "39 MB" },
@@ -91,38 +107,67 @@ export function TitleBar() {
   const cacheLoaded = Object.keys(cached).length > 0;
 
   const media = selectedMedia.value;
-  // All three counts are computed-signal-backed: filter cost is paid once
-  // per project change, not on every render.
+  // All counts are computed-signal-backed: filter cost is paid once per change,
+  // not on every render.
   const missingCount = eligibleMediaIds.value.length;
   const captionedCount = captionedMediaCount.value;
   const transcribableCount = allTranscribableMediaIds.value.length;
   const selectedHasCaptions = (media?.captions.length ?? 0) > 0;
   const selectedHasAudio = media?.hasAudio ?? true;
 
+  // Selection scope (selected bins' subtrees + selected clips). The scope group
+  // only appears when there's something actionable in it — generatable for the
+  // Generate menu, captioned for the Export menu.
+  const selMissingCount = selectionEligibleIds.value.length;
+  const selTranscribableCount = selectionTranscribableIds.value.length;
+  const selCaptionedCount = selectionCaptionedMedia.value.length;
+
   // No batch-state gating here: when a batch is running the whole app-shell
   // is inert (App.tsx) and the BatchBlocker takes over, so these controls
   // are unreachable. Single source of truth.
-  const generateItems: ActionMenuItem[] = [
+  const generateItems: ActionMenuEntry[] = [
     {
-      label: selectedHasCaptions ? "Regenerate current file" : "Generate current file",
+      label: selectedHasCaptions ? "Regenerate current item" : "Generate current item",
+      // Red only when it would replace existing captions/edits (a regenerate),
+      // matching "Regenerate selection/everything"; a fresh generate isn't.
+      danger: selectedHasCaptions,
       disabled: !media || !selectedHasAudio,
       disabledReason: !media
         ? "Select a media item first"
-        : "Selected file has no audio track",
+        : "Selected item has no audio track",
       onClick: generateSelectedMedia,
     },
+    ...(selTranscribableCount > 0
+      ? ([
+          { separator: true },
+          {
+            label: "Generate missing in selection",
+            meta: `(${selMissingCount})`,
+            disabled: selMissingCount === 0,
+            disabledReason: "Every item in the selection already has captions",
+            onClick: generateMissingInSelection,
+          },
+          {
+            label: "Regenerate selection",
+            meta: `(${selTranscribableCount})`,
+            danger: true,
+            disabled: selCaptionedCount === 0,
+            disabledReason: "Nothing generated in the selection yet",
+            onClick: regenerateSelection,
+          },
+        ] as ActionMenuEntry[])
+      : []),
+    { separator: true },
     {
       label: "Generate missing",
       meta: `(${missingCount})`,
-      description: "Files without captions yet",
       disabled: missingCount === 0,
-      disabledReason: "All files already have captions",
+      disabledReason: "All items already have captions",
       onClick: generateMissingMedia,
     },
     {
       label: "Regenerate everything",
       meta: `(${transcribableCount})`,
-      description: "Replaces all captions and edits",
       danger: true,
       disabled: transcribableCount === 0 || captionedCount === 0,
       disabledReason: captionedCount === 0 ? "Nothing generated yet" : "No transcribable media",
@@ -130,13 +175,24 @@ export function TitleBar() {
     },
   ];
 
-  const exportItems: ActionMenuItem[] = [
+  const exportItems: ActionMenuEntry[] = [
     {
-      label: "Export current file",
+      label: "Export current item",
       disabled: !selectedHasCaptions,
-      disabledReason: !media ? "Select a media item first" : "Selected file has no captions",
+      disabledReason: !media ? "Select a media item first" : "Selected item has no captions",
       onClick: exportSelectedMedia,
     },
+    ...(selCaptionedCount > 0
+      ? ([
+          { separator: true },
+          {
+            label: "Export selection",
+            meta: `(${selCaptionedCount})`,
+            onClick: exportSelection,
+          },
+        ] as ActionMenuEntry[])
+      : []),
+    { separator: true },
     {
       label: "Export all",
       meta: `(${captionedCount})`,

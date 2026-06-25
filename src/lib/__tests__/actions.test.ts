@@ -290,18 +290,18 @@ describe("regenerateAllMedia", () => {
     expect(runBatchMock).toHaveBeenCalledWith(["a", "c"]);
   });
 
-  it("singular: 1 file → confirm message contains '1 media file' (no s)", async () => {
+  it("singular: 1 file → confirm message contains '1 item' (no s)", async () => {
     project.value = makeProject([makeMedia({ id: "only" })]);
     confirmMock.mockResolvedValue("cancel");
 
     await regenerateAllMedia();
 
     const [message] = confirmMock.mock.calls[0] as [string, any];
-    expect(message).toContain("1 media file");
-    expect(message).not.toContain("1 media files");
+    expect(message).toContain("1 item");
+    expect(message).not.toContain("1 items");
   });
 
-  it("plural: 2+ files → confirm message contains 'N media files'", async () => {
+  it("plural: 2+ files → confirm message contains 'N items'", async () => {
     project.value = makeProject([
       makeMedia({ id: "a" }),
       makeMedia({ id: "b" }),
@@ -312,7 +312,7 @@ describe("regenerateAllMedia", () => {
     await regenerateAllMedia();
 
     const [message] = confirmMock.mock.calls[0] as [string, any];
-    expect(message).toContain("3 media files");
+    expect(message).toContain("3 items");
   });
 });
 

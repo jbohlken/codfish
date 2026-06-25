@@ -6,15 +6,24 @@ import {
   selectedCaptionIndex,
   selectedMedia,
   selectedCaption,
+  playbackTime,
+  isPlaying,
+  scrubbing,
+  zoomLevel,
+  timelineScroll,
   resetHistory,
   pushHistory,
   undo,
   redo,
+  openClip,
+  deselectAll,
+  flushOpenClipView,
   canUndo,
   canRedo,
   undoDescription,
   redoDescription,
 } from "../app";
+import { loadClipViewForProject, getClipView, getActiveClip } from "../../lib/clipView";
 import type { CodProject } from "../../types/project";
 
 function makeProject(name: string, captionCount = 0): CodProject {
@@ -49,6 +58,12 @@ describe("undo / redo", () => {
     isDirty.value = false;
     selectedMediaId.value = null;
     selectedCaptionIndex.value = null;
+    playbackTime.value = 0;
+    isPlaying.value = false;
+    scrubbing.value = false;
+    zoomLevel.value = 1;
+    timelineScroll.value = 0;
+    loadClipViewForProject(null, new Set()); // reset per-clip view memory
   });
 
   describe("resetHistory", () => {
@@ -193,14 +208,66 @@ describe("undo / redo", () => {
   });
 
   describe("selection restoration", () => {
-    it("restores selectedMediaId on undo even after switching media", () => {
+    it("remembers a clip's caption across a round-trip switch", () => {
       resetHistory(makeProject("v0"));
-      selectedMediaId.value = "media-a";
+      openClip("media-a");
+      selectedCaptionIndex.value = 3;
+      openClip("media-b"); // remembers media-a @ caption 3
+      expect(selectedCaptionIndex.value).toBeNull(); // media-b has no memory yet
+      openClip("media-a"); // restores media-a's remembered caption
+      expect(selectedCaptionIndex.value).toBe(3);
+    });
+
+    it("remembers a clip's timeline zoom across a round-trip switch", () => {
+      resetHistory(makeProject("v0"));
+      openClip("media-a");
+      zoomLevel.value = 4;
+      openClip("media-b"); // saves media-a @ zoom 4; media-b has no memory → Fit
+      expect(zoomLevel.value).toBe(1);
+      openClip("media-a"); // restores media-a's remembered zoom
+      expect(zoomLevel.value).toBe(4);
+    });
+
+    it("remembers a clip's timeline scroll across a round-trip switch", () => {
+      resetHistory(makeProject("v0"));
+      openClip("media-a");
+      timelineScroll.value = 500;
+      openClip("media-b"); // saves media-a @ scroll 500; media-b has none → 0
+      expect(timelineScroll.value).toBe(0);
+      openClip("media-a"); // restores media-a's remembered scroll
+      expect(timelineScroll.value).toBe(500);
+    });
+
+    it("undo of a same-clip edit keeps the restored clip's remembered playhead (no cross-clip clobber)", () => {
+      resetHistory(makeProject("v0"));
+      // Clip A: caption 5, playhead 3. A same-clip edit is recorded at caption 5.
+      openClip("media-a");
+      selectedCaptionIndex.value = 5;
+      playbackTime.value = 3;
+      pushHistory(makeProject("v1"), "Edit caption", { selectedMediaId: "media-a", selectedCaptionIndex: 5 });
+      // Navigate A to a different caption so its remembered caption (9) differs
+      // from the recorded edit caption (5) — the trigger for the trailing-write
+      // clobber the fix removes.
+      selectedCaptionIndex.value = 9;
+      // Switch to B; it settles at a different playhead.
+      openClip("media-b");
+      playbackTime.value = 42;
+      // Undo the same-clip edit: A is restored at caption 5, and its remembered
+      // playhead must stay 3 — not be clobbered with B's 42.
+      undo();
+      expect(selectedMediaId.value).toBe("media-a");
+      expect(selectedCaptionIndex.value).toBe(5);
+      expect(getClipView("media-a")?.playbackTime).toBe(3);
+    });
+
+    it("undo after switching media returns to the prior clip at its remembered caption", () => {
+      resetHistory(makeProject("v0"));
+      openClip("media-a");
       selectedCaptionIndex.value = 2;
       pushHistory(makeProject("v1"), "Edit on media-a");
-      // User switches to a different media item without editing
-      selectedMediaId.value = "media-b";
-      selectedCaptionIndex.value = null;
+      // Switch to another clip — openClip remembers media-a's caption.
+      openClip("media-b");
+      // Undo crosses back to media-a, restoring its remembered view state.
       undo();
       expect(selectedMediaId.value).toBe("media-a");
       expect(selectedCaptionIndex.value).toBe(2);
@@ -245,6 +312,21 @@ describe("undo / redo", () => {
       // Redo → post-op selection (the neighbor)
       redo();
       expect(selectedCaptionIndex.value).toBe(2);
+    });
+
+    it("redo of an op that clears the active clip lands on null, not the current clip", () => {
+      // Delete-the-last-clip: postOp records a null active clip. pushHistory must
+      // record that null literally (ternary), not coalesce it (??) to the still-
+      // selected clip — else redo would wrongly reopen it.
+      resetHistory(makeProject("v0"));
+      openClip("media-a");
+      selectedCaptionIndex.value = 2;
+      pushHistory(makeProject("v1"), "Delete last clip", { selectedMediaId: null, selectedCaptionIndex: null });
+      undo();
+      expect(selectedMediaId.value).toBe("media-a"); // back to pre-op
+      redo();
+      expect(selectedMediaId.value).toBeNull(); // null survives — fails under `??`
+      expect(selectedCaptionIndex.value).toBeNull();
     });
   });
 
@@ -326,6 +408,7 @@ describe("derived signals", () => {
     isDirty.value = false;
     selectedMediaId.value = null;
     selectedCaptionIndex.value = null;
+    loadClipViewForProject(null, new Set()); // reset per-clip view memory
   });
 
   describe("selectedMedia", () => {
@@ -376,5 +459,69 @@ describe("derived signals", () => {
       selectedCaptionIndex.value = 99;
       expect(selectedCaption.value).toBeNull();
     });
+  });
+});
+
+describe("per-clip view persistence (settle effect, flush, active clip)", () => {
+  beforeEach(() => {
+    resetHistory();
+    project.value = null;
+    isDirty.value = false;
+    selectedMediaId.value = null;
+    selectedCaptionIndex.value = null;
+    playbackTime.value = 0;
+    isPlaying.value = false;
+    scrubbing.value = false;
+    zoomLevel.value = 1;
+    timelineScroll.value = 0;
+    localStorage.clear();
+    loadClipViewForProject("/p.cod", new Set(["media-a", "media-b"]));
+  });
+
+  it("persists a same-clip seek via the settle effect when paused", () => {
+    openClip("media-a"); // consumes the switch-skip tick
+    selectedCaptionIndex.value = 4;
+    playbackTime.value = 7;
+    expect(getClipView("media-a")).toMatchObject({ captionIndex: 4, playbackTime: 7 });
+  });
+
+  it("does NOT persist playhead changes during playback (gate)", () => {
+    openClip("media-a");
+    playbackTime.value = 5;
+    selectedCaptionIndex.value = 1; // settle baseline → playhead 5 saved
+    expect(getClipView("media-a")?.playbackTime).toBe(5);
+    isPlaying.value = true;
+    playbackTime.value = 99; // playback motion — gated, must not persist
+    expect(getClipView("media-a")?.playbackTime).toBe(5);
+  });
+
+  it("gates persistence mid-scrub and saves the landed position on release", () => {
+    openClip("media-a");
+    playbackTime.value = 2;
+    selectedCaptionIndex.value = 0; // settle baseline
+    scrubbing.value = true;
+    playbackTime.value = 50; // mid-drag — gated
+    expect(getClipView("media-a")?.playbackTime).toBe(2);
+    scrubbing.value = false; // released → landed → persists 50
+    expect(getClipView("media-a")?.playbackTime).toBe(50);
+  });
+
+  it("flushOpenClipView snapshots all four view fields under the open clip", () => {
+    openClip("media-a");
+    selectedCaptionIndex.value = 7;
+    playbackTime.value = 5;
+    zoomLevel.value = 3;
+    timelineScroll.value = 220;
+    flushOpenClipView();
+    expect(getClipView("media-a")).toEqual({ captionIndex: 7, playbackTime: 5, zoom: 3, timelineScroll: 220 });
+  });
+
+  it("records the active clip on open and clears it on deselect", () => {
+    openClip("media-a");
+    expect(getActiveClip("/p.cod")).toBe("media-a");
+    openClip("media-b");
+    expect(getActiveClip("/p.cod")).toBe("media-b");
+    deselectAll();
+    expect(getActiveClip("/p.cod")).toBeNull();
   });
 });

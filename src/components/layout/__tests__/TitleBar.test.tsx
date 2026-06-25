@@ -179,57 +179,57 @@ describe("TitleBar — no project", () => {
 });
 
 describe("TitleBar — Generate menu / current file", () => {
-  it("no media selected → 'Generate current file' disabled with 'Select a media item first'", () => {
+  it("no media selected → 'Generate current item' disabled with 'Select a media item first'", () => {
     project.value = makeProject([makeMedia("a")]);
     selectedMediaId.value = null;
     render(<TitleBar />);
     fireEvent.click(findActionButton("Generate"));
-    const opt = findOption("Generate current file");
+    const opt = findOption("Generate current item");
     expect(opt.disabled).toBe(true);
     expect(opt.getAttribute("data-tooltip")).toBe("Select a media item first");
   });
 
-  it("selected media without audio → disabled with 'Selected file has no audio track'", () => {
+  it("selected media without audio → disabled with 'Selected item has no audio track'", () => {
     const m = makeMedia("a", { hasAudio: false });
     project.value = makeProject([m]);
     selectedMediaId.value = "a";
     render(<TitleBar />);
     fireEvent.click(findActionButton("Generate"));
-    const opt = findOption("Generate current file");
+    const opt = findOption("Generate current item");
     expect(opt.disabled).toBe(true);
-    expect(opt.getAttribute("data-tooltip")).toBe("Selected file has no audio track");
+    expect(opt.getAttribute("data-tooltip")).toBe("Selected item has no audio track");
   });
 
-  it("selected media with audio, no captions → enabled; label 'Generate current file'", () => {
+  it("selected media with audio, no captions → enabled; label 'Generate current item'", () => {
     const m = makeMedia("a", { hasAudio: true, captions: [] });
     project.value = makeProject([m]);
     selectedMediaId.value = "a";
     render(<TitleBar />);
     fireEvent.click(findActionButton("Generate"));
-    const opt = findOption("Generate current file");
+    const opt = findOption("Generate current item");
     expect(opt.disabled).toBe(false);
   });
 
-  it("selected media with captions → enabled; label 'Regenerate current file'", () => {
+  it("selected media with captions → enabled; label 'Regenerate current item'", () => {
     const m = makeMedia("a", { hasAudio: true, captions: [makeCaption(0)] });
     project.value = makeProject([m]);
     selectedMediaId.value = "a";
     render(<TitleBar />);
     fireEvent.click(findActionButton("Generate"));
-    const opt = findOption("Regenerate current file");
+    const opt = findOption("Regenerate current item");
     expect(opt.disabled).toBe(false);
   });
 });
 
 describe("TitleBar — Generate menu / Generate missing", () => {
-  it("missingCount === 0 → disabled with 'All files already have captions'; meta '(0)'", () => {
+  it("missingCount === 0 → disabled with 'All items already have captions'; meta '(0)'", () => {
     const m = makeMedia("a", { hasAudio: true, captions: [makeCaption(0)] });
     project.value = makeProject([m]);
     render(<TitleBar />);
     fireEvent.click(findActionButton("Generate"));
     const opt = findOption("Generate missing");
     expect(opt.disabled).toBe(true);
-    expect(opt.getAttribute("data-tooltip")).toBe("All files already have captions");
+    expect(opt.getAttribute("data-tooltip")).toBe("All items already have captions");
     expect(getMeta(opt)).toBe("(0)");
   });
 
@@ -285,25 +285,25 @@ describe("TitleBar — Generate menu / Regenerate everything", () => {
   });
 });
 
-describe("TitleBar — Export menu / Export current file", () => {
+describe("TitleBar — Export menu / Export current item", () => {
   it("no selection → disabled with 'Select a media item first'", () => {
     project.value = makeProject([makeMedia("a")]);
     selectedMediaId.value = null;
     render(<TitleBar />);
     fireEvent.click(findActionButton("Export"));
-    const opt = findOption("Export current file");
+    const opt = findOption("Export current item");
     expect(opt.disabled).toBe(true);
     expect(opt.getAttribute("data-tooltip")).toBe("Select a media item first");
   });
 
-  it("selected without captions → disabled with 'Selected file has no captions'", () => {
+  it("selected without captions → disabled with 'Selected item has no captions'", () => {
     project.value = makeProject([makeMedia("a")]);
     selectedMediaId.value = "a";
     render(<TitleBar />);
     fireEvent.click(findActionButton("Export"));
-    const opt = findOption("Export current file");
+    const opt = findOption("Export current item");
     expect(opt.disabled).toBe(true);
-    expect(opt.getAttribute("data-tooltip")).toBe("Selected file has no captions");
+    expect(opt.getAttribute("data-tooltip")).toBe("Selected item has no captions");
   });
 
   it("selected with captions → enabled", () => {
@@ -313,7 +313,7 @@ describe("TitleBar — Export menu / Export current file", () => {
     selectedMediaId.value = "a";
     render(<TitleBar />);
     fireEvent.click(findActionButton("Export"));
-    const opt = findOption("Export current file");
+    const opt = findOption("Export current item");
     expect(opt.disabled).toBe(false);
   });
 });
@@ -364,14 +364,14 @@ describe("TitleBar — reactivity", () => {
 });
 
 describe("TitleBar — click handlers", () => {
-  it("clicking enabled 'Generate current file' calls generateSelectedMedia once", () => {
+  it("clicking enabled 'Generate current item' calls generateSelectedMedia once", () => {
     project.value = makeProject([
       makeMedia("a", { hasAudio: true }),
     ]);
     selectedMediaId.value = "a";
     render(<TitleBar />);
     fireEvent.click(findActionButton("Generate"));
-    fireEvent.click(findOption("Generate current file"));
+    fireEvent.click(findOption("Generate current item"));
     expect(generateSelectedMediaMock).toHaveBeenCalledTimes(1);
   });
 
@@ -393,14 +393,14 @@ describe("TitleBar — click handlers", () => {
     expect(regenerateAllMediaMock).toHaveBeenCalledTimes(1);
   });
 
-  it("clicking enabled 'Export current file' calls exportSelectedMedia once", () => {
+  it("clicking enabled 'Export current item' calls exportSelectedMedia once", () => {
     project.value = makeProject([
       makeMedia("a", { captions: [makeCaption(0)] }),
     ]);
     selectedMediaId.value = "a";
     render(<TitleBar />);
     fireEvent.click(findActionButton("Export"));
-    fireEvent.click(findOption("Export current file"));
+    fireEvent.click(findOption("Export current item"));
     expect(exportSelectedMediaMock).toHaveBeenCalledTimes(1);
   });
 

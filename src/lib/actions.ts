@@ -4,8 +4,16 @@ import {
   exportFormats,
   selectedExportFormat,
 } from "../store/app";
-import { runBatchGeneration, eligibleMediaIds, allTranscribableMediaIds, captionedMedia } from "./batch";
-import { exportCaptions, exportCaptionsBulk, type BulkExportItem } from "./export";
+import {
+  runBatchGeneration,
+  eligibleMediaIds,
+  allTranscribableMediaIds,
+  captionedMedia,
+  selectionEligibleIds,
+  selectionTranscribableIds,
+  selectionCaptionedMedia,
+} from "./batch";
+import { exportCaptions, exportCaptionsBulk, type BulkExportItem, type BulkExportResult } from "./export";
 import { showError } from "../components/ErrorModal";
 import { showNotice } from "../components/NoticeModal";
 import { confirmUnsavedChanges } from "../components/UnsavedChanges";
@@ -44,7 +52,7 @@ export async function regenerateAllMedia(): Promise<void> {
   if (ids.length === 0) return;
 
   const choice = await confirmUnsavedChanges(
-    `This will regenerate captions for all ${ids.length} media file${ids.length === 1 ? "" : "s"}, replacing any existing captions and manual edits.`,
+    `This will regenerate captions for all ${ids.length} item${ids.length === 1 ? "" : "s"}, replacing any existing captions and manual edits.`,
     { title: "Regenerate everything?", hideDiscard: true, confirmLabel: "Regenerate everything" },
   );
   if (choice !== "save") return;
@@ -52,7 +60,44 @@ export async function regenerateAllMedia(): Promise<void> {
   await runBatchGeneration(ids);
 }
 
+/** Generate captions for the un-captioned media in the current selection scope
+ * (selected bins' subtrees + selected clips). Non-destructive. */
+export async function generateMissingInSelection(): Promise<void> {
+  const ids = selectionEligibleIds.value;
+  if (ids.length === 0) return;
+  await runBatchGeneration(ids);
+}
+
+/** Regenerate every transcribable media in the current selection scope,
+ * replacing existing captions and edits. Destructive — confirms first. */
+export async function regenerateSelection(): Promise<void> {
+  const ids = selectionTranscribableIds.value;
+  if (ids.length === 0) return;
+
+  const choice = await confirmUnsavedChanges(
+    `This will regenerate captions for ${ids.length} selected item${ids.length === 1 ? "" : "s"}, replacing any existing captions and manual edits.`,
+    { title: "Regenerate selection?", hideDiscard: true, confirmLabel: "Regenerate selection" },
+  );
+  if (choice !== "save") return;
+
+  await runBatchGeneration(ids);
+}
+
 // ── Export ─────────────────────────────────────────────────────────────────
+
+/** Surface the outcome of a bulk export run. */
+function reportBulkExport(result: BulkExportResult | null, attempted: number): void {
+  if (!result) return; // cancelled folder picker
+  if (result.failed.length > 0) {
+    const lines = result.failed.map((f) => `• ${f.name}: ${f.error}`);
+    showError(`Exported ${result.written.length} of ${attempted} file(s).\n\nFailed:\n${lines.join("\n")}`);
+  } else {
+    showNotice(
+      "Export complete",
+      `Exported ${result.written.length} caption file${result.written.length === 1 ? "" : "s"} to:\n${result.folder}`,
+    );
+  }
+}
 
 function resolveFormat() {
   return exportFormats.value.find((f) => f.id === selectedExportFormat.value) ?? null;
@@ -99,20 +144,33 @@ export async function exportAllMedia(): Promise<void> {
   }));
 
   try {
-    const result = await exportCaptionsBulk(format, items);
-    if (!result) return; // cancelled folder picker
+    reportBulkExport(await exportCaptionsBulk(format, items), items.length);
+  } catch (e) {
+    showError(String(e));
+  }
+}
 
-    if (result.failed.length > 0) {
-      const lines = result.failed.map((f) => `• ${f.name}: ${f.error}`);
-      showError(
-        `Exported ${result.written.length} of ${items.length} file(s).\n\nFailed:\n${lines.join("\n")}`,
-      );
-    } else {
-      showNotice(
-        "Export complete",
-        `Exported ${result.written.length} caption file${result.written.length === 1 ? "" : "s"} to:\n${result.folder}`,
-      );
-    }
+/** Export the captioned media in the current selection scope (selected bins'
+ * subtrees + selected clips) into a single chosen folder. */
+export async function exportSelection(): Promise<void> {
+  const captioned = selectionCaptionedMedia.value;
+  if (captioned.length === 0) return;
+
+  const format = resolveFormat();
+  if (!format) {
+    showError("No export format selected.");
+    return;
+  }
+
+  const items: BulkExportItem[] = captioned.map((m) => ({
+    name: m.name,
+    captions: m.captions,
+    fps: mediaFps(m.fps),
+    dropFrame: m.dropFrame ?? false,
+  }));
+
+  try {
+    reportBulkExport(await exportCaptionsBulk(format, items), items.length);
   } catch (e) {
     showError(String(e));
   }

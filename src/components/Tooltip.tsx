@@ -78,13 +78,22 @@ export function hideTooltip() {
 export function Tooltip() {
   useEffect(() => {
     const onOver = (e: MouseEvent) => {
+      // Don't pop tooltips mid-drag — the pointer is captured, so no mouseout
+      // fires to dismiss one, and it strands over the dragged row.
+      if (document.body.classList.contains("rows-dragging")) return;
+      // Cancel any pending show first: otherwise an earlier timer can fire after
+      // the pointer has moved on and pop a tooltip away from the cursor (e.g. a
+      // small toggle whose tooltip "reappears" over the panel).
+      if (pendingDelay !== null) { clearTimeout(pendingDelay); pendingDelay = null; }
       const el = (e.target as HTMLElement).closest("[data-tooltip]") as HTMLElement | null;
       if (!el) return;
       const text = el.getAttribute("data-tooltip") ?? "";
       if (!text) return;
       pendingDelay = setTimeout(() => {
-        // Element may have been removed during the hover delay.
-        if (!el.isConnected) return;
+        pendingDelay = null;
+        // Only show if the element is still in the DOM AND still under the
+        // pointer — the pointer may have left during the hover delay.
+        if (!el.isConnected || !el.matches(":hover")) return;
         const rect = el.getBoundingClientRect();
         anchorEl = el;
         tooltipState.value = {

@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { project, projectPath, isDirty, selectedMediaId, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory } from "../../store/app";
+import { project, projectPath, isDirty, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, playbackTime, isPlaying, mediaDuration, pushHistory, resetHistory, openClip, flushOpenClipView } from "../../store/app";
 import { showError } from "../../components/ErrorModal";
+import { showNotice } from "../../components/NoticeModal";
 import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
 import { addRecent, loadRecent } from "../recent";
@@ -9,8 +10,10 @@ import { hashContent } from "../hash";
 import { selectedExportFormat, exportFormats, selectedProfile, profiles } from "../../store/app";
 import { loadFormatSource, listFormats } from "../export";
 import { loadProfiles, loadProfileSource } from "../profiles";
-import type { CodProject, MediaItem } from "../../types/project";
+import type { CodProject, MediaItem, Bin } from "../../types/project";
 import { isDropFrameRate } from "../time";
+import { makeBin, rememberCollapseState, expandBin, copyBinCollapseProject } from "../bins";
+import { copyClipViewProject, loadClipViewForProject, getActiveClip } from "../clipView";
 import { cancelActiveEdit } from "../../components/layout/CaptionPanel";
 import { resetTimelineView } from "../../components/layout/Timeline";
 
@@ -57,6 +60,9 @@ export function closeProjectGuarded(): Promise<boolean> {
 
 /** Clear the current project from the store. Does not touch disk. */
 function closeProject(): void {
+  // Persist the open clip's view state into THIS project's store before the
+  // project key changes (the new project's load swaps the active clip-view map).
+  flushOpenClipView();
   cancelActiveEdit();
   resetTimelineView();
   resetHistory();
@@ -200,6 +206,7 @@ export async function saveCurrentProject(): Promise<boolean> {
   // No path yet — shouldn't happen with new/open flow, but fall back to Save As
   if (!path) return saveCurrentProjectAs();
 
+  flushOpenClipView(); // persist the open clip's spot so a later quit keeps it
   await writeToDisk(path, proj);
   isDirty.value = false;
   await clearRecovery();
@@ -217,18 +224,153 @@ export async function saveCurrentProjectAs(): Promise<boolean> {
   });
   if (!savePath) return false;
 
+  // The view-state stores (per-clip view, bin collapse) are keyed by project —
+  // path, falling back to createdAt. Capture the old key and flush the open
+  // clip's latest spot before the path changes, then COPY both stores to the new
+  // key so the new file has them while the original (still on disk) keeps its own.
+  const oldKey = projectPath.value ?? proj.createdAt;
+  flushOpenClipView();
+
   const name = pathToBasename(savePath);
   const updated: CodProject = { ...proj, name };
   await writeToDisk(savePath, updated);
   project.value = updated;
   projectPath.value = savePath;
   isDirty.value = false;
+  copyClipViewProject(oldKey, savePath);
+  copyBinCollapseProject(oldKey, savePath);
   await clearRecovery();
   // Save As switches the working file to the new path, so treat it like
   // any other load for recents purposes — otherwise the new file wouldn't
   // show up in File ▸ Open Recent until the user closes and reopens it.
   void addRecent(savePath);
   return true;
+}
+
+function isMediaPath(p: string): boolean {
+  const ext = p.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
+  return MEDIA_EXTS.includes(ext);
+}
+
+/** Probe each path and build MediaItem objects (no history mutation). `binId`
+ *  assigns the items to a bin. */
+async function buildMediaItems(paths: string[], binId?: string): Promise<MediaItem[]> {
+  return Promise.all(
+    paths.map(async (p) => {
+      const item = makeMediaItem(p);
+      if (binId) item.binId = binId;
+      const probe = await probeFps(p);
+      item.fps = probe.fps;
+      if (probe.vfr) item.vfr = true;
+      if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
+      if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
+      return item;
+    })
+  );
+}
+
+function basenameOf(p: string): string {
+  return p.replace(/\\/g, "/").split("/").pop() || p;
+}
+
+/** Tell the user which dropped items couldn't be imported (unsupported files,
+ *  at any depth), listing them. No-op when none. */
+function notifySkipped(names: string[]): void {
+  if (names.length === 0) return;
+  const MAX = 12;
+  const shown = names.slice(0, MAX);
+  const more = names.length - shown.length;
+  const list = shown.map((n) => `•  ${n}`).join("\n") + (more > 0 ? `\n•  …and ${more} more` : "");
+  showNotice(
+    names.length === 1 ? "1 item wasn’t imported" : `${names.length} items weren’t imported`,
+    `Only video and audio files (${MEDIA_EXTS.join(", ")}) can be imported. The following items were skipped:\n\n${list}`,
+  );
+}
+
+/** Probe + append the given file paths as media (one undo step), optionally
+ *  into a bin, and select the first. Non-media paths are skipped and reported.
+ *  Shared by the Import dialog (whose picker is restricted to media, so nothing
+ *  is skipped) and by flat file-drops. */
+export async function importMediaPaths(paths: string[], binId?: string): Promise<void> {
+  if (!project.value) return;
+  const mediaPaths = paths.filter(isMediaPath);
+  if (mediaPaths.length > 0) {
+    const newItems = await buildMediaItems(mediaPaths, binId);
+    // Re-read state AFTER the async probe — the user can edit, undo, or import
+    // again while files probe (seconds for many/large files). Rebasing onto a
+    // snapshot captured before the await would silently discard that work and
+    // truncate the redo branch.
+    const cur = project.value;
+    if (!cur) return;
+    const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} items`;
+    // Record the imported clip as the post-op selection so redo lands on it,
+    // not the clip that was active before the import.
+    pushHistory({ ...cur, media: [...cur.media, ...newItems] }, label, {
+      selectedMediaId: newItems[0].id,
+      selectedCaptionIndex: null,
+    });
+    openClip(newItems[0].id);
+  }
+  notifySkipped(paths.filter((p) => !isMediaPath(p)).map(basenameOf));
+}
+
+interface DroppedMedia {
+  files: string[];
+  folders: { name: string; media: string[] }[];
+  skipped: string[];
+}
+
+/** Import an OS file-drop: loose media files go to the drop target, and each
+ *  dropped folder becomes a bin (named after it) under the target, holding the
+ *  media found inside it (recursed, flattened). The whole drop is one undo step;
+ *  anything not importable is reported. `targetBinId` is the bin dropped onto,
+ *  or undefined for the top level. */
+export async function importDrop(paths: string[], targetBinId?: string): Promise<void> {
+  const proj = project.value;
+  if (!proj) return;
+
+  let result: DroppedMedia;
+  try {
+    result = await invoke<DroppedMedia>("collect_dropped_media", { paths, exts: MEDIA_EXTS });
+  } catch {
+    // Backend unavailable (shouldn't happen in the webview) — flat import.
+    return importMediaPaths(paths, targetBinId);
+  }
+
+  const newBins: Bin[] = [];
+  const newItems: MediaItem[] = [];
+  newItems.push(...(await buildMediaItems(result.files, targetBinId)));
+  for (const folder of result.folders) {
+    const bin = makeBin(proj.bins ?? [], folder.name, targetBinId);
+    newBins.push(bin);
+    newItems.push(...(await buildMediaItems(folder.media, bin.id)));
+  }
+
+  if (newItems.length > 0) {
+    // Re-read after the async probe/collect so the append rebases onto the
+    // user's current state, not the pre-await snapshot (which would discard
+    // intervening edits and wipe the redo branch). New bins carry uuid ids, so
+    // appending them to the current bins can't collide.
+    const cur = project.value;
+    if (cur) {
+      const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} items`;
+      pushHistory(
+        {
+          ...cur,
+          bins: newBins.length ? [...(cur.bins ?? []), ...newBins] : cur.bins,
+          media: [...cur.media, ...newItems],
+        },
+        label,
+        { selectedMediaId: newItems[0].id, selectedCaptionIndex: null }, // redo lands on the import
+      );
+      openClip(newItems[0].id);
+      if (newBins.length) rememberCollapseState(); // new bins are open — remember it
+      // Reveal the import in a collapsed target bin (clips + any new sub-bins);
+      // expandBin persists so it stays open across sessions.
+      if (targetBinId) expandBin(targetBinId);
+    }
+  }
+  notifySkipped(result.skipped);
 }
 
 export async function importMedia(): Promise<void> {
@@ -242,28 +384,7 @@ export async function importMedia(): Promise<void> {
   });
   if (!result) return;
 
-  const paths = Array.isArray(result) ? result : [result];
-  if (paths.length === 0) return;
-
-  const newItems = await Promise.all(
-    paths.map(async (p) => {
-      const item = makeMediaItem(p);
-      const probe = await probeFps(p);
-      item.fps = probe.fps;
-      if (probe.vfr) item.vfr = true;
-      if (probe.hasAudio !== undefined) item.hasAudio = probe.hasAudio;
-      if (probe.fps != null && isDropFrameRate(probe.fps)) item.dropFrame = true;
-      return item;
-    })
-  );
-  const label = newItems.length === 1 ? `Import "${newItems[0].name}"` : `Import ${newItems.length} files`;
-  pushHistory({
-    ...proj,
-    media: [...proj.media, ...newItems],
-  }, label);
-
-  // Auto-select the first imported item
-  selectedMediaId.value = newItems[0].id;
+  await importMediaPaths(Array.isArray(result) ? result : [result]);
 }
 
 export async function relinkMediaItem(mediaId: string): Promise<void> {
@@ -401,6 +522,9 @@ async function writeToDisk(filePath: string, proj: CodProject): Promise<void> {
     delete toSave.profileName;
     delete toSave.profileHash;
   }
+  // Don't persist an empty bins array into a project that never had bins —
+  // keep its shape identical to a pre-bins .cod (bins is optional + additive).
+  if (toSave.bins && toSave.bins.length === 0) delete toSave.bins;
   await invoke<void>("save_project", { path: filePath, json: JSON.stringify(toSave, null, 2) });
 }
 
@@ -457,15 +581,35 @@ export async function checkProfileCompatibility(proj: CodProject): Promise<void>
   }
 }
 
+/** Reset selection + playback to a clean slate for a freshly loaded project.
+ *  Clears the multi-selection sets explicitly: the coherence effect only fires
+ *  when selectedMediaId *changes*, so a prior bins-only selection (active
+ *  already null) would otherwise leave stale ids across the load. Shared by the
+ *  normal load path and the crash-recovery restore so both reset identically. */
+export function resetSelectionForLoad(): void {
+  selectedMediaId.value = null;
+  selectedMediaIds.value = new Set();
+  selectedBinIds.value = new Set();
+  selectedCaptionIndex.value = null;
+  playbackTime.value = 0;
+  isPlaying.value = false;
+}
+
 function loadIntoStore(proj: CodProject, filePath: string): void {
   resetHistory(proj);
   project.value = proj;
   projectPath.value = filePath;
   isDirty.value = false;
-  selectedMediaId.value = null;
-  selectedCaptionIndex.value = null;
-  playbackTime.value = 0;
-  isPlaying.value = false;
+  resetSelectionForLoad();
+  // Resume the clip that was active when this project was last open, restored at
+  // its remembered view state — load the project's per-clip view store first so
+  // openClip can restore from it. Skip if that clip no longer exists (open
+  // nothing, as before). Import auto-opens the added clip; this gives load the
+  // matching "open the most relevant clip" behaviour instead of a blank editor.
+  const liveIds = new Set(proj.media.map((m) => m.id));
+  loadClipViewForProject(filePath, liveIds);
+  const resumeId = getActiveClip(filePath);
+  if (resumeId !== null && liveIds.has(resumeId)) openClip(resumeId);
   // Fire-and-forget: every code path that loads a project (open, new, file
   // association, open-recent, recovery restore) flows through here, so this
   // is the single place to update the recent list.

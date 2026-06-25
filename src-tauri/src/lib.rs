@@ -655,6 +655,111 @@ fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).is_file()
 }
 
+#[derive(serde::Serialize)]
+struct DroppedFolder {
+    name: String,
+    media: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct DroppedMedia {
+    /// Loose media files that were dropped directly.
+    files: Vec<String>,
+    /// Dropped folders that contain media (recursed, flattened per folder).
+    folders: Vec<DroppedFolder>,
+    /// Basenames of dropped items that can't be imported — unsupported files at
+    /// any depth, including inside dropped folders — so the UI can list them.
+    skipped: Vec<String>,
+}
+
+fn has_media_ext(path: &std::path::Path, exts: &[String]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| exts.iter().any(|x| x.eq_ignore_ascii_case(e)))
+        .unwrap_or(false)
+}
+
+// Lossy so a non-UTF8 name still yields something reportable.
+fn basename(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Walk `dir`, collecting importable media files into `media`. Recurses real
+/// subdirectories only — entry file types (not `is_dir`, which follows links)
+/// are checked so a symlink can't loop. Files found INSIDE a dropped folder
+/// that aren't importable media — sidecars (.srt), thumbnails, OS cruft
+/// (Thumbs.db, .DS_Store), and symlinks — are incidental and intentionally NOT
+/// reported: only the paths the user explicitly dropped are surfaced (see
+/// collect_dropped_media), so a normal folder drop stays quiet.
+/// Hard cap on recursion depth. Bounds stack usage on a pathologically deep tree
+/// (the command runs on a worker thread with a finite stack, where an overflow
+/// is an uncatchable abort). Far deeper than any real media library, and on
+/// Windows MAX_PATH already caps real nesting well below this.
+const MAX_DROP_DEPTH: u32 = 64;
+
+fn collect_recursive(dir: &std::path::Path, exts: &[String], media: &mut Vec<String>, depth: u32) {
+    if depth >= MAX_DROP_DEPTH {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        let path = entry.path();
+        if ft.is_dir() {
+            collect_recursive(&path, exts, media, depth + 1);
+        } else if ft.is_file() && has_media_ext(&path, exts) {
+            if let Some(s) = path.to_str() {
+                media.push(s.to_string());
+            }
+        }
+    }
+}
+
+/// Classify dropped paths for import: loose media files, a flattened media list
+/// per dropped folder (recursed), and the basenames of the explicitly-dropped
+/// paths that couldn't be imported (a loose non-media file, or a folder holding
+/// no media) so the UI can turn folders into bins and report what it left out.
+/// Incidental non-media found by recursing INTO a folder is not reported (see
+/// collect_recursive), so dropping a normal media folder is quiet.
+#[tauri::command]
+fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia {
+    let mut files: Vec<String> = Vec::new();
+    let mut folders: Vec<DroppedFolder> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for p in paths {
+        let path = std::path::Path::new(&p);
+        if path.is_dir() {
+            let mut media: Vec<String> = Vec::new();
+            collect_recursive(path, &exts, &mut media, 0);
+            media.sort();
+            if !media.is_empty() {
+                let name = basename(path);
+                folders.push(DroppedFolder {
+                    name: if name.is_empty() { "Folder".to_string() } else { name },
+                    media,
+                });
+            } else {
+                // A dropped folder that yielded no importable media — surface
+                // the folder itself so the drop isn't a silent no-op.
+                let b = basename(path);
+                skipped.push(if b.is_empty() { p } else { b });
+            }
+        } else if path.is_file() {
+            if has_media_ext(path, &exts) {
+                files.push(p);
+            } else {
+                let b = basename(path);
+                skipped.push(if b.is_empty() { p } else { b });
+            }
+        }
+    }
+    files.sort();
+    skipped.sort();
+    DroppedMedia { files, folders, skipped }
+}
+
 /// Modification time in unix seconds. Used by the peaks cache to invalidate
 /// entries when a file is edited or replaced (rename alone changes the path
 /// key, but an in-place edit keeps the path and needs the mtime to differ).
@@ -1497,6 +1602,7 @@ pub fn run() {
             save_project,
             load_project,
             file_exists,
+            collect_dropped_media,
             file_mtime,
             compute_relative_path,
             resolve_relative_path,

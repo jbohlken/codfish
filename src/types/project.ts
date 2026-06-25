@@ -54,10 +54,38 @@ export interface MediaItem {
   /// and captions are using segment-level timing. Surfaced as a warning
   /// badge so users know to consider regenerating.
   alignmentDegraded?: boolean;
+  /// Id of the bin this media belongs to (see CodProject.bins). Absent — or
+  /// referencing a bin that no longer exists — means ungrouped. Optional and
+  /// additive: projects created before bins existed have no binId and render
+  /// ungrouped, exactly as before.
+  binId?: string;
   exports: ExportRecord[];
 }
 
 export type TranscriptionModel = "tiny" | "base" | "small" | "medium" | "large-v3";
+
+/// A user-created folder/bin for organizing media within a project. Bins form
+/// an arbitrary-depth tree (Windows Explorer style): `parentId` points at the
+/// containing bin, or is absent for a top-level bin. Display order within a
+/// level is derived from the active sort (sub-bins first, then media), not the
+/// array order. Collapsed state is intentionally NOT stored here — it's
+/// per-user view state kept in localStorage, so toggling a bin open/closed
+/// never enters the undo history. Optional + additive on CodProject: older
+/// files have no `bins` and render everything ungrouped.
+export interface Bin {
+  id: string;
+  name: string;
+  /// Id of the containing bin. Absent — or referencing a bin that no longer
+  /// exists, or forming a cycle — means top-level (the forest builder is
+  /// defensive about both so a malformed tree never hides bins).
+  parentId?: string;
+  /// ISO timestamp of when the bin was created. Drives the "Date added" sort
+  /// for bins. Always set by the app (makeBin); only a hand-edited .cod could
+  /// omit it, in which case — mirroring media's added-sort — an un-stamped bin
+  /// is treated as predating any stamped one, and bins with equal/again-absent
+  /// stamps keep their array (insertion) order via the stable index tiebreak.
+  createdAt?: string;
+}
 
 export interface CodProject {
   version: number;
@@ -67,6 +95,9 @@ export interface CodProject {
   createdAt: string;
   updatedAt: string;
   media: MediaItem[];
+  /// User-created bins for organizing media. Optional + additive — absent in
+  /// projects created before bins existed (everything renders ungrouped).
+  bins?: Bin[];
   exportFormatName?: string;
   exportFormatHash?: string;
   profileName?: string;
