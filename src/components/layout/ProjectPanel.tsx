@@ -511,7 +511,17 @@ export function ProjectPanel() {
   const panelBodyClass = useComputed(
     () => `panel-body scrollable${dropTarget.value === ROOT_DROP ? " panel-body--drop-root" : ""}`,
   );
-  const newBinTooltip = useComputed(() => (selectedBinIds.value.size === 1 ? "New sub-bin" : "New bin"));
+  // "New sub-bin" when the new bin would nest: under a single selected bin, or
+  // under a single selected clip's parent bin (see the button's onClick).
+  const newBinTooltip = useComputed(() => {
+    if (selectedBinIds.value.size === 1) return "New sub-bin";
+    const clips = selectedMediaIds.value;
+    if (clips.size === 1) {
+      const clip = project.value?.media.find((m) => clips.has(m.id));
+      if (clip?.binId) return "New sub-bin";
+    }
+    return "New bin";
+  });
   // Sub-bins at each level follow the same sort as media; media keep the
   // already-sorted order they arrive in. Bins first, then ungrouped media.
   const forest = buildBinForest(visibleMedia, bins, (level) => sortBins(level, sMode, sDir));
@@ -636,10 +646,10 @@ export function ProjectPanel() {
   };
   const selectRow = (item: MediaItem, e: MouseEvent) => selectRowId(item.id, "media", e);
 
-  // Phrase a clip+bin count, e.g. "2 clips", "1 bin", "2 clips and 1 bin".
+  // Phrase a media+bin count, e.g. "2 items", "1 bin", "2 items and 1 bin".
   const countLabel = (clips: number, bins_: number): string => {
     const parts: string[] = [];
-    if (clips) parts.push(`${clips} clip${clips === 1 ? "" : "s"}`);
+    if (clips) parts.push(`${clips} item${clips === 1 ? "" : "s"}`);
     if (bins_) parts.push(`${bins_} bin${bins_ === 1 ? "" : "s"}`);
     return parts.join(" and ") || "0 items";
   };
@@ -675,9 +685,15 @@ export function ProjectPanel() {
     entries.push({
       label: "New bin…",
       icon: <FolderPlus size={12} />,
+      // Create the new bin in the selection's shared parent (so "Move to →
+      // New bin" from a clip in bin A lands the bin inside A, beside the clip,
+      // not at the root). Mixed parents / root selection → a top-level bin.
       onClick: () => {
-        const id = createBinWithItems(mediaIds, binIds);
-        if (id) editingBinId.value = id;
+        const id = createBinWithItems(mediaIds, binIds, commonParent);
+        if (id) {
+          if (commonParent) expandBin(commonParent);
+          editingBinId.value = id;
+        }
       },
     });
     return entries;
@@ -766,7 +782,7 @@ export function ProjectPanel() {
     if (mediaIds.length === 1 && binIds.length === 0) {
       const id = mediaIds[0];
       return [
-        { label: "Settings…", onClick: () => { mediaSettingsId.value = id; } },
+        { label: "Properties…", onClick: () => { mediaSettingsId.value = id; } },
         { label: "Re-link file…", onClick: () => relinkMediaItem(id) },
         { separator: true },
         { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
@@ -1074,8 +1090,16 @@ export function ProjectPanel() {
                 data-tooltip={newBinTooltip}
                 onClick={() => {
                   closeSearch();
-                  const sel = [...selectedBinIds.peek()];
-                  const parentId = sel.length === 1 ? sel[0] : undefined;
+                  // Nest under a single selected bin; failing that, under a
+                  // single selected clip's parent bin (so "new bin" from a clip
+                  // lands beside it, not at the root); otherwise a top-level bin.
+                  const selBins = [...selectedBinIds.peek()];
+                  const selClips = [...selectedMediaIds.peek()];
+                  const parentId = selBins.length === 1
+                    ? selBins[0]
+                    : selClips.length === 1
+                      ? project.peek()?.media.find((m) => m.id === selClips[0])?.binId
+                      : undefined;
                   const id = createBin(undefined, parentId);
                   if (id) {
                     if (parentId) expandBin(parentId);
