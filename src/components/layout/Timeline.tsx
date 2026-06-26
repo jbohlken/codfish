@@ -138,6 +138,7 @@ export function Timeline() {
     painterRef.current = painter;
     painter.setLayoutDuration(duration);
     painter.setStyle(waveStyle);
+    painter.setColor(getComputedStyle(canvas).getPropertyValue("--tl-waveform").trim() || "#374151");
 
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});

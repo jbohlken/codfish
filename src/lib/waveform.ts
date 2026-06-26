@@ -27,8 +27,8 @@ export type WaveformStyle = "bars" | "continuous";
 const BAR_WIDTH = 2;
 const BAR_GAP = 1;
 const BAR_RADIUS = 2;
-// Fill for the waveform.
-const WAVE_COLOR = "#374151";
+// Fallback fill if the --tl-waveform CSS variable can't be read.
+const DEFAULT_WAVE_COLOR = "#374151";
 
 export interface WaveformPainter {
   /** Peak envelope from the pipeline. audioDuration is the seconds the peaks
@@ -40,6 +40,8 @@ export interface WaveformPainter {
   setLayoutDuration(seconds: number): void;
   /** Switch between the bars and continuous-envelope renderings. */
   setStyle(style: WaveformStyle): void;
+  /** Set the fill color (sourced from the --tl-waveform CSS variable). */
+  setColor(color: string): void;
   schedulePaint(): void;
   destroy(): void;
 }
@@ -60,6 +62,7 @@ export function createWaveformPainter(opts: {
   let peakMax = 0;
   let raf = 0;
   let style: WaveformStyle = "continuous";
+  let color = DEFAULT_WAVE_COLOR;
   // Reused across paints (this runs on the per-scroll-frame hot path) to avoid
   // per-frame allocation: the envelope's content-x and half-amplitude per column.
   const pxBuf: number[] = [];
@@ -94,7 +97,7 @@ export function createWaveformPainter(opts: {
     const binsPerSec = peaks.length / audioDuration;
     const halfHeight = h / 2;
     const ampScale = halfHeight / peakMax;
-    ctx.fillStyle = WAVE_COLOR;
+    ctx.fillStyle = color;
 
     if (style === "bars") {
       // One rounded bar per grid column, max-reduced over the bins in it. The
@@ -193,6 +196,11 @@ export function createWaveformPainter(opts: {
     setStyle(s) {
       if (s === style) return;
       style = s;
+      schedulePaint();
+    },
+    setColor(c) {
+      if (!c || c === color) return;
+      color = c;
       schedulePaint();
     },
     schedulePaint,

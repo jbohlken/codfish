@@ -1591,10 +1591,14 @@ body.rows-dragging * {
 .timeline-block--selected {
   background: var(--tl-caption-block-selected);
   border-color: rgba(255,255,255,0.3);
+  /* Lift above neighbouring blocks so the selection (and playing) outline isn't
+     painted over by the next block — they're absolutely positioned siblings. */
+  z-index: 1;
 }
 
 .timeline-block--playing {
   box-shadow: 0 0 0 1px var(--color-playing-border), 0 0 8px 3px color-mix(in srgb, var(--color-playing-border) 40%, transparent);
+  z-index: 2;
 }
 
 .timeline-block-label {
