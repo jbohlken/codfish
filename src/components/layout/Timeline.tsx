@@ -11,6 +11,7 @@ import {
   playbackTime,
   isPlaying,
   scrubbing,
+  revealCaptionTick,
   zoomLevel,
   timelineScroll,
   mediaDuration,
@@ -254,20 +255,41 @@ export function Timeline() {
     return () => cancelAnimationFrame(raf);
   }, [media?.id]);
 
-  // Auto-scroll to keep playhead in view during playback
+  // Auto-scroll to keep the playhead in view when it MOVES on its own — during
+  // playback, or on a seek (selecting a caption in the panel, including
+  // re-selecting an off-screen active one). NOT while manually scrubbing/clicking
+  // the timeline: there the playhead is at the pointer and already visible, so a
+  // click shouldn't jump the view. Keyed on playbackTime (+ a reveal tick);
+  // mediaDuration/zoom/scrubbing are peeked so a settling duration, a zoom step
+  // (which has its own playhead-anchored scroll), or the scrub-release edge don't
+  // trigger it. Skipped at fit zoom and on a clip switch (the [media?.id] effect
+  // restores the remembered scroll there; following the playhead would clobber it).
+  const lastAutoScrollClip = useRef<string | undefined>(undefined);
   useSignalEffect(() => {
     const scroll = scrollRef.current;
     const time = playbackTime.value;
-    const dur = mediaDuration.value;
-    const isCurrentlyPlaying = isPlaying.value;
-    const zoom = zoomLevel.value;
+    const clipId = selectedMedia.value?.id;
+    const dur = mediaDuration.peek();
+    const zoom = zoomLevel.peek();
+    // Subscribe to panel reveal requests: re-clicking an active caption bumps this
+    // so we re-scroll to it even though its start is already the playhead.
+    void revealCaptionTick.value;
 
-    if (!scroll || !dur || zoom <= 1 || !isCurrentlyPlaying) return;
+    // Record the clip on every pass so a switch is detected exactly once — at the
+    // switch itself — even when we bail below because the duration hasn't loaded
+    // yet. Recording only after the bail would defer "switched" onto the user's
+    // first seek in the new clip and swallow its scroll. On the switch pass we
+    // skip: the [media?.id] effect is restoring the remembered scroll.
+    const switched = clipId !== lastAutoScrollClip.current;
+    lastAutoScrollClip.current = clipId;
 
-    const fraction = time / dur;
+    // Skipped while scrubbing/clicking the timeline (peeked, so the release edge
+    // doesn't fire a scroll either) — the playhead is at the pointer, in view.
+    if (!scroll || !dur || zoom <= 1 || switched || scrubbing.peek()) return;
+
     const totalWidth = scroll.scrollWidth;
     const visibleWidth = scroll.clientWidth;
-    const playheadPx = fraction * totalWidth;
+    const playheadPx = (time / dur) * totalWidth;
     const scrollLeft = scroll.scrollLeft;
 
     if (
@@ -324,25 +346,59 @@ export function Timeline() {
     if (e.button !== 0 || !duration) return;
     const el = e.currentTarget as HTMLElement;
 
+    const scroll = scrollRef.current;
     scrubbing.value = true; // pause per-action view persistence until release
     const wasPlaying = isPlaying.peek();
     if (wasPlaying) isPlaying.value = false;
 
-    const seek = (ev: MouseEvent) => {
+    const seekToClientX = (clientX: number) => {
       const rect = el.getBoundingClientRect();
-      const fraction = (ev.clientX - rect.left) / rect.width;
+      const fraction = (clientX - rect.left) / rect.width;
       playbackTime.value = Math.max(0, Math.min(duration, fraction * duration));
     };
 
-    seek(e);
+    seekToClientX(e.clientX);
 
-    const onMove = (ev: MouseEvent) => seek(ev);
+    // Edge-pan: once you've started dragging, holding the pointer near a viewport
+    // edge scrolls the timeline that way (and keeps seeking under the pointer) so
+    // you can scrub past what's visible. Speed ramps with how deep into the edge
+    // zone the pointer is, so it stays gentle; a plain click never pans (the
+    // `dragged` gate), and it stops at the content ends.
+    const startX = e.clientX;
+    let lastClientX = e.clientX;
+    let dragged = false;
+    let raf = 0;
+    const EDGE = 48; // px from each viewport edge that triggers panning
+    const MAX_SPEED = 16; // px/frame at the very edge
+    const pan = () => {
+      raf = requestAnimationFrame(pan);
+      if (!dragged || !scroll || zoomLevel.peek() <= 1) return;
+      const rect = scroll.getBoundingClientRect();
+      const x = lastClientX - rect.left;
+      let delta = 0;
+      if (x < EDGE) delta = -((EDGE - x) / EDGE) * MAX_SPEED;
+      else if (x > rect.width - EDGE) delta = ((x - (rect.width - EDGE)) / EDGE) * MAX_SPEED;
+      if (!delta) return;
+      const max = scroll.scrollWidth - scroll.clientWidth;
+      const next = Math.max(0, Math.min(max, scroll.scrollLeft + delta));
+      if (next === scroll.scrollLeft) return; // already at an end
+      scroll.scrollLeft = next;
+      seekToClientX(lastClientX); // keep the playhead under the held pointer
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - startX) > 4) dragged = true;
+      lastClientX = ev.clientX;
+      seekToClientX(ev.clientX);
+    };
     const onUp = () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       if (wasPlaying) isPlaying.value = true;
       scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
     };
+    raf = requestAnimationFrame(pan);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };

@@ -76,6 +76,10 @@ export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 // persist effect below skip the continuous drag and fire once on release — when
 // the playhead has "landed somewhere" — instead of writing on every pointermove.
 export const scrubbing = signal(false);
+// Bumped when a caption is clicked in the captions panel, to ask the timeline to
+// scroll that caption into view — even when it's already the active one (its start
+// already the playhead), which wouldn't otherwise change any signal.
+export const revealCaptionTick = signal(0);
 // Timeline zoom (1 = Fit … 500). Lives here (not in Timeline) so it's part of the
 // per-clip view memory: remembered per clip and restored on switch, like the
 // playhead. The persist effect reads it via peek so a Ctrl-wheel zoom gesture

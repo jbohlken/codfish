@@ -1440,6 +1440,13 @@ body.rows-dragging * {
   position: relative;
   background: var(--tl-surface);
   border-bottom: 1px solid var(--tl-border);
+  /* Clip the playhead's 1px line + round handle at the row's left/right edges so
+     parking the playhead at the very end doesn't add a few px of horizontal
+     overflow — which, at fit zoom, surfaces a stray scrollbar. `clip` (not
+     `hidden`) so the row doesn't become a scroll container and break the
+     position:sticky waveform canvas; overflow-y stays visible so the handle can
+     still poke above the row. */
+  overflow-x: clip;
 }
 
 /* Sticks to the visible window while the full-width row scrolls

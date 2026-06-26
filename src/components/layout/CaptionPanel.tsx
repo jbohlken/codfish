@@ -5,6 +5,7 @@ import {
   selectedMediaId,
   selectedCaptionIndex,
   playbackTime,
+  revealCaptionTick,
   project,
   activeProfile,
   pushHistory,
@@ -468,6 +469,7 @@ export function CaptionPanel() {
                   editingIndex.value = null;
                   selectedCaptionIndex.value = block.index;
                   playbackTime.value = block.start;
+                  revealCaptionTick.value++; // reveal in the timeline, even if already active
                 }}
                 onDblClick={() => {
                   selectedCaptionIndex.value = block.index;
