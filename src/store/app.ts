@@ -466,6 +466,21 @@ export const playingCaptionIndex = computed((): number | null => {
   return findCaptionAt(media.captions, time)?.index ?? null;
 });
 
+// "Follow playhead": when on, the active (selected) caption tracks the one under
+// the playhead — during playback, scrubbing, frame-step, region-jump. Persisted;
+// default off. Toggled from the transport bar.
+const storedFollow = localStorage.getItem("codfish:followPlayhead");
+export const followPlayhead = signal(storedFollow === "true");
+effect(() => {
+  // Mirror the caption under the playhead into the selection. Skips gaps
+  // (playingCaptionIndex null) so the selection doesn't flicker between captions.
+  // Reads only the two source signals (not selectedCaptionIndex), so writing the
+  // selection here can't re-trigger this effect.
+  if (followPlayhead.value && playingCaptionIndex.value != null) {
+    selectedCaptionIndex.value = playingCaptionIndex.value;
+  }
+});
+
 /** Validation warnings for the selected media's captions, grouped by caption
  * index. Cached: only re-runs validate() when captions, profile, or fps
  * changes — not on playback ticks or unrelated re-renders. Both Timeline and

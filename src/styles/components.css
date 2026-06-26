@@ -1497,6 +1497,7 @@ body.rows-dragging * {
   border-bottom: 1px solid var(--tl-border);
   overflow: hidden;
   user-select: none;
+  cursor: pointer; /* click/drag to seek, like the waveform below */
 }
 
 .timeline-ruler-tick {
@@ -1547,7 +1548,7 @@ body.rows-dragging * {
 .timeline-playhead::before {
   content: "";
   position: absolute;
-  top: -4px;
+  top: -9px;
   left: -4px;
   width: 9px;
   height: 9px;

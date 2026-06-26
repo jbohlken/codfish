@@ -6,6 +6,7 @@ import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
 import { findCaptionAt } from "../../lib/pipeline";
 import { getClipView } from "../../lib/clipView";
+import { frameMidpoint } from "../../lib/playhead";
 
 function isAudioOnly(path: string): boolean {
   const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
@@ -115,8 +116,12 @@ export function VideoPanel() {
     const video = videoRef.current;
     if (!video) return;
     if (rafActiveRef.current) return;
-    if (Math.abs(video.currentTime - currentTime) > 1 / (2 * fps)) {
-      video.currentTime = currentTime;
+    // Seek to the middle of the frame containing currentTime (see frameMidpoint):
+    // a frame-boundary seek is ambiguous and makes stepping land a frame early/late
+    // at random. The playhead stays on the boundary; only the video seek is nudged.
+    const target = frameMidpoint(currentTime, fps);
+    if (Math.abs(video.currentTime - target) > 1 / (2 * fps)) {
+      video.currentTime = target;
     }
   }, [currentTime, fps, playing]);
 

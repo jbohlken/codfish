@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   project,
   isDirty,
@@ -7,6 +7,7 @@ import {
   selectedMedia,
   selectedCaption,
   playbackTime,
+  followPlayhead,
   isPlaying,
   scrubbing,
   zoomLevel,
@@ -523,5 +524,39 @@ describe("per-clip view persistence (settle effect, flush, active clip)", () => 
     expect(getActiveClip("/p.cod")).toBe("media-b");
     deselectAll();
     expect(getActiveClip("/p.cod")).toBeNull();
+  });
+});
+
+describe("followPlayhead (auto-select caption under playhead)", () => {
+  // captions at [0,1.5], [2,3.5], [4,5.5] — gaps at 1.5–2 and 3.5–4
+  beforeEach(() => {
+    project.value = makeProject("follow", 3);
+    selectedMediaId.value = "media-1";
+    selectedCaptionIndex.value = null;
+    playbackTime.value = 0;
+    followPlayhead.value = false;
+  });
+  // The follow effect is module-global; never let it leak into other suites.
+  afterEach(() => { followPlayhead.value = false; });
+
+  it("selects the caption under the playhead when on", () => {
+    followPlayhead.value = true;
+    playbackTime.value = 2.5; // inside caption 2
+    expect(selectedCaptionIndex.value).toBe(2);
+    playbackTime.value = 0.5; // inside caption 1
+    expect(selectedCaptionIndex.value).toBe(1);
+  });
+
+  it("keeps the selection through gaps instead of flickering to null", () => {
+    followPlayhead.value = true;
+    playbackTime.value = 0.5; // caption 1
+    expect(selectedCaptionIndex.value).toBe(1);
+    playbackTime.value = 1.7; // gap between captions 1 and 2
+    expect(selectedCaptionIndex.value).toBe(1);
+  });
+
+  it("does nothing when off", () => {
+    playbackTime.value = 2.5; // inside caption 2, but follow is off
+    expect(selectedCaptionIndex.value).toBeNull();
   });
 });

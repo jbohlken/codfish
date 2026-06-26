@@ -1,10 +1,11 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform } from "@phosphor-icons/react";
+import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair } from "@phosphor-icons/react";
 import { useSignalEffect, signal } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
+import { frameStep, nextBoundary } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedCaptionIndex,
@@ -19,6 +20,7 @@ import {
   pushHistory,
   activeProfile,
   playingCaptionIndex,
+  followPlayhead,
   warningsByCaption,
   isBatchRunning,
 } from "../../store/app";
@@ -499,6 +501,29 @@ export function Timeline() {
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "-" || e.key === "_")) {
         e.preventDefault();
         zoomAroundPlayhead(1 / 1.5);
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Step the playhead one frame (Premiere-style). fps/duration read live —
+        // this effect's closure is mount-time, so the component consts are stale.
+        e.preventDefault();
+        const m = selectedMedia.value;
+        const f = m?.fps ?? activeProfile.value.timing.defaultFps;
+        const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        if (!f || !dur) return;
+        isPlaying.value = false; // stepping is a paused review action
+        const next = frameStep(playbackTime.peek(), f, e.key === "ArrowRight" ? 1 : -1);
+        playbackTime.value = Math.max(0, Math.min(dur, next));
+      } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Jump to the adjacent region boundary: every caption start/end, plus the
+        // timeline start (0) and end. Down → next, Up → previous.
+        e.preventDefault();
+        const m = selectedMedia.value;
+        const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        if (!dur) return;
+        isPlaying.value = false; // jumping is a paused review action
+        const bounds = [0, dur];
+        if (m) for (const c of m.captions) bounds.push(c.start, c.end);
+        const target = nextBoundary(playbackTime.peek(), bounds, e.key === "ArrowDown" ? 1 : -1);
+        if (target !== undefined) playbackTime.value = Math.max(0, Math.min(dur, target));
       }
     };
     document.addEventListener("keydown", handler);
@@ -564,6 +589,17 @@ export function Timeline() {
         </button>
 
         <button
+          class={`timeline-btn${followPlayhead.value ? " timeline-btn--active" : ""}`}
+          onClick={() => {
+            followPlayhead.value = !followPlayhead.value;
+            localStorage.setItem("codfish:followPlayhead", String(followPlayhead.value));
+          }}
+          data-tooltip={followPlayhead.value ? "Auto-select caption under playhead: on" : "Auto-select caption under playhead: off"}
+        >
+          <Crosshair size={14} />
+        </button>
+
+        <button
           class="timeline-btn"
           onClick={() => {
             const next: WaveformStyle = waveformStyle.value === "continuous" ? "bars" : "continuous";
@@ -591,7 +627,7 @@ export function Timeline() {
             <ScrollInner>
               {/* Ruler */}
               {duration > 0 && (
-                <RulerRow duration={duration} mode={smpteMode} fps={effectiveFps} />
+                <RulerRow duration={duration} mode={smpteMode} fps={effectiveFps} onMouseDown={handleWaveMouseDown} />
               )}
 
               {/* Waveform row — click to seek */}
@@ -864,10 +900,11 @@ function TransportTimecode({ mode, fps, duration }: {
  *  count scales with zoom — tens of thousands of divs rebuilt on every
  *  zoom step; with it, renders stay at a few dozen nodes and panning
  *  re-renders only this row. */
-function RulerRow({ duration, mode, fps }: {
+function RulerRow({ duration, mode, fps, onMouseDown }: {
   duration: number;
   mode: DisplayMode;
   fps: number;
+  onMouseDown: (e: MouseEvent) => void;
 }) {
   const zoom = zoomLevel.value;
   const scrollLeft = timelineScroll.value;
@@ -890,7 +927,7 @@ function RulerRow({ duration, mode, fps }: {
   }
 
   return (
-    <div class="timeline-ruler-row">
+    <div class="timeline-ruler-row" onMouseDown={onMouseDown}>
       {ticks.map(t => (
         <div
           key={t}
