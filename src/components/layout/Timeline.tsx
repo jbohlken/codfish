@@ -5,7 +5,7 @@ import { useSignalEffect, signal } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
-import { frameStep, nextBoundary, clampStart, clampEnd } from "../../lib/playhead";
+import { frameStep, nextBoundary, clampStart, clampEnd, computeTrim } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedCaptionIndex,
@@ -527,30 +527,17 @@ export function Timeline() {
         const target = nextBoundary(playbackTime.peek(), bounds, e.key === "ArrowDown" ? 1 : -1);
         if (target !== undefined) playbackTime.value = Math.max(0, Math.min(dur, target));
       } else if ((e.key === "[" || e.key === "]") && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        // Trim the selected caption's in ([) / out (]) point to the playhead —
-        // same clamp + commit path as dragging its resize handle. Reads live.
+        // Trim the selected caption's in ([) / out (]) edge to the playhead, then
+        // commit through the same path the resize-handle drag uses. Reads live.
         e.preventDefault();
         const m = selectedMedia.value;
         const idx = selectedCaptionIndex.value;
         if (!m || idx == null) return;
-        const pos = m.captions.findIndex((c) => c.index === idx);
-        if (pos < 0) return;
-        const cap = m.captions[pos];
         const f = m.fps ?? activeProfile.value.timing.defaultFps;
         const dur = mediaDuration.peek() || (m.captions.length ? m.captions[m.captions.length - 1].end : 0);
-        const minDur = 1 / f;
-        const t = playbackTime.peek();
-        if (e.key === "[") {
-          const prevEnd = pos > 0 ? m.captions[pos - 1].end : null;
-          const newStart = snapToFrame(clampStart(t, prevEnd, cap.end, minDur), f);
-          if (newStart === cap.start) return; // clamped to no change — skip the edit
-          handleResizeLive(idx, newStart, cap.end);
-        } else {
-          const nextStart = pos < m.captions.length - 1 ? m.captions[pos + 1].start : null;
-          const newEnd = snapToFrame(clampEnd(t, cap.start, nextStart, dur, minDur), f);
-          if (newEnd === cap.end) return; // clamped to no change — skip the edit
-          handleResizeLive(idx, cap.start, newEnd);
-        }
+        const trimmed = computeTrim(m.captions, idx, e.key === "[" ? "in" : "out", playbackTime.peek(), f, dur);
+        if (!trimmed) return; // caption not found, or clamped to no change
+        handleResizeLive(idx, trimmed.start, trimmed.end);
         if (project.value) pushHistory(project.value, e.key === "[" ? "Trim caption in" : "Trim caption out");
       }
     };

@@ -3,6 +3,7 @@
  * Timeline and VideoPanel components so the boundary math — which is fiddly and
  * has had off-by-one bugs — can be unit-tested in isolation.
  */
+import { snapToFrame } from "./pipeline";
 
 // Absorbs floating-point error in `time * fps` for frame-aligned times (e.g. a
 // playhead parked at frame N via N/fps, whose round-trip lands at N ± ~1e-12).
@@ -69,4 +70,37 @@ export function clampStart(time: number, prevEnd: number | null, ownEnd: number,
  *  past the next caption's start (or the clip duration). */
 export function clampEnd(time: number, ownStart: number, nextStart: number | null, dur: number, minDur: number): number {
   return Math.max(ownStart + minDur, Math.min(time, nextStart ?? dur));
+}
+
+export interface TrimResult { start: number; end: number; }
+
+/**
+ * New timing for trimming the caption at `index`'s in/out edge to `time` (the
+ * playhead). Picks the neighbouring caption's edge as the bound, clamps so it
+ * can't overlap the neighbour or collapse below one frame, and snaps to a frame.
+ * Returns null when the caption isn't found or the edge wouldn't move — a no-op
+ * the caller should skip rather than commit to undo history. `captions` are
+ * assumed sorted by start (the editor's invariant), so the array neighbours are
+ * the temporal ones.
+ */
+export function computeTrim(
+  captions: readonly { index: number; start: number; end: number }[],
+  index: number,
+  edge: "in" | "out",
+  time: number,
+  fps: number,
+  dur: number,
+): TrimResult | null {
+  const pos = captions.findIndex((c) => c.index === index);
+  if (pos < 0) return null;
+  const cap = captions[pos];
+  const minDur = 1 / fps;
+  if (edge === "in") {
+    const prevEnd = pos > 0 ? captions[pos - 1].end : null;
+    const start = snapToFrame(clampStart(time, prevEnd, cap.end, minDur), fps);
+    return start === cap.start ? null : { start, end: cap.end };
+  }
+  const nextStart = pos < captions.length - 1 ? captions[pos + 1].start : null;
+  const end = snapToFrame(clampEnd(time, cap.start, nextStart, dur, minDur), fps);
+  return end === cap.end ? null : { start: cap.start, end };
 }

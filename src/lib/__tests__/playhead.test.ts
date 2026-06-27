@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { frameStep, frameMidpoint, nextBoundary, clampStart, clampEnd } from "../playhead";
+import { frameStep, frameMidpoint, nextBoundary, clampStart, clampEnd, computeTrim } from "../playhead";
 
 const FPS = 30;
 
@@ -90,5 +90,37 @@ describe("clampEnd", () => {
   });
   it("caps at the clip duration when there is no next caption", () => {
     expect(clampEnd(99, 1, null, 10, 0.1)).toBe(10);
+  });
+});
+
+describe("computeTrim", () => {
+  // Captions 1 & 2 share a boundary at 3.0s; a gap precedes caption 3.
+  const caps = [
+    { index: 1, start: 1, end: 3 },
+    { index: 2, start: 3, end: 5 },
+    { index: 3, start: 6, end: 8 },
+  ];
+  const FPS = 30, DUR = 10;
+
+  it("trims the in point to the playhead", () => {
+    expect(computeTrim(caps, 2, "in", 4, FPS, DUR)).toEqual({ start: 4, end: 5 });
+  });
+  it("trims the out point to the playhead", () => {
+    expect(computeTrim(caps, 1, "out", 2, FPS, DUR)).toEqual({ start: 1, end: 2 });
+  });
+  it("clamps the in point to the previous caption's end → no-op at a shared boundary", () => {
+    expect(computeTrim(caps, 2, "in", 2, FPS, DUR)).toBeNull();
+  });
+  it("clamps the out point to the next caption's start → no-op at a shared boundary", () => {
+    expect(computeTrim(caps, 1, "out", 4, FPS, DUR)).toBeNull();
+  });
+  it("first caption's in can reach the clip start (no previous caption)", () => {
+    expect(computeTrim(caps, 1, "in", 0.5, FPS, DUR)).toEqual({ start: 0.5, end: 3 });
+  });
+  it("last caption's out can reach the clip duration (no next caption)", () => {
+    expect(computeTrim(caps, 3, "out", 9, FPS, DUR)).toEqual({ start: 6, end: 9 });
+  });
+  it("returns null when the caption isn't found", () => {
+    expect(computeTrim(caps, 99, "in", 4, FPS, DUR)).toBeNull();
   });
 });
