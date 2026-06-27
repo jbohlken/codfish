@@ -5,7 +5,7 @@ import { useSignalEffect, signal } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
-import { frameStep, nextBoundary } from "../../lib/playhead";
+import { frameStep, nextBoundary, clampStart, clampEnd } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedCaptionIndex,
@@ -416,17 +416,19 @@ export function Timeline() {
   // Live-update caption timing during drag (no history entry yet)
   const handleResizeLive = (index: number, newStart: number, newEnd: number) => {
     const proj = project.value;
-    if (!proj || !media) return;
+    const med = selectedMedia.value; // live, not the render-time const — the
+    const f = med?.fps ?? activeProfile.value.timing.defaultFps; // [/] keydown
+    if (!proj || !med) return; // handler reuses this from a mount-time closure
     project.value = {
       ...proj,
       media: proj.media.map((m) =>
-        m.id !== media.id ? m : {
+        m.id !== med.id ? m : {
           ...m,
           captions: m.captions.map((c) =>
             c.index !== index ? c : {
               ...c,
               start: Math.max(0, newStart),
-              end: Math.max(newStart + 1 / fps, newEnd),
+              end: Math.max(newStart + 1 / f, newEnd),
             }
           ),
         }
@@ -524,6 +526,32 @@ export function Timeline() {
         if (m) for (const c of m.captions) bounds.push(c.start, c.end);
         const target = nextBoundary(playbackTime.peek(), bounds, e.key === "ArrowDown" ? 1 : -1);
         if (target !== undefined) playbackTime.value = Math.max(0, Math.min(dur, target));
+      } else if ((e.key === "[" || e.key === "]") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Trim the selected caption's in ([) / out (]) point to the playhead —
+        // same clamp + commit path as dragging its resize handle. Reads live.
+        e.preventDefault();
+        const m = selectedMedia.value;
+        const idx = selectedCaptionIndex.value;
+        if (!m || idx == null) return;
+        const pos = m.captions.findIndex((c) => c.index === idx);
+        if (pos < 0) return;
+        const cap = m.captions[pos];
+        const f = m.fps ?? activeProfile.value.timing.defaultFps;
+        const dur = mediaDuration.peek() || (m.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        const minDur = 1 / f;
+        const t = playbackTime.peek();
+        if (e.key === "[") {
+          const prevEnd = pos > 0 ? m.captions[pos - 1].end : null;
+          const newStart = snapToFrame(clampStart(t, prevEnd, cap.end, minDur), f);
+          if (newStart === cap.start) return; // clamped to no change — skip the edit
+          handleResizeLive(idx, newStart, cap.end);
+        } else {
+          const nextStart = pos < m.captions.length - 1 ? m.captions[pos + 1].start : null;
+          const newEnd = snapToFrame(clampEnd(t, cap.start, nextStart, dur, minDur), f);
+          if (newEnd === cap.end) return; // clamped to no change — skip the edit
+          handleResizeLive(idx, cap.start, newEnd);
+        }
+        if (project.value) pushHistory(project.value, e.key === "[" ? "Trim caption in" : "Trim caption out");
       }
     };
     document.addEventListener("keydown", handler);
@@ -777,7 +805,6 @@ function ResizableCaptionBlock({
       if (edge === "left") {
         let rawTime = originStart + dx * secPerPx;
         let snapped: number | null = null;
-        const lowerBound = prevEnd ?? 0;
         if (snapEnabled) {
           // Dead zone + snap only when there's an actual preceding caption;
           // at the media start (prevEnd === null) the first caption can begin
@@ -795,8 +822,8 @@ function ResizableCaptionBlock({
           }
         }
         const newStart = snapped !== null
-          ? Math.max(lowerBound, Math.min(snapped, originEnd - minDuration))
-          : snapToFrame(Math.max(lowerBound, Math.min(rawTime, originEnd - minDuration)), fps);
+          ? clampStart(snapped, prevEnd, originEnd, minDuration)
+          : snapToFrame(clampStart(rawTime, prevEnd, originEnd, minDuration), fps);
         resizeIndicator.value = newStart;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, newStart, originEnd);
@@ -804,7 +831,6 @@ function ResizableCaptionBlock({
       } else {
         let rawTime = originEnd + dx * secPerPx;
         let snapped: number | null = null;
-        const upperBound = nextStart ?? duration;
         if (snapEnabled) {
           // Dead zone + snap only when there's an actual following caption;
           // at the media end (nextStart === null) the last caption can run
@@ -822,8 +848,8 @@ function ResizableCaptionBlock({
           }
         }
         const newEnd = snapped !== null
-          ? Math.max(originStart + minDuration, Math.min(snapped, upperBound))
-          : snapToFrame(Math.max(originStart + minDuration, Math.min(rawTime, upperBound)), fps);
+          ? clampEnd(snapped, originStart, nextStart, duration, minDuration)
+          : snapToFrame(clampEnd(rawTime, originStart, nextStart, duration, minDuration), fps);
         resizeIndicator.value = newEnd;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);

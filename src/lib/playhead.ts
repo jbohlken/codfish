@@ -52,3 +52,21 @@ export function nextBoundary(
   }
   return undefined;
 }
+
+// ── Caption edge clamps (shared by the resize-handle drag and [ / ] trim) ─────
+// Both clamp a proposed edge time to its valid range so it can't overlap the
+// neighbouring caption or collapse the caption below `minDur`. `prevEnd`/`nextStart`
+// are the adjacent captions' edges (null at the clip ends → 0 / clip duration).
+// Callers snap the result to a frame.
+
+/** Clamp a caption's start edge: not before the previous caption's end, and at
+ *  least `minDur` before its own end. */
+export function clampStart(time: number, prevEnd: number | null, ownEnd: number, minDur: number): number {
+  return Math.max(prevEnd ?? 0, Math.min(time, ownEnd - minDur));
+}
+
+/** Clamp a caption's end edge: at least `minDur` after its own start, and not
+ *  past the next caption's start (or the clip duration). */
+export function clampEnd(time: number, ownStart: number, nextStart: number | null, dur: number, minDur: number): number {
+  return Math.max(ownStart + minDur, Math.min(time, nextStart ?? dur));
+}

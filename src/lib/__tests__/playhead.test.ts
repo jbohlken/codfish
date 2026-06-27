@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { frameStep, frameMidpoint, nextBoundary } from "../playhead";
+import { frameStep, frameMidpoint, nextBoundary, clampStart, clampEnd } from "../playhead";
 
 const FPS = 30;
 
@@ -59,5 +59,36 @@ describe("nextBoundary", () => {
 
   it("sorts unsorted input", () => {
     expect(nextBoundary(1.5, [4, 0, 2.5, 1], 1)).toBe(2.5);
+  });
+});
+
+describe("clampStart", () => {
+  it("passes a value already inside the valid range", () => {
+    expect(clampStart(2, 1, 5, 0.1)).toBe(2);
+  });
+  it("clamps to the previous caption's end (no overlap)", () => {
+    expect(clampStart(0.5, 1, 5, 0.1)).toBe(1);
+  });
+  it("clamps to own end minus the minimum duration (no invert/collapse)", () => {
+    expect(clampStart(4.99, 1, 5, 0.1)).toBeCloseTo(4.9, 9);
+  });
+  it("floors at 0 when there is no previous caption", () => {
+    expect(clampStart(-1, null, 5, 0.1)).toBe(0);
+    expect(clampStart(0.5, null, 5, 0.1)).toBe(0.5);
+  });
+});
+
+describe("clampEnd", () => {
+  it("passes a value already inside the valid range", () => {
+    expect(clampEnd(3, 1, 5, 10, 0.1)).toBe(3);
+  });
+  it("clamps to the next caption's start (no overlap)", () => {
+    expect(clampEnd(5.5, 1, 5, 10, 0.1)).toBe(5);
+  });
+  it("clamps to own start plus the minimum duration (no invert/collapse)", () => {
+    expect(clampEnd(1.01, 1, 5, 10, 0.1)).toBeCloseTo(1.1, 9);
+  });
+  it("caps at the clip duration when there is no next caption", () => {
+    expect(clampEnd(99, 1, null, 10, 0.1)).toBe(10);
   });
 });
