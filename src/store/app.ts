@@ -468,7 +468,7 @@ export const playingCaptionIndex = computed((): number | null => {
 
 // "Follow playhead": when on, the active (selected) caption tracks the one under
 // the playhead — during playback, scrubbing, frame-step, region-jump. Persisted;
-// default off. Toggled from the transport bar.
+// default off. Toggled from the timeline toolbar.
 const storedFollow = localStorage.getItem("codfish:followPlayhead");
 export const followPlayhead = signal(storedFollow === "true");
 effect(() => {

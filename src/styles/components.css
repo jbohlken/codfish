@@ -998,6 +998,36 @@ body.rows-dragging * {
   position: relative;
 }
 
+/* Center column = the video preview with the playback transport docked beneath
+   it. The column carries the left/right dividers the panels used to draw via
+   `.panel + .panel`, since the wrapper itself isn't a .panel. */
+.video-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+}
+.video-column > .video-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Playback-only strip under the video: go to start, frame-step, play/pause.
+   Timeline-view tools live in the timeline toolbar, not here. */
+.transport-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
 .video-container {
   display: flex;
   align-items: center;
@@ -1269,7 +1299,7 @@ body.rows-dragging * {
   overflow: hidden;
 }
 
-.timeline-transport {
+.timeline-toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -1340,7 +1370,7 @@ body.rows-dragging * {
 }
 
 /* Pushes the right-aligned tool group (snap, waveform style, zoom) to the far
-   edge of the transport bar, so the timecode + fps stay grouped on the left. */
+   edge of the timeline toolbar, so the timecode + fps stay grouped on the left. */
 .timeline-tools-start {
   margin-left: auto;
 }

@@ -1,6 +1,6 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair } from "@phosphor-icons/react";
+import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair } from "@phosphor-icons/react";
 import { useSignalEffect, signal, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
@@ -83,7 +83,6 @@ function waitForMediaDuration(timeoutMs: number): Promise<number | null> {
 
 export function Timeline() {
   const media = selectedMedia.value;
-  const playing = isPlaying.value;
   const profileDefaultFps = activeProfile.value.timing.defaultFps;
   const effectiveFps = media?.fps ?? profileDefaultFps;
   const fpsIsDetected = media != null && media.fps != null;
@@ -564,22 +563,11 @@ export function Timeline() {
 
   return (
     <div class="timeline">
-      {/* Transport controls — only shown with a clip loaded; every control here
-          acts on the active media, so there's nothing to operate on otherwise. */}
+      {/* Timeline toolbar — only with a clip loaded: the timecode/fps readout on
+          the left, view tools (snap, follow, waveform, zoom) on the right.
+          Playback transport lives under the video — see <TransportBar />. */}
       {media && (
-      <div class="timeline-transport">
-        <button
-          class="timeline-btn"
-          onClick={() => { playbackTime.value = 0; }}
-          data-tooltip="Go to start"
-        ><SkipBack size={14} weight="fill" /></button>
-        <button
-          class="timeline-btn timeline-btn--play"
-          onClick={() => { isPlaying.value = !playing; }}
-          data-tooltip={playing ? "Pause" : "Play"}
-        >
-          {playing ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
-        </button>
+      <div class="timeline-toolbar">
         <span class="timeline-mode-label">
           {timecodeMode.value === "time" && "Time"}
           {timecodeMode.value === "smpte" && (media?.dropFrame ? "SMPTE DF" : "SMPTE")}
@@ -964,7 +952,7 @@ function TimelinePlayhead({ duration }: { duration: number }) {
 }
 
 /** Same isolation pattern as TimelinePlayhead — owns the per-tick
- *  playbackTime read so the surrounding transport bar stays static. */
+ *  playbackTime read so the surrounding timeline toolbar stays static. */
 function TransportTimecode({ mode, fps, duration }: {
   mode: DisplayMode;
   fps: number;
@@ -1042,7 +1030,7 @@ function ScrollInner({ children }: { children: ComponentChildren }) {
 }
 
 /** Reads zoomLevel locally so zoom steps re-render three buttons, not the
- *  whole transport bar. */
+ *  whole timeline toolbar. */
 function ZoomControls({ scrollRef, zoomAroundPlayhead }: {
   scrollRef: { current: HTMLDivElement | null };
   zoomAroundPlayhead: (factor: number) => void;
