@@ -5,8 +5,8 @@
  * waveform up front (O(zoom × duration) canvas pixels, all rebuilt on
  * every zoom step). The canvas here is viewport-sized and position:sticky
  * at the left edge of the scroll viewport; each repaint draws only the
- * visible bars, so per-frame cost is O(viewport) regardless of zoom level
- * or media length.
+ * visible portion of the waveform, so per-frame cost is O(viewport)
+ * regardless of zoom level or media length.
  *
  * Repaints are coalesced to one per animation frame and triggered by
  * scroll, by row resize (which covers both window resizes and zoom — the
@@ -20,11 +20,73 @@
  * pipeline resolved.
  */
 
-// Bar styling matches the previous WaveSurfer config (CSS px).
+/** How the waveform is drawn: discrete bars, or a continuous filled envelope. */
+export type WaveformStyle = "bars" | "continuous";
+
+// Bar styling for the "bars" style (CSS px).
 const BAR_WIDTH = 2;
 const BAR_GAP = 1;
 const BAR_RADIUS = 2;
-const WAVE_COLOR = "#374151";
+// Fallback fill if the --tl-waveform CSS variable can't be read.
+const DEFAULT_WAVE_COLOR = "#374151";
+
+// ── Pure reduction helpers ────────────────────────────────────────────────────
+// Lifted out of the painter so the fiddly bin→column math (where off-by-ones and
+// scale bugs hide) is unit-testable without a canvas. The painter calls these.
+
+/** Largest peak in the envelope — the global normalization reference. */
+export function computePeakMax(peaks: Float32Array | number[]): number {
+  let max = 0;
+  for (let i = 0; i < peaks.length; i++) if (peaks[i] > max) max = peaks[i];
+  return max;
+}
+
+/** Bins whose content-pixel columns intersect the viewport
+ *  [scrollLeftPx, scrollLeftPx + viewWidthPx], padded one column each side so the
+ *  filled envelope reaches both edges, clamped to [0, binCount - 1]. Device px. */
+export function continuousBinRange(
+  scrollLeftPx: number,
+  viewWidthPx: number,
+  pxPerSec: number,
+  binsPerSec: number,
+  binCount: number,
+): { firstBin: number; lastBin: number } {
+  const firstBin = Math.max(0, Math.floor((scrollLeftPx / pxPerSec) * binsPerSec) - 1);
+  const lastBin = Math.min(binCount - 1, Math.ceil(((scrollLeftPx + viewWidthPx) / pxPerSec) * binsPerSec) + 1);
+  return { firstBin, lastBin };
+}
+
+/** Max-reduce peak bins [firstBin, lastBin] into integer content-pixel columns:
+ *  one envelope point per column, its amplitude the per-column max × ampScale
+ *  floored at minAmp (so silence still reads as a thin centerline).
+ *  col = floor((bin / binsPerSec) × pxPerSec). Writes into outX/outAmp (cleared
+ *  first; passed in so the painter reuses buffers and avoids per-frame allocation). */
+export function reduceColumns(
+  peaks: Float32Array | number[],
+  firstBin: number,
+  lastBin: number,
+  binsPerSec: number,
+  pxPerSec: number,
+  ampScale: number,
+  minAmp: number,
+  outX: number[],
+  outAmp: number[],
+): void {
+  outX.length = 0;
+  outAmp.length = 0;
+  let curCol = -1;
+  let curMax = 0;
+  for (let b = firstBin; b <= lastBin; b++) {
+    const col = Math.floor((b / binsPerSec) * pxPerSec);
+    if (col !== curCol) {
+      if (curCol >= 0) { outX.push(curCol); outAmp.push(Math.max(curMax * ampScale, minAmp)); }
+      curCol = col;
+      curMax = 0;
+    }
+    if (peaks[b] > curMax) curMax = peaks[b];
+  }
+  if (curCol >= 0) { outX.push(curCol); outAmp.push(Math.max(curMax * ampScale, minAmp)); }
+}
 
 export interface WaveformPainter {
   /** Peak envelope from the pipeline. audioDuration is the seconds the peaks
@@ -34,6 +96,10 @@ export interface WaveformPainter {
    *  before the video does just leaves the tail of the row empty — only bins
    *  that exist are drawn. */
   setLayoutDuration(seconds: number): void;
+  /** Switch between the bars and continuous-envelope renderings. */
+  setStyle(style: WaveformStyle): void;
+  /** Set the fill color (sourced from the --tl-waveform CSS variable). */
+  setColor(color: string): void;
   schedulePaint(): void;
   destroy(): void;
 }
@@ -53,6 +119,12 @@ export function createWaveformPainter(opts: {
   let layoutDuration = 0;
   let peakMax = 0;
   let raf = 0;
+  let style: WaveformStyle = "continuous";
+  let color = DEFAULT_WAVE_COLOR;
+  // Reused across paints (this runs on the per-scroll-frame hot path) to avoid
+  // per-frame allocation: the envelope's content-x and half-amplitude per column.
+  const pxBuf: number[] = [];
+  const ampBuf: number[] = [];
 
   const paint = () => {
     if (!ctx) return;
@@ -75,47 +147,60 @@ export function createWaveformPainter(opts: {
 
     if (!peaks || !peaks.length || peakMax <= 0 || audioDuration <= 0 || layoutDuration <= 0) return;
 
-    // All geometry below is in device px.
+    // Geometry shared by both styles (all in device px). Normalize amplitude
+    // against the global max so it reads the same at every zoom level.
     const totalWidth = scrollEl.scrollWidth * dpr;
     const scrollLeft = scrollEl.scrollLeft * dpr;
     const pxPerSec = totalWidth / layoutDuration;
     const binsPerSec = peaks.length / audioDuration;
-    const spacing = (BAR_WIDTH + BAR_GAP) * dpr;
-    const barWidth = BAR_WIDTH * dpr;
-    const radius = BAR_RADIUS * dpr;
     const halfHeight = h / 2;
-    // Normalize against the global max so amplitude reads the same at
-    // every zoom level (WaveSurfer normalized per 8000px chunk).
-    const vScale = 1 / peakMax;
+    const ampScale = halfHeight / peakMax;
+    ctx.fillStyle = color;
 
-    // Visible bin range, padded one column left so a partially visible
-    // edge bar still draws.
-    const firstBin = Math.max(0, Math.floor(((scrollLeft - spacing) / pxPerSec) * binsPerSec));
-    const lastBin = Math.min(peaks.length - 1, Math.ceil(((scrollLeft + w) / pxPerSec) * binsPerSec));
-
-    // One bar per grid column, max-reduced over the bins that start in it.
-    // The grid is anchored to the content (not the viewport) so bars stay
-    // put while panning. Zoomed past the data density (under one bin per
-    // column) this leaves empty columns rather than inventing detail.
-    ctx.fillStyle = WAVE_COLOR;
-    ctx.beginPath();
-    let column = -1;
-    let columnMax = 0;
-    const flush = () => {
-      if (column < 0) return;
-      const top = Math.round(columnMax * halfHeight * vScale);
-      ctx.roundRect(column * spacing - scrollLeft, halfHeight - top, barWidth, top * 2 || 1, radius);
-    };
-    for (let b = firstBin; b <= lastBin; b++) {
-      const col = Math.floor(((b / binsPerSec) * pxPerSec) / spacing);
-      if (col !== column) {
-        flush();
-        column = col;
-        columnMax = 0;
+    if (style === "bars") {
+      // One rounded bar per grid column, max-reduced over the bins in it. The
+      // grid is anchored to the content (not the viewport) so bars stay put
+      // while panning. Zoomed past the data density (under one bin per column)
+      // this leaves empty columns rather than inventing detail.
+      const spacing = (BAR_WIDTH + BAR_GAP) * dpr;
+      const barWidth = BAR_WIDTH * dpr;
+      const radius = BAR_RADIUS * dpr;
+      const firstBin = Math.max(0, Math.floor(((scrollLeft - spacing) / pxPerSec) * binsPerSec));
+      const lastBin = Math.min(peaks.length - 1, Math.ceil(((scrollLeft + w) / pxPerSec) * binsPerSec));
+      ctx.beginPath();
+      let column = -1;
+      let columnMax = 0;
+      const flush = () => {
+        if (column < 0) return;
+        const top = Math.round(columnMax * ampScale);
+        ctx.roundRect(column * spacing - scrollLeft, halfHeight - top, barWidth, top * 2 || 1, radius);
+      };
+      for (let b = firstBin; b <= lastBin; b++) {
+        const col = Math.floor(((b / binsPerSec) * pxPerSec) / spacing);
+        if (col !== column) { flush(); column = col; columnMax = 0; }
+        if (peaks[b] > columnMax) columnMax = peaks[b];
       }
-      if (peaks[b] > columnMax) columnMax = peaks[b];
+      flush();
+      ctx.fill();
+      return;
     }
-    flush();
+
+    // Continuous: max-reduce bins into integer content-pixel columns — one
+    // envelope point per column. Bins are in position order, so columns come out
+    // ordered and a point is emitted each time the column advances. The points
+    // are connected into one filled shape mirrored about the centerline — a
+    // continuous waveform. Zoomed past the data density the points spread out and
+    // the fill interpolates between them (a smooth envelope) rather than leaving
+    // gaps. Floor each column so silence still reads as a thin centerline.
+    const minAmp = 0.5 * dpr;
+    const { firstBin, lastBin } = continuousBinRange(scrollLeft, w, pxPerSec, binsPerSec, peaks.length);
+    reduceColumns(peaks, firstBin, lastBin, binsPerSec, pxPerSec, ampScale, minAmp, pxBuf, ampBuf);
+    if (!pxBuf.length) return;
+    ctx.beginPath();
+    ctx.moveTo(pxBuf[0] - scrollLeft, halfHeight - ampBuf[0]);
+    for (let i = 1; i < pxBuf.length; i++) ctx.lineTo(pxBuf[i] - scrollLeft, halfHeight - ampBuf[i]);
+    for (let i = pxBuf.length - 1; i >= 0; i--) ctx.lineTo(pxBuf[i] - scrollLeft, halfHeight + ampBuf[i]);
+    ctx.closePath();
     ctx.fill();
   };
 
@@ -141,15 +226,22 @@ export function createWaveformPainter(opts: {
     setPeaks(p, dur) {
       peaks = p;
       audioDuration = dur;
-      peakMax = 0;
-      for (let i = 0; i < p.length; i++) {
-        if (p[i] > peakMax) peakMax = p[i];
-      }
+      peakMax = computePeakMax(p);
       schedulePaint();
     },
     setLayoutDuration(seconds) {
       if (seconds === layoutDuration) return;
       layoutDuration = seconds;
+      schedulePaint();
+    },
+    setStyle(s) {
+      if (s === style) return;
+      style = s;
+      schedulePaint();
+    },
+    setColor(c) {
+      if (!c || c === color) return;
+      color = c;
       schedulePaint();
     },
     schedulePaint,

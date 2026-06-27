@@ -1,16 +1,19 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet } from "@phosphor-icons/react";
-import { useSignalEffect, signal } from "@preact/signals";
+import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair } from "@phosphor-icons/react";
+import { useSignalEffect, signal, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
-import { createWaveformPainter } from "../../lib/waveform";
+import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
+import { nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedCaptionIndex,
   playbackTime,
   isPlaying,
+  stepPlayhead,
   scrubbing,
+  revealCaptionTick,
   zoomLevel,
   timelineScroll,
   mediaDuration,
@@ -18,6 +21,7 @@ import {
   pushHistory,
   activeProfile,
   playingCaptionIndex,
+  followPlayhead,
   warningsByCaption,
   isBatchRunning,
 } from "../../store/app";
@@ -33,6 +37,8 @@ const VALID_MODES: TimecodeCycle[] = ["time", "smpte", "frames"];
 const stored = localStorage.getItem("codfish:timecodeMode") as TimecodeCycle;
 const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored : "time");
 const snapEnabled = signal(true);
+const storedWaveStyle = localStorage.getItem("codfish:waveformStyle");
+const waveformStyle = signal<WaveformStyle>(storedWaveStyle === "bars" ? "bars" : "continuous");
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 // Outer viewport width, mirrored into a signal so the virtualized ruler can
@@ -78,7 +84,6 @@ function waitForMediaDuration(timeoutMs: number): Promise<number | null> {
 
 export function Timeline() {
   const media = selectedMedia.value;
-  const playing = isPlaying.value;
   const profileDefaultFps = activeProfile.value.timing.defaultFps;
   const effectiveFps = media?.fps ?? profileDefaultFps;
   const fpsIsDetected = media != null && media.fps != null;
@@ -101,6 +106,7 @@ export function Timeline() {
     ? media.captions[media.captions.length - 1].end
     : 0;
   const duration = mediaDuration.value || waveformAudioDuration.value || captionDuration;
+  const waveStyle = waveformStyle.value;
 
   // Init / reinit the waveform painter when media changes
   useEffect(() => {
@@ -134,6 +140,8 @@ export function Timeline() {
     });
     painterRef.current = painter;
     painter.setLayoutDuration(duration);
+    painter.setStyle(waveStyle);
+    painter.setColor(getComputedStyle(canvas).getPropertyValue("--tl-waveform").trim() || "#374151");
 
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
@@ -206,6 +214,12 @@ export function Timeline() {
     painterRef.current?.setLayoutDuration(duration);
   }, [duration]);
 
+  // Push the chosen render style to the painter (same post-render pattern as
+  // duration, so it lands on the current painter after a media switch).
+  useEffect(() => {
+    painterRef.current?.setStyle(waveStyle);
+  }, [waveStyle]);
+
   // Scroll- and zoom-driven repaints are owned by the painter itself: it
   // listens to the outer container's scroll and observes the waveform row
   // for size changes (zoom changes the row's width, since the scroll-inner
@@ -243,20 +257,41 @@ export function Timeline() {
     return () => cancelAnimationFrame(raf);
   }, [media?.id]);
 
-  // Auto-scroll to keep playhead in view during playback
+  // Auto-scroll to keep the playhead in view when it MOVES on its own — during
+  // playback, or on a seek (selecting a caption in the panel, including
+  // re-selecting an off-screen active one). NOT while manually scrubbing/clicking
+  // the timeline: there the playhead is at the pointer and already visible, so a
+  // click shouldn't jump the view. Keyed on playbackTime (+ a reveal tick);
+  // mediaDuration/zoom/scrubbing are peeked so a settling duration, a zoom step
+  // (which has its own playhead-anchored scroll), or the scrub-release edge don't
+  // trigger it. Skipped at fit zoom and on a clip switch (the [media?.id] effect
+  // restores the remembered scroll there; following the playhead would clobber it).
+  const lastAutoScrollClip = useRef<string | undefined>(undefined);
   useSignalEffect(() => {
     const scroll = scrollRef.current;
     const time = playbackTime.value;
-    const dur = mediaDuration.value;
-    const isCurrentlyPlaying = isPlaying.value;
-    const zoom = zoomLevel.value;
+    const clipId = selectedMedia.value?.id;
+    const dur = mediaDuration.peek();
+    const zoom = zoomLevel.peek();
+    // Subscribe to panel reveal requests: re-clicking an active caption bumps this
+    // so we re-scroll to it even though its start is already the playhead.
+    void revealCaptionTick.value;
 
-    if (!scroll || !dur || zoom <= 1 || !isCurrentlyPlaying) return;
+    // Record the clip on every pass so a switch is detected exactly once — at the
+    // switch itself — even when we bail below because the duration hasn't loaded
+    // yet. Recording only after the bail would defer "switched" onto the user's
+    // first seek in the new clip and swallow its scroll. On the switch pass we
+    // skip: the [media?.id] effect is restoring the remembered scroll.
+    const switched = clipId !== lastAutoScrollClip.current;
+    lastAutoScrollClip.current = clipId;
 
-    const fraction = time / dur;
+    // Skipped while scrubbing/clicking the timeline (peeked, so the release edge
+    // doesn't fire a scroll either) — the playhead is at the pointer, in view.
+    if (!scroll || !dur || zoom <= 1 || switched || scrubbing.peek()) return;
+
     const totalWidth = scroll.scrollWidth;
     const visibleWidth = scroll.clientWidth;
-    const playheadPx = fraction * totalWidth;
+    const playheadPx = (time / dur) * totalWidth;
     const scrollLeft = scroll.scrollLeft;
 
     if (
@@ -313,25 +348,59 @@ export function Timeline() {
     if (e.button !== 0 || !duration) return;
     const el = e.currentTarget as HTMLElement;
 
+    const scroll = scrollRef.current;
     scrubbing.value = true; // pause per-action view persistence until release
     const wasPlaying = isPlaying.peek();
     if (wasPlaying) isPlaying.value = false;
 
-    const seek = (ev: MouseEvent) => {
+    const seekToClientX = (clientX: number) => {
       const rect = el.getBoundingClientRect();
-      const fraction = (ev.clientX - rect.left) / rect.width;
+      const fraction = (clientX - rect.left) / rect.width;
       playbackTime.value = Math.max(0, Math.min(duration, fraction * duration));
     };
 
-    seek(e);
+    seekToClientX(e.clientX);
 
-    const onMove = (ev: MouseEvent) => seek(ev);
+    // Edge-pan: once you've started dragging, holding the pointer near a viewport
+    // edge scrolls the timeline that way (and keeps seeking under the pointer) so
+    // you can scrub past what's visible. Speed ramps with how deep into the edge
+    // zone the pointer is, so it stays gentle; a plain click never pans (the
+    // `dragged` gate), and it stops at the content ends.
+    const startX = e.clientX;
+    let lastClientX = e.clientX;
+    let dragged = false;
+    let raf = 0;
+    const EDGE = 48; // px from each viewport edge that triggers panning
+    const MAX_SPEED = 16; // px/frame at the very edge
+    const pan = () => {
+      raf = requestAnimationFrame(pan);
+      if (!dragged || !scroll || zoomLevel.peek() <= 1) return;
+      const rect = scroll.getBoundingClientRect();
+      const x = lastClientX - rect.left;
+      let delta = 0;
+      if (x < EDGE) delta = -((EDGE - x) / EDGE) * MAX_SPEED;
+      else if (x > rect.width - EDGE) delta = ((x - (rect.width - EDGE)) / EDGE) * MAX_SPEED;
+      if (!delta) return;
+      const max = scroll.scrollWidth - scroll.clientWidth;
+      const next = Math.max(0, Math.min(max, scroll.scrollLeft + delta));
+      if (next === scroll.scrollLeft) return; // already at an end
+      scroll.scrollLeft = next;
+      seekToClientX(lastClientX); // keep the playhead under the held pointer
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - startX) > 4) dragged = true;
+      lastClientX = ev.clientX;
+      seekToClientX(ev.clientX);
+    };
     const onUp = () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       if (wasPlaying) isPlaying.value = true;
       scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
     };
+    raf = requestAnimationFrame(pan);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
@@ -347,17 +416,19 @@ export function Timeline() {
   // Live-update caption timing during drag (no history entry yet)
   const handleResizeLive = (index: number, newStart: number, newEnd: number) => {
     const proj = project.value;
-    if (!proj || !media) return;
+    const med = selectedMedia.value; // live, not the render-time const — the
+    const f = med?.fps ?? activeProfile.value.timing.defaultFps; // [/] keydown
+    if (!proj || !med) return; // handler reuses this from a mount-time closure
     project.value = {
       ...proj,
       media: proj.media.map((m) =>
-        m.id !== media.id ? m : {
+        m.id !== med.id ? m : {
           ...m,
           captions: m.captions.map((c) =>
             c.index !== index ? c : {
               ...c,
               start: Math.max(0, newStart),
-              end: Math.max(newStart + 1 / fps, newEnd),
+              end: Math.max(newStart + 1 / f, newEnd),
             }
           ),
         }
@@ -366,8 +437,8 @@ export function Timeline() {
   };
 
   // Commit caption timing after drag ends → push to undo history
-  const handleResizeCommit = () => {
-    if (project.value) pushHistory(project.value, "Resize caption");
+  const handleResizeCommit = (label = "Resize caption") => {
+    if (project.value) pushHistory(project.value, label);
   };
 
   // Zoom in/out keeping the playhead visually stationary.
@@ -412,7 +483,7 @@ export function Timeline() {
   // while blocked (update / batch generation) — document-level keydown isn't
   // caught by the inert app-shell.
   //   G            → toggle gap snap
-  //   Ctrl/Cmd +/- → zoom around playhead ("=" unshifted; "+"/"_" shifted/numpad)
+  //   +/-          → zoom around playhead ("=" unshifted; "+"/"_" shifted/numpad)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (
@@ -426,12 +497,58 @@ export function Timeline() {
       if (e.key === "g" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         snapEnabled.value = !snapEnabled.value;
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
+      } else if (e.key === "=" || e.key === "+") {
         e.preventDefault();
         zoomAroundPlayhead(1.5);
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "-" || e.key === "_")) {
+      } else if (e.key === "-" || e.key === "_") {
         e.preventDefault();
         zoomAroundPlayhead(1 / 1.5);
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Step the playhead one frame, paused (Premiere-style).
+        e.preventDefault();
+        stepPlayhead(e.key === "ArrowRight" ? 1 : -1);
+      } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Jump to the adjacent region boundary: every caption start/end, plus the
+        // timeline start (0) and end. Down → next, Up → previous.
+        e.preventDefault();
+        const m = selectedMedia.value;
+        const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        if (!dur) return;
+        isPlaying.value = false; // jumping is a paused review action
+        const bounds = [0, dur];
+        if (m) for (const c of m.captions) bounds.push(c.start, c.end);
+        const target = nextBoundary(playbackTime.peek(), bounds, e.key === "ArrowDown" ? 1 : -1);
+        if (target !== undefined) playbackTime.value = Math.max(0, Math.min(dur, target));
+      } else if ((e.key === "[" || e.key === "]") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Trim the selected caption's in ([) / out (]) edge to the playhead, then
+        // commit through the same path the resize-handle drag uses. Reads live.
+        e.preventDefault();
+        const m = selectedMedia.value;
+        const idx = selectedCaptionIndex.value;
+        if (!m || idx == null) return;
+        const f = m.fps ?? activeProfile.value.timing.defaultFps;
+        const dur = mediaDuration.peek() || (m.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        const trimmed = computeTrim(m.captions, idx, e.key === "[" ? "in" : "out", playbackTime.peek(), f, dur);
+        if (!trimmed) return; // caption not found, or clamped to no change
+        handleResizeLive(idx, trimmed.start, trimmed.end);
+        if (project.value) pushHistory(project.value, e.key === "[" ? "Trim caption in" : "Trim caption out");
+      } else if ((e.key === "{" || e.key === "}") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Rolling edit: { (Shift+[) rolls the cut on the selected caption's IN
+        // side, } (Shift+]) the OUT side — moving BOTH flanking edges to the
+        // playhead at once. Only fires when that boundary is shared (touching);
+        // a gapped edge has no single cut to roll, so it's a no-op.
+        e.preventDefault();
+        const m = selectedMedia.value;
+        const idx = selectedCaptionIndex.value;
+        if (!m || idx == null) return;
+        const f = m.fps ?? activeProfile.value.timing.defaultFps;
+        const roll = computeRoll(m.captions, idx, e.key === "{" ? "in" : "out", playbackTime.peek(), f);
+        if (!roll) return; // no shared boundary on that side, or no change
+        batch(() => {
+          handleResizeLive(roll.left.index, roll.left.start, roll.left.end);
+          handleResizeLive(roll.right.index, roll.right.start, roll.right.end);
+        });
+        if (project.value) pushHistory(project.value, "Roll edit");
       }
     };
     document.addEventListener("keydown", handler);
@@ -440,20 +557,11 @@ export function Timeline() {
 
   return (
     <div class="timeline">
-      {/* Transport controls */}
-      <div class="timeline-transport">
-        <button
-          class="timeline-btn"
-          onClick={() => { playbackTime.value = 0; }}
-          data-tooltip="Go to start"
-        ><SkipBack size={14} weight="fill" /></button>
-        <button
-          class="timeline-btn timeline-btn--play"
-          onClick={() => { isPlaying.value = !playing; }}
-          data-tooltip={playing ? "Pause" : "Play"}
-        >
-          {playing ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
-        </button>
+      {/* Timeline toolbar — only with a clip loaded: the timecode/fps readout on
+          the left, view tools (snap, follow, waveform, zoom) on the right.
+          Playback transport lives under the video — see <TransportBar />. */}
+      {media && (
+      <div class="timeline-toolbar">
         <span class="timeline-mode-label">
           {timecodeMode.value === "time" && "Time"}
           {timecodeMode.value === "smpte" && (media?.dropFrame ? "SMPTE DF" : "SMPTE")}
@@ -487,15 +595,39 @@ export function Timeline() {
         )}
 
         <button
-          class={`timeline-btn${snapEnabled.value ? " timeline-btn--active" : ""}`}
+          class={`timeline-btn timeline-tools-start${snapEnabled.value ? " timeline-btn--active" : ""}`}
           onClick={() => { snapEnabled.value = !snapEnabled.value; }}
           data-tooltip={snapEnabled.value ? "Gap snapping on (G)" : "Gap snapping off (G)"}
         >
           <Magnet size={14} />
         </button>
 
+        <button
+          class={`timeline-btn${followPlayhead.value ? " timeline-btn--active" : ""}`}
+          onClick={() => {
+            followPlayhead.value = !followPlayhead.value;
+            localStorage.setItem("codfish:followPlayhead", String(followPlayhead.value));
+          }}
+          data-tooltip={followPlayhead.value ? "Auto-select caption under playhead: on" : "Auto-select caption under playhead: off"}
+        >
+          <Crosshair size={14} />
+        </button>
+
+        <button
+          class="timeline-btn"
+          onClick={() => {
+            const next: WaveformStyle = waveformStyle.value === "continuous" ? "bars" : "continuous";
+            waveformStyle.value = next;
+            localStorage.setItem("codfish:waveformStyle", next);
+          }}
+          data-tooltip={waveformStyle.value === "continuous" ? "Waveform: continuous" : "Waveform: bars"}
+        >
+          {waveformStyle.value === "continuous" ? <WaveSine size={14} /> : <Waveform size={14} />}
+        </button>
+
         <ZoomControls scrollRef={scrollRef} zoomAroundPlayhead={zoomAroundPlayhead} />
       </div>
+      )}
 
       {/* Track area */}
       <div class="timeline-track-area">
@@ -509,7 +641,7 @@ export function Timeline() {
             <ScrollInner>
               {/* Ruler */}
               {duration > 0 && (
-                <RulerRow duration={duration} mode={smpteMode} fps={effectiveFps} />
+                <RulerRow duration={duration} mode={smpteMode} fps={effectiveFps} onMouseDown={handleWaveMouseDown} />
               )}
 
               {/* Waveform row — click to seek */}
@@ -556,8 +688,8 @@ export function Timeline() {
                     block={block}
                     duration={duration}
                     fps={effectiveFps}
-                    prevEnd={media.captions[i - 1]?.end ?? null}
-                    nextStart={media.captions[i + 1]?.start ?? null}
+                    prev={media.captions[i - 1] ?? null}
+                    next={media.captions[i + 1] ?? null}
                     snapEnabled={snapEnabled.value}
                     minGap={minGap}
                     blocksRowRef={blocksRowRef}
@@ -591,8 +723,8 @@ function ResizableCaptionBlock({
   block,
   duration,
   fps,
-  prevEnd,
-  nextStart,
+  prev,
+  next,
   snapEnabled,
   minGap,
   blocksRowRef,
@@ -607,8 +739,8 @@ function ResizableCaptionBlock({
   block: CaptionBlock;
   duration: number;
   fps: number;
-  prevEnd: number | null;
-  nextStart: number | null;
+  prev: CaptionBlock | null;
+  next: CaptionBlock | null;
   snapEnabled: boolean;
   minGap: number | null;
   blocksRowRef: { current: HTMLDivElement | null };
@@ -616,12 +748,18 @@ function ResizableCaptionBlock({
   playing: boolean;
   warnings: ValidationWarning[];
   onResizeLive: (index: number, start: number, end: number) => void;
-  onResizeCommit: () => void;
+  onResizeCommit: (label?: string) => void;
   onClick: () => void;
   onDblClick: () => void;
 }) {
   const left = (block.start / duration) * 100;
   const width = ((block.end - block.start) / duration) * 100;
+
+  // The trim/snap code works off the neighbours' adjacent edges; rolling also
+  // needs their far edges + indices, so the component takes the whole neighbour
+  // captions and derives the adjacent edges here.
+  const prevEnd = prev?.end ?? null;
+  const nextStart = next?.start ?? null;
 
   const hasStrict = warnings.some(w => w.strict);
   const hasFuzzy = warnings.some(w => !w.strict);
@@ -644,6 +782,22 @@ function ResizableCaptionBlock({
     const rowEl = blocksRowRef.current;
     if (!rowEl) return;
 
+    // Select the caption you grab — deterministically, here on mousedown, not via
+    // the post-drag click (which is suppressed below). The playhead is left where
+    // it is: a trim/roll targets the playhead, it shouldn't also move it.
+    selectedCaptionIndex.value = block.index;
+
+    // After a drag, the browser fires a synthetic `click` whose target is the
+    // common ancestor of the mousedown (this handle) and mouseup elements. When
+    // that resolves to the block it reaches the block's onClick, which seeks the
+    // playhead to the caption start and reselects — the intermittent jump the
+    // handle should never cause. Swallow that one click (capture phase).
+    const swallowClick = (ev: MouseEvent) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      document.removeEventListener("click", swallowClick, true);
+    };
+
     const rect = rowEl.getBoundingClientRect();
     const secPerPx = duration / rect.width;
     const minDuration = 1 / fps;
@@ -654,12 +808,39 @@ function ResizableCaptionBlock({
     let lastStart = originStart;
     let lastEnd = originEnd;
 
+    // Shift-drag a handle sitting on a shared boundary = rolling edit: move the
+    // cut between this caption and its neighbour, dragging both edges together.
+    // Decided at mousedown; a gapped edge has no shared cut, so it stays a trim.
+    const EPS = 1e-4;
+    const rolling = e.shiftKey && (
+      (edge === "left" && prev !== null && Math.abs(prev.end - originStart) < EPS) ||
+      (edge === "right" && next !== null && Math.abs(next.start - originEnd) < EPS)
+    );
+    if (rolling) e.preventDefault(); // don't let the shift-drag select page text
+
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - originX;
+      if (rolling) {
+        // The cut follows the cursor; computeRoll clamps it within the two
+        // captions (each keeps ≥ 1 frame), snaps to a frame, and reports both edges.
+        const rawCut = (edge === "left" ? originStart : originEnd) + dx * secPerPx;
+        const pair = edge === "left" ? [prev!, block] : [block, next!];
+        const roll = computeRoll(pair, block.index, edge === "left" ? "in" : "out", rawCut, fps);
+        if (roll) {
+          batch(() => {
+            onResizeLive(roll.left.index, roll.left.start, roll.left.end);
+            onResizeLive(roll.right.index, roll.right.start, roll.right.end);
+          });
+          const cut = roll.left.end; // === roll.right.start
+          resizeIndicator.value = cut;
+          resizeSnapped.value = false;
+          if (edge === "left") lastStart = cut; else lastEnd = cut;
+        }
+        return;
+      }
       if (edge === "left") {
         let rawTime = originStart + dx * secPerPx;
         let snapped: number | null = null;
-        const lowerBound = prevEnd ?? 0;
         if (snapEnabled) {
           // Dead zone + snap only when there's an actual preceding caption;
           // at the media start (prevEnd === null) the first caption can begin
@@ -677,8 +858,8 @@ function ResizableCaptionBlock({
           }
         }
         const newStart = snapped !== null
-          ? Math.max(lowerBound, Math.min(snapped, originEnd - minDuration))
-          : snapToFrame(Math.max(lowerBound, Math.min(rawTime, originEnd - minDuration)), fps);
+          ? clampStart(snapped, prevEnd, originEnd, minDuration)
+          : snapToFrame(clampStart(rawTime, prevEnd, originEnd, minDuration), fps);
         resizeIndicator.value = newStart;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, newStart, originEnd);
@@ -686,7 +867,6 @@ function ResizableCaptionBlock({
       } else {
         let rawTime = originEnd + dx * secPerPx;
         let snapped: number | null = null;
-        const upperBound = nextStart ?? duration;
         if (snapEnabled) {
           // Dead zone + snap only when there's an actual following caption;
           // at the media end (nextStart === null) the last caption can run
@@ -704,8 +884,8 @@ function ResizableCaptionBlock({
           }
         }
         const newEnd = snapped !== null
-          ? Math.max(originStart + minDuration, Math.min(snapped, upperBound))
-          : snapToFrame(Math.max(originStart + minDuration, Math.min(rawTime, upperBound)), fps);
+          ? clampEnd(snapped, originStart, nextStart, duration, minDuration)
+          : snapToFrame(clampEnd(rawTime, originStart, nextStart, duration, minDuration), fps);
         resizeIndicator.value = newEnd;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);
@@ -718,9 +898,13 @@ function ResizableCaptionBlock({
       resizeSnapped.value = false;
       // Skip commit if the final snapped values land back on the origin —
       // a drag that snaps into its starting position produced no net change.
-      if (lastStart !== originStart || lastEnd !== originEnd) onResizeCommit();
+      if (lastStart !== originStart || lastEnd !== originEnd) onResizeCommit(rolling ? "Roll edit" : undefined);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      // Eat the trailing click (registered now so it's live before the click
+      // fires); tidy the listener up next tick if no click follows.
+      document.addEventListener("click", swallowClick, true);
+      setTimeout(() => document.removeEventListener("click", swallowClick, true), 0);
     };
 
     window.addEventListener("mousemove", onMove);
@@ -762,7 +946,7 @@ function TimelinePlayhead({ duration }: { duration: number }) {
 }
 
 /** Same isolation pattern as TimelinePlayhead — owns the per-tick
- *  playbackTime read so the surrounding transport bar stays static. */
+ *  playbackTime read so the surrounding timeline toolbar stays static. */
 function TransportTimecode({ mode, fps, duration }: {
   mode: DisplayMode;
   fps: number;
@@ -782,10 +966,11 @@ function TransportTimecode({ mode, fps, duration }: {
  *  count scales with zoom — tens of thousands of divs rebuilt on every
  *  zoom step; with it, renders stay at a few dozen nodes and panning
  *  re-renders only this row. */
-function RulerRow({ duration, mode, fps }: {
+function RulerRow({ duration, mode, fps, onMouseDown }: {
   duration: number;
   mode: DisplayMode;
   fps: number;
+  onMouseDown: (e: MouseEvent) => void;
 }) {
   const zoom = zoomLevel.value;
   const scrollLeft = timelineScroll.value;
@@ -808,7 +993,7 @@ function RulerRow({ duration, mode, fps }: {
   }
 
   return (
-    <div class="timeline-ruler-row">
+    <div class="timeline-ruler-row" onMouseDown={onMouseDown}>
       {ticks.map(t => (
         <div
           key={t}
@@ -839,7 +1024,7 @@ function ScrollInner({ children }: { children: ComponentChildren }) {
 }
 
 /** Reads zoomLevel locally so zoom steps re-render three buttons, not the
- *  whole transport bar. */
+ *  whole timeline toolbar. */
 function ZoomControls({ scrollRef, zoomAroundPlayhead }: {
   scrollRef: { current: HTMLDivElement | null };
   zoomAroundPlayhead: (factor: number) => void;
@@ -850,7 +1035,7 @@ function ZoomControls({ scrollRef, zoomAroundPlayhead }: {
       <button
         class="timeline-btn timeline-btn--sm"
         onClick={() => zoomAroundPlayhead(1 / 1.5)}
-        data-tooltip="Zoom out (Ctrl/Cmd −, Ctrl/Cmd+Scroll)"
+        data-tooltip="Zoom out (− or Ctrl/Cmd+Scroll)"
         disabled={zoom <= 1}
       ><Minus size={12} /></button>
       <button
@@ -866,7 +1051,7 @@ function ZoomControls({ scrollRef, zoomAroundPlayhead }: {
       <button
         class="timeline-btn timeline-btn--sm"
         onClick={() => zoomAroundPlayhead(1.5)}
-        data-tooltip="Zoom in (Ctrl/Cmd +, Ctrl/Cmd+Scroll)"
+        data-tooltip="Zoom in (+ or Ctrl/Cmd+Scroll)"
       ><Plus size={12} /></button>
     </div>
   );

@@ -5,6 +5,7 @@ import type { ExportFormat } from "../lib/export";
 import type { TranscriptionProgress } from "../lib/transcription";
 import { validate } from "../lib/pipeline/validate";
 import { findCaptionAt } from "../lib/pipeline";
+import { frameStep } from "../lib/playhead";
 import type { ValidationWarning } from "../lib/pipeline/types";
 import { SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../lib/mediaSort";
 import { getClipView, rememberClipView, rememberActiveClip } from "../lib/clipView";
@@ -76,6 +77,10 @@ export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 // persist effect below skip the continuous drag and fire once on release — when
 // the playhead has "landed somewhere" — instead of writing on every pointermove.
 export const scrubbing = signal(false);
+// Bumped when a caption is clicked in the captions panel, to ask the timeline to
+// scroll that caption into view — even when it's already the active one (its start
+// already the playhead), which wouldn't otherwise change any signal.
+export const revealCaptionTick = signal(0);
 // Timeline zoom (1 = Fit … 500). Lives here (not in Timeline) so it's part of the
 // per-clip view memory: remembered per clip and restored on switch, like the
 // playhead. The persist effect reads it via peek so a Ctrl-wheel zoom gesture
@@ -461,6 +466,38 @@ export const playingCaptionIndex = computed((): number | null => {
   if (!media) return null;
   return findCaptionAt(media.captions, time)?.index ?? null;
 });
+
+// "Follow playhead": when on, the active (selected) caption tracks the one under
+// the playhead — during playback, scrubbing, frame-step, region-jump. Persisted;
+// default off. Toggled from the timeline toolbar.
+const storedFollow = localStorage.getItem("codfish:followPlayhead");
+export const followPlayhead = signal(storedFollow === "true");
+effect(() => {
+  // Mirror the caption under the playhead into the selection. Subscribe to
+  // playbackTime directly so this re-asserts on EVERY playhead move, not only
+  // when the caption under it changes: after a manual deselect with the playhead
+  // parked inside a caption, a within-caption scrub/frame-step doesn't change
+  // playingCaptionIndex, so without this the caption would never re-select. Skips
+  // gaps (playingCaptionIndex null) so the selection doesn't flicker between
+  // captions. Reads no selection signal, so writing it here can't re-trigger this.
+  void playbackTime.value;
+  if (followPlayhead.value && playingCaptionIndex.value != null) {
+    selectedCaptionIndex.value = playingCaptionIndex.value;
+  }
+});
+
+/** Step the playhead one frame in `dir` (1 = forward, -1 = back) and pause —
+ *  the shared action behind the Left/Right keys and the transport's frame-step
+ *  buttons. No-op without a usable fps and duration. */
+export function stepPlayhead(dir: 1 | -1): void {
+  const m = selectedMedia.peek();
+  const f = m?.fps ?? activeProfile.peek().timing.defaultFps;
+  const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+  if (!f || !dur) return;
+  isPlaying.value = false; // stepping is a paused review action
+  const next = frameStep(playbackTime.peek(), f, dir);
+  playbackTime.value = Math.max(0, Math.min(dur, next));
+}
 
 /** Validation warnings for the selected media's captions, grouped by caption
  * index. Cached: only re-runs validate() when captions, profile, or fps

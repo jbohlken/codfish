@@ -998,6 +998,36 @@ body.rows-dragging * {
   position: relative;
 }
 
+/* Center column = the video preview with the playback transport docked beneath
+   it. The column carries the left/right dividers the panels used to draw via
+   `.panel + .panel`, since the wrapper itself isn't a .panel. */
+.video-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+}
+.video-column > .video-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Playback-only strip under the video: go to start, frame-step, play/pause.
+   Timeline-view tools live in the timeline toolbar, not here. */
+.transport-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
 .video-container {
   display: flex;
   align-items: center;
@@ -1269,7 +1299,7 @@ body.rows-dragging * {
   overflow: hidden;
 }
 
-.timeline-transport {
+.timeline-toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -1324,12 +1354,10 @@ body.rows-dragging * {
 }
 
 .timeline-fps-badge {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--tl-text-secondary);
   user-select: none;
-  padding-right: var(--space-2);
 }
 
 .timeline-fps-badge--default {
@@ -1339,6 +1367,12 @@ body.rows-dragging * {
 
 .timeline-fps-badge--vfr {
   color: var(--color-warning, #e5a100);
+}
+
+/* Pushes the right-aligned tool group (snap, waveform style, zoom) to the far
+   edge of the timeline toolbar, so the timecode + fps stay grouped on the left. */
+.timeline-tools-start {
+  margin-left: auto;
 }
 
 .timeline-btn--timecode {
@@ -1363,6 +1397,9 @@ body.rows-dragging * {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Kill the macOS rubber-band/overshoot — it's disorienting on a timeline and
+     fights precise scrubbing. Also stops the scroll chaining to ancestors. */
+  overscroll-behavior-x: none;
 }
 
 .timeline-scroll-outer::-webkit-scrollbar {
@@ -1433,6 +1470,13 @@ body.rows-dragging * {
   position: relative;
   background: var(--tl-surface);
   border-bottom: 1px solid var(--tl-border);
+  /* Clip the playhead's 1px line + round handle at the row's left/right edges so
+     parking the playhead at the very end doesn't add a few px of horizontal
+     overflow — which, at fit zoom, surfaces a stray scrollbar. `clip` (not
+     `hidden`) so the row doesn't become a scroll container and break the
+     position:sticky waveform canvas; overflow-y stays visible so the handle can
+     still poke above the row. */
+  overflow-x: clip;
 }
 
 /* Sticks to the visible window while the full-width row scrolls
@@ -1483,6 +1527,7 @@ body.rows-dragging * {
   border-bottom: 1px solid var(--tl-border);
   overflow: hidden;
   user-select: none;
+  cursor: pointer; /* click/drag to seek, like the waveform below */
 }
 
 .timeline-ruler-tick {
@@ -1533,7 +1578,7 @@ body.rows-dragging * {
 .timeline-playhead::before {
   content: "";
   position: absolute;
-  top: -4px;
+  top: -9px;
   left: -4px;
   width: 9px;
   height: 9px;
@@ -1584,10 +1629,14 @@ body.rows-dragging * {
 .timeline-block--selected {
   background: var(--tl-caption-block-selected);
   border-color: rgba(255,255,255,0.3);
+  /* Lift above neighbouring blocks so the selection (and playing) outline isn't
+     painted over by the next block — they're absolutely positioned siblings. */
+  z-index: 1;
 }
 
 .timeline-block--playing {
   box-shadow: 0 0 0 1px var(--color-playing-border), 0 0 8px 3px color-mix(in srgb, var(--color-playing-border) 40%, transparent);
+  z-index: 2;
 }
 
 .timeline-block-label {

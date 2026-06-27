@@ -14,6 +14,7 @@ import "./styles/components.css";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
+import { TransportBar } from "./components/layout/TransportBar";
 import { CaptionPanel, commitActiveEdit, cancelActiveEdit } from "./components/layout/CaptionPanel";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory, isBatchRunning, flushOpenClipView } from "./store/app";
@@ -442,7 +443,10 @@ export function App() {
         <TitleBar />
         <div class="main-panels">
           <ProjectPanel />
-          <VideoPanel />
+          <div class="video-column">
+            <VideoPanel />
+            <TransportBar />
+          </div>
           <CaptionPanel />
         </div>
         <Timeline />
