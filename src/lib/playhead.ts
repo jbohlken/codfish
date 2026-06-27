@@ -104,3 +104,41 @@ export function computeTrim(
   const end = snapToFrame(clampEnd(time, cap.start, nextStart, dur, minDur), fps);
   return end === cap.end ? null : { start: cap.start, end };
 }
+
+export interface RollResult {
+  left: { index: number; start: number; end: number };
+  right: { index: number; start: number; end: number };
+}
+
+/**
+ * Compute a rolling edit: move the shared cut on the selected caption's `side`
+ * (the boundary it shares with its previous/next neighbour) to `time`, dragging
+ * both flanking edges with it — left.end and right.start both become the cut. The
+ * cut is clamped within the two captions (each keeps ≥ one frame) and snapped to a
+ * frame. Returns null if there's no neighbour on that side, the boundary isn't
+ * shared (a gap — nothing to roll), the caption isn't found, or it'd be a no-op.
+ * `captions` are assumed sorted by start, so array neighbours are temporal ones.
+ */
+export function computeRoll(
+  captions: readonly { index: number; start: number; end: number }[],
+  index: number,
+  side: "in" | "out",
+  time: number,
+  fps: number,
+  eps = 1e-4,
+): RollResult | null {
+  const pos = captions.findIndex((c) => c.index === index);
+  if (pos < 0) return null;
+  // The two captions flanking the cut: left | right.
+  const left = captions[side === "in" ? pos - 1 : pos];
+  const right = captions[side === "in" ? pos : pos + 1];
+  if (!left || !right) return null; // no neighbour on that side
+  if (Math.abs(left.end - right.start) > eps) return null; // not a shared boundary
+  const minDur = 1 / fps;
+  const cut = snapToFrame(Math.max(left.start + minDur, Math.min(time, right.end - minDur)), fps);
+  if (cut === left.end) return null; // cut wouldn't move
+  return {
+    left: { index: left.index, start: left.start, end: cut },
+    right: { index: right.index, start: cut, end: right.end },
+  };
+}

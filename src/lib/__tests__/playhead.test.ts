@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { frameStep, frameMidpoint, nextBoundary, clampStart, clampEnd, computeTrim } from "../playhead";
+import { frameStep, frameMidpoint, nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../playhead";
 
 const FPS = 30;
 
@@ -122,5 +122,44 @@ describe("computeTrim", () => {
   });
   it("returns null when the caption isn't found", () => {
     expect(computeTrim(caps, 99, "in", 4, FPS, DUR)).toBeNull();
+  });
+});
+
+describe("computeRoll", () => {
+  // Captions 1 & 2 share a cut at 3.0s; a gap precedes caption 3.
+  const caps = [
+    { index: 1, start: 1, end: 3 },
+    { index: 2, start: 3, end: 5 },
+    { index: 3, start: 6, end: 8 },
+  ];
+
+  it("rolls the shared cut on the selected caption's in side (both edges move)", () => {
+    expect(computeRoll(caps, 2, "in", 3.5, FPS)).toEqual({
+      left: { index: 1, start: 1, end: 3.5 },
+      right: { index: 2, start: 3.5, end: 5 },
+    });
+  });
+  it("rolls the same cut from the neighbour's out side", () => {
+    expect(computeRoll(caps, 1, "out", 3.5, FPS)).toEqual({
+      left: { index: 1, start: 1, end: 3.5 },
+      right: { index: 2, start: 3.5, end: 5 },
+    });
+  });
+  it("clamps the cut so neither caption drops below a frame", () => {
+    const r = computeRoll(caps, 2, "in", 0, FPS); // dragged far past the left
+    expect(r?.left.end).toBeCloseTo(1 + 1 / FPS, 9);
+    expect(r?.right.start).toBeCloseTo(1 + 1 / FPS, 9);
+  });
+  it("is a no-op when the cut wouldn't move", () => {
+    expect(computeRoll(caps, 2, "in", 3, FPS)).toBeNull();
+  });
+  it("returns null with no neighbour on that side (first caption's in)", () => {
+    expect(computeRoll(caps, 1, "in", 2, FPS)).toBeNull();
+  });
+  it("returns null with no neighbour on that side (last caption's out)", () => {
+    expect(computeRoll(caps, 3, "out", 7, FPS)).toBeNull();
+  });
+  it("returns null when the boundary isn't shared (a gap, not a cut)", () => {
+    expect(computeRoll(caps, 2, "out", 5.5, FPS)).toBeNull();
   });
 });
