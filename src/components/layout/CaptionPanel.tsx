@@ -432,7 +432,10 @@ export function CaptionPanel() {
             )}
           </div>
         ) : (
-          <div class="caption-list" onClick={(e) => { if (e.target === e.currentTarget) selectedCaptionIndex.value = null; }}>
+          <div class="caption-list" onClick={(e) => { if (!(e.target as HTMLElement).closest(".caption-row")) selectedCaptionIndex.value = null; }}>
+            {/* A click that misses every row (padding, the filler below the last
+                row) clears the selection — row clicks select and stop here by
+                hitting .caption-row first. Mirrors the project panel's idiom. */}
             {media.captions.map((block) => (
               <CaptionRow
                 key={block.index}
