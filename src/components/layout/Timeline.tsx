@@ -483,7 +483,7 @@ export function Timeline() {
   // while blocked (update / batch generation) — document-level keydown isn't
   // caught by the inert app-shell.
   //   G            → toggle gap snap
-  //   Ctrl/Cmd +/- → zoom around playhead ("=" unshifted; "+"/"_" shifted/numpad)
+  //   +/-          → zoom around playhead ("=" unshifted; "+"/"_" shifted/numpad)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (
@@ -497,10 +497,10 @@ export function Timeline() {
       if (e.key === "g" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         snapEnabled.value = !snapEnabled.value;
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
+      } else if (e.key === "=" || e.key === "+") {
         e.preventDefault();
         zoomAroundPlayhead(1.5);
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "-" || e.key === "_")) {
+      } else if (e.key === "-" || e.key === "_") {
         e.preventDefault();
         zoomAroundPlayhead(1 / 1.5);
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1035,7 +1035,7 @@ function ZoomControls({ scrollRef, zoomAroundPlayhead }: {
       <button
         class="timeline-btn timeline-btn--sm"
         onClick={() => zoomAroundPlayhead(1 / 1.5)}
-        data-tooltip="Zoom out (Ctrl/Cmd −, Ctrl/Cmd+Scroll)"
+        data-tooltip="Zoom out (− or Ctrl/Cmd+Scroll)"
         disabled={zoom <= 1}
       ><Minus size={12} /></button>
       <button
@@ -1051,7 +1051,7 @@ function ZoomControls({ scrollRef, zoomAroundPlayhead }: {
       <button
         class="timeline-btn timeline-btn--sm"
         onClick={() => zoomAroundPlayhead(1.5)}
-        data-tooltip="Zoom in (Ctrl/Cmd +, Ctrl/Cmd+Scroll)"
+        data-tooltip="Zoom in (+ or Ctrl/Cmd+Scroll)"
       ><Plus size={12} /></button>
     </div>
   );
