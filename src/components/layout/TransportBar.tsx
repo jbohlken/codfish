@@ -6,8 +6,7 @@ import {
   PlayIcon as Play,
   PauseIcon as Pause,
 } from "@phosphor-icons/react";
-import { selectedMedia, isPlaying, playbackTime, mediaDuration, activeProfile } from "../../store/app";
-import { frameStep } from "../../lib/playhead";
+import { selectedMedia, isPlaying, playbackTime, mediaDuration, stepPlayhead } from "../../store/app";
 
 /**
  * Playback transport — a strip docked under the video preview: go to start,
@@ -20,17 +19,6 @@ export function TransportBar() {
   const playing = isPlaying.value;
   if (!media) return null;
 
-  // One frame back/forward, paused — the same action as the Left/Right keys.
-  const stepFrame = (dir: 1 | -1) => {
-    const m = selectedMedia.peek();
-    const f = m?.fps ?? activeProfile.value.timing.defaultFps;
-    const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
-    if (!f || !dur) return;
-    isPlaying.value = false; // stepping is a paused review action
-    const next = frameStep(playbackTime.peek(), f, dir);
-    playbackTime.value = Math.max(0, Math.min(dur, next));
-  };
-
   const goToEnd = () => {
     const m = selectedMedia.peek();
     const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
@@ -42,7 +30,7 @@ export function TransportBar() {
       <button class="timeline-btn" onClick={() => { playbackTime.value = 0; }} data-tooltip="Go to start">
         <SkipBack size={14} weight="fill" />
       </button>
-      <button class="timeline-btn" onClick={() => stepFrame(-1)} data-tooltip="Previous frame (←)">
+      <button class="timeline-btn" onClick={() => stepPlayhead(-1)} data-tooltip="Previous frame (←)">
         <StepBack size={16} />
       </button>
       <button
@@ -52,7 +40,7 @@ export function TransportBar() {
       >
         {playing ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
       </button>
-      <button class="timeline-btn" onClick={() => stepFrame(1)} data-tooltip="Next frame (→)">
+      <button class="timeline-btn" onClick={() => stepPlayhead(1)} data-tooltip="Next frame (→)">
         <StepForward size={16} />
       </button>
       <button class="timeline-btn" onClick={goToEnd} data-tooltip="Go to end">

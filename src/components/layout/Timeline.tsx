@@ -5,12 +5,13 @@ import { useSignalEffect, signal, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
-import { frameStep, nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../../lib/playhead";
+import { nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedCaptionIndex,
   playbackTime,
   isPlaying,
+  stepPlayhead,
   scrubbing,
   revealCaptionTick,
   zoomLevel,
@@ -503,16 +504,9 @@ export function Timeline() {
         e.preventDefault();
         zoomAroundPlayhead(1 / 1.5);
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        // Step the playhead one frame (Premiere-style). fps/duration read live —
-        // this effect's closure is mount-time, so the component consts are stale.
+        // Step the playhead one frame, paused (Premiere-style).
         e.preventDefault();
-        const m = selectedMedia.value;
-        const f = m?.fps ?? activeProfile.value.timing.defaultFps;
-        const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
-        if (!f || !dur) return;
-        isPlaying.value = false; // stepping is a paused review action
-        const next = frameStep(playbackTime.peek(), f, e.key === "ArrowRight" ? 1 : -1);
-        playbackTime.value = Math.max(0, Math.min(dur, next));
+        stepPlayhead(e.key === "ArrowRight" ? 1 : -1);
       } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Jump to the adjacent region boundary: every caption start/end, plus the
         // timeline start (0) and end. Down → next, Up → previous.

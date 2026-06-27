@@ -5,6 +5,7 @@ import type { ExportFormat } from "../lib/export";
 import type { TranscriptionProgress } from "../lib/transcription";
 import { validate } from "../lib/pipeline/validate";
 import { findCaptionAt } from "../lib/pipeline";
+import { frameStep } from "../lib/playhead";
 import type { ValidationWarning } from "../lib/pipeline/types";
 import { SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../lib/mediaSort";
 import { getClipView, rememberClipView, rememberActiveClip } from "../lib/clipView";
@@ -484,6 +485,19 @@ effect(() => {
     selectedCaptionIndex.value = playingCaptionIndex.value;
   }
 });
+
+/** Step the playhead one frame in `dir` (1 = forward, -1 = back) and pause —
+ *  the shared action behind the Left/Right keys and the transport's frame-step
+ *  buttons. No-op without a usable fps and duration. */
+export function stepPlayhead(dir: 1 | -1): void {
+  const m = selectedMedia.peek();
+  const f = m?.fps ?? activeProfile.peek().timing.defaultFps;
+  const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+  if (!f || !dur) return;
+  isPlaying.value = false; // stepping is a paused review action
+  const next = frameStep(playbackTime.peek(), f, dir);
+  playbackTime.value = Math.max(0, Math.min(dur, next));
+}
 
 /** Validation warnings for the selected media's captions, grouped by caption
  * index. Cached: only re-runs validate() when captions, profile, or fps

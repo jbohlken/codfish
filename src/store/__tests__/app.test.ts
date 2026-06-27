@@ -9,6 +9,8 @@ import {
   playbackTime,
   followPlayhead,
   isPlaying,
+  mediaDuration,
+  stepPlayhead,
   scrubbing,
   zoomLevel,
   timelineScroll,
@@ -568,5 +570,44 @@ describe("followPlayhead (auto-select caption under playhead)", () => {
     expect(selectedCaptionIndex.value).toBeNull(); // stays deselected with no playhead move
     playbackTime.value = 0.6; // frame-step within caption 1 — no boundary crossing
     expect(selectedCaptionIndex.value).toBe(1); // re-asserted on the move
+  });
+});
+
+describe("stepPlayhead (frame-step, shared by the keys + transport)", () => {
+  // media-1 has fps 30; 3 captions running to 5.5s.
+  beforeEach(() => {
+    resetHistory(makeProject("step", 3));
+    selectedMediaId.value = "media-1";
+    mediaDuration.value = 5.5;
+    playbackTime.value = 1; // frame 30
+    isPlaying.value = true;
+  });
+  afterEach(() => { isPlaying.value = false; });
+
+  it("advances one frame and pauses", () => {
+    stepPlayhead(1);
+    expect(playbackTime.value).toBeCloseTo(1 + 1 / 30, 9);
+    expect(isPlaying.value).toBe(false);
+  });
+  it("steps back one frame", () => {
+    stepPlayhead(-1);
+    expect(playbackTime.value).toBeCloseTo(1 - 1 / 30, 9);
+  });
+  it("clamps at the start", () => {
+    playbackTime.value = 0;
+    stepPlayhead(-1);
+    expect(playbackTime.value).toBe(0);
+  });
+  it("clamps at the duration", () => {
+    playbackTime.value = 5.5;
+    stepPlayhead(1);
+    expect(playbackTime.value).toBe(5.5);
+  });
+  it("is a no-op with no usable duration", () => {
+    project.value = makeProject("empty", 0); // no captions
+    mediaDuration.value = 0;
+    playbackTime.value = 2;
+    stepPlayhead(1);
+    expect(playbackTime.value).toBe(2);
   });
 });
