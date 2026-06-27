@@ -472,10 +472,14 @@ export const playingCaptionIndex = computed((): number | null => {
 const storedFollow = localStorage.getItem("codfish:followPlayhead");
 export const followPlayhead = signal(storedFollow === "true");
 effect(() => {
-  // Mirror the caption under the playhead into the selection. Skips gaps
-  // (playingCaptionIndex null) so the selection doesn't flicker between captions.
-  // Reads only the two source signals (not selectedCaptionIndex), so writing the
-  // selection here can't re-trigger this effect.
+  // Mirror the caption under the playhead into the selection. Subscribe to
+  // playbackTime directly so this re-asserts on EVERY playhead move, not only
+  // when the caption under it changes: after a manual deselect with the playhead
+  // parked inside a caption, a within-caption scrub/frame-step doesn't change
+  // playingCaptionIndex, so without this the caption would never re-select. Skips
+  // gaps (playingCaptionIndex null) so the selection doesn't flicker between
+  // captions. Reads no selection signal, so writing it here can't re-trigger this.
+  void playbackTime.value;
   if (followPlayhead.value && playingCaptionIndex.value != null) {
     selectedCaptionIndex.value = playingCaptionIndex.value;
   }

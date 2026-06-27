@@ -559,4 +559,14 @@ describe("followPlayhead (auto-select caption under playhead)", () => {
     playbackTime.value = 2.5; // inside caption 2, but follow is off
     expect(selectedCaptionIndex.value).toBeNull();
   });
+
+  it("re-selects after a manual deselect when the playhead moves within the same caption", () => {
+    followPlayhead.value = true;
+    playbackTime.value = 0.5; // inside caption 1
+    expect(selectedCaptionIndex.value).toBe(1);
+    selectedCaptionIndex.value = null; // click off to deselect; playhead still over caption 1
+    expect(selectedCaptionIndex.value).toBeNull(); // stays deselected with no playhead move
+    playbackTime.value = 0.6; // frame-step within caption 1 — no boundary crossing
+    expect(selectedCaptionIndex.value).toBe(1); // re-asserted on the move
+  });
 });
