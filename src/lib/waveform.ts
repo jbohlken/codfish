@@ -30,6 +30,64 @@ const BAR_RADIUS = 2;
 // Fallback fill if the --tl-waveform CSS variable can't be read.
 const DEFAULT_WAVE_COLOR = "#374151";
 
+// ── Pure reduction helpers ────────────────────────────────────────────────────
+// Lifted out of the painter so the fiddly bin→column math (where off-by-ones and
+// scale bugs hide) is unit-testable without a canvas. The painter calls these.
+
+/** Largest peak in the envelope — the global normalization reference. */
+export function computePeakMax(peaks: Float32Array | number[]): number {
+  let max = 0;
+  for (let i = 0; i < peaks.length; i++) if (peaks[i] > max) max = peaks[i];
+  return max;
+}
+
+/** Bins whose content-pixel columns intersect the viewport
+ *  [scrollLeftPx, scrollLeftPx + viewWidthPx], padded one column each side so the
+ *  filled envelope reaches both edges, clamped to [0, binCount - 1]. Device px. */
+export function continuousBinRange(
+  scrollLeftPx: number,
+  viewWidthPx: number,
+  pxPerSec: number,
+  binsPerSec: number,
+  binCount: number,
+): { firstBin: number; lastBin: number } {
+  const firstBin = Math.max(0, Math.floor((scrollLeftPx / pxPerSec) * binsPerSec) - 1);
+  const lastBin = Math.min(binCount - 1, Math.ceil(((scrollLeftPx + viewWidthPx) / pxPerSec) * binsPerSec) + 1);
+  return { firstBin, lastBin };
+}
+
+/** Max-reduce peak bins [firstBin, lastBin] into integer content-pixel columns:
+ *  one envelope point per column, its amplitude the per-column max × ampScale
+ *  floored at minAmp (so silence still reads as a thin centerline).
+ *  col = floor((bin / binsPerSec) × pxPerSec). Writes into outX/outAmp (cleared
+ *  first; passed in so the painter reuses buffers and avoids per-frame allocation). */
+export function reduceColumns(
+  peaks: Float32Array | number[],
+  firstBin: number,
+  lastBin: number,
+  binsPerSec: number,
+  pxPerSec: number,
+  ampScale: number,
+  minAmp: number,
+  outX: number[],
+  outAmp: number[],
+): void {
+  outX.length = 0;
+  outAmp.length = 0;
+  let curCol = -1;
+  let curMax = 0;
+  for (let b = firstBin; b <= lastBin; b++) {
+    const col = Math.floor((b / binsPerSec) * pxPerSec);
+    if (col !== curCol) {
+      if (curCol >= 0) { outX.push(curCol); outAmp.push(Math.max(curMax * ampScale, minAmp)); }
+      curCol = col;
+      curMax = 0;
+    }
+    if (peaks[b] > curMax) curMax = peaks[b];
+  }
+  if (curCol >= 0) { outX.push(curCol); outAmp.push(Math.max(curMax * ampScale, minAmp)); }
+}
+
 export interface WaveformPainter {
   /** Peak envelope from the pipeline. audioDuration is the seconds the peaks
    *  cover (sidecar-reported). */
@@ -135,22 +193,8 @@ export function createWaveformPainter(opts: {
     // the fill interpolates between them (a smooth envelope) rather than leaving
     // gaps. Floor each column so silence still reads as a thin centerline.
     const minAmp = 0.5 * dpr;
-    const firstBin = Math.max(0, Math.floor((scrollLeft / pxPerSec) * binsPerSec) - 1);
-    const lastBin = Math.min(peaks.length - 1, Math.ceil(((scrollLeft + w) / pxPerSec) * binsPerSec) + 1);
-    pxBuf.length = 0;
-    ampBuf.length = 0;
-    let curCol = -1;
-    let curMax = 0;
-    for (let b = firstBin; b <= lastBin; b++) {
-      const col = Math.floor((b / binsPerSec) * pxPerSec);
-      if (col !== curCol) {
-        if (curCol >= 0) { pxBuf.push(curCol); ampBuf.push(Math.max(curMax * ampScale, minAmp)); }
-        curCol = col;
-        curMax = 0;
-      }
-      if (peaks[b] > curMax) curMax = peaks[b];
-    }
-    if (curCol >= 0) { pxBuf.push(curCol); ampBuf.push(Math.max(curMax * ampScale, minAmp)); }
+    const { firstBin, lastBin } = continuousBinRange(scrollLeft, w, pxPerSec, binsPerSec, peaks.length);
+    reduceColumns(peaks, firstBin, lastBin, binsPerSec, pxPerSec, ampScale, minAmp, pxBuf, ampBuf);
     if (!pxBuf.length) return;
     ctx.beginPath();
     ctx.moveTo(pxBuf[0] - scrollLeft, halfHeight - ampBuf[0]);
@@ -182,10 +226,7 @@ export function createWaveformPainter(opts: {
     setPeaks(p, dur) {
       peaks = p;
       audioDuration = dur;
-      peakMax = 0;
-      for (let i = 0; i < p.length; i++) {
-        if (p[i] > peakMax) peakMax = p[i];
-      }
+      peakMax = computePeakMax(p);
       schedulePaint();
     },
     setLayoutDuration(seconds) {
