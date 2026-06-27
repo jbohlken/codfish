@@ -1,11 +1,11 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { SkipBackIcon as SkipBack, PlayIcon as Play, PauseIcon as Pause, MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair } from "@phosphor-icons/react";
-import { useSignalEffect, signal } from "@preact/signals";
+import { useSignalEffect, signal, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
-import { frameStep, nextBoundary, clampStart, clampEnd, computeTrim } from "../../lib/playhead";
+import { frameStep, nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedCaptionIndex,
@@ -437,8 +437,8 @@ export function Timeline() {
   };
 
   // Commit caption timing after drag ends → push to undo history
-  const handleResizeCommit = () => {
-    if (project.value) pushHistory(project.value, "Resize caption");
+  const handleResizeCommit = (label = "Resize caption") => {
+    if (project.value) pushHistory(project.value, label);
   };
 
   // Zoom in/out keeping the playhead visually stationary.
@@ -539,6 +539,23 @@ export function Timeline() {
         if (!trimmed) return; // caption not found, or clamped to no change
         handleResizeLive(idx, trimmed.start, trimmed.end);
         if (project.value) pushHistory(project.value, e.key === "[" ? "Trim caption in" : "Trim caption out");
+      } else if ((e.key === "{" || e.key === "}") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Rolling edit: { (Shift+[) rolls the cut on the selected caption's IN
+        // side, } (Shift+]) the OUT side — moving BOTH flanking edges to the
+        // playhead at once. Only fires when that boundary is shared (touching);
+        // a gapped edge has no single cut to roll, so it's a no-op.
+        e.preventDefault();
+        const m = selectedMedia.value;
+        const idx = selectedCaptionIndex.value;
+        if (!m || idx == null) return;
+        const f = m.fps ?? activeProfile.value.timing.defaultFps;
+        const roll = computeRoll(m.captions, idx, e.key === "{" ? "in" : "out", playbackTime.peek(), f);
+        if (!roll) return; // no shared boundary on that side, or no change
+        batch(() => {
+          handleResizeLive(roll.left.index, roll.left.start, roll.left.end);
+          handleResizeLive(roll.right.index, roll.right.start, roll.right.end);
+        });
+        if (project.value) pushHistory(project.value, "Roll edit");
       }
     };
     document.addEventListener("keydown", handler);
@@ -689,8 +706,8 @@ export function Timeline() {
                     block={block}
                     duration={duration}
                     fps={effectiveFps}
-                    prevEnd={media.captions[i - 1]?.end ?? null}
-                    nextStart={media.captions[i + 1]?.start ?? null}
+                    prev={media.captions[i - 1] ?? null}
+                    next={media.captions[i + 1] ?? null}
                     snapEnabled={snapEnabled.value}
                     minGap={minGap}
                     blocksRowRef={blocksRowRef}
@@ -724,8 +741,8 @@ function ResizableCaptionBlock({
   block,
   duration,
   fps,
-  prevEnd,
-  nextStart,
+  prev,
+  next,
   snapEnabled,
   minGap,
   blocksRowRef,
@@ -740,8 +757,8 @@ function ResizableCaptionBlock({
   block: CaptionBlock;
   duration: number;
   fps: number;
-  prevEnd: number | null;
-  nextStart: number | null;
+  prev: CaptionBlock | null;
+  next: CaptionBlock | null;
   snapEnabled: boolean;
   minGap: number | null;
   blocksRowRef: { current: HTMLDivElement | null };
@@ -749,12 +766,18 @@ function ResizableCaptionBlock({
   playing: boolean;
   warnings: ValidationWarning[];
   onResizeLive: (index: number, start: number, end: number) => void;
-  onResizeCommit: () => void;
+  onResizeCommit: (label?: string) => void;
   onClick: () => void;
   onDblClick: () => void;
 }) {
   const left = (block.start / duration) * 100;
   const width = ((block.end - block.start) / duration) * 100;
+
+  // The trim/snap code works off the neighbours' adjacent edges; rolling also
+  // needs their far edges + indices, so the component takes the whole neighbour
+  // captions and derives the adjacent edges here.
+  const prevEnd = prev?.end ?? null;
+  const nextStart = next?.start ?? null;
 
   const hasStrict = warnings.some(w => w.strict);
   const hasFuzzy = warnings.some(w => !w.strict);
@@ -777,6 +800,22 @@ function ResizableCaptionBlock({
     const rowEl = blocksRowRef.current;
     if (!rowEl) return;
 
+    // Select the caption you grab — deterministically, here on mousedown, not via
+    // the post-drag click (which is suppressed below). The playhead is left where
+    // it is: a trim/roll targets the playhead, it shouldn't also move it.
+    selectedCaptionIndex.value = block.index;
+
+    // After a drag, the browser fires a synthetic `click` whose target is the
+    // common ancestor of the mousedown (this handle) and mouseup elements. When
+    // that resolves to the block it reaches the block's onClick, which seeks the
+    // playhead to the caption start and reselects — the intermittent jump the
+    // handle should never cause. Swallow that one click (capture phase).
+    const swallowClick = (ev: MouseEvent) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      document.removeEventListener("click", swallowClick, true);
+    };
+
     const rect = rowEl.getBoundingClientRect();
     const secPerPx = duration / rect.width;
     const minDuration = 1 / fps;
@@ -787,8 +826,36 @@ function ResizableCaptionBlock({
     let lastStart = originStart;
     let lastEnd = originEnd;
 
+    // Shift-drag a handle sitting on a shared boundary = rolling edit: move the
+    // cut between this caption and its neighbour, dragging both edges together.
+    // Decided at mousedown; a gapped edge has no shared cut, so it stays a trim.
+    const EPS = 1e-4;
+    const rolling = e.shiftKey && (
+      (edge === "left" && prev !== null && Math.abs(prev.end - originStart) < EPS) ||
+      (edge === "right" && next !== null && Math.abs(next.start - originEnd) < EPS)
+    );
+    if (rolling) e.preventDefault(); // don't let the shift-drag select page text
+
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - originX;
+      if (rolling) {
+        // The cut follows the cursor; computeRoll clamps it within the two
+        // captions (each keeps ≥ 1 frame), snaps to a frame, and reports both edges.
+        const rawCut = (edge === "left" ? originStart : originEnd) + dx * secPerPx;
+        const pair = edge === "left" ? [prev!, block] : [block, next!];
+        const roll = computeRoll(pair, block.index, edge === "left" ? "in" : "out", rawCut, fps);
+        if (roll) {
+          batch(() => {
+            onResizeLive(roll.left.index, roll.left.start, roll.left.end);
+            onResizeLive(roll.right.index, roll.right.start, roll.right.end);
+          });
+          const cut = roll.left.end; // === roll.right.start
+          resizeIndicator.value = cut;
+          resizeSnapped.value = false;
+          if (edge === "left") lastStart = cut; else lastEnd = cut;
+        }
+        return;
+      }
       if (edge === "left") {
         let rawTime = originStart + dx * secPerPx;
         let snapped: number | null = null;
@@ -849,9 +916,13 @@ function ResizableCaptionBlock({
       resizeSnapped.value = false;
       // Skip commit if the final snapped values land back on the origin —
       // a drag that snaps into its starting position produced no net change.
-      if (lastStart !== originStart || lastEnd !== originEnd) onResizeCommit();
+      if (lastStart !== originStart || lastEnd !== originEnd) onResizeCommit(rolling ? "Roll edit" : undefined);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      // Eat the trailing click (registered now so it's live before the click
+      // fires); tidy the listener up next tick if no click follows.
+      document.addEventListener("click", swallowClick, true);
+      setTimeout(() => document.removeEventListener("click", swallowClick, true), 0);
     };
 
     window.addEventListener("mousemove", onMove);
