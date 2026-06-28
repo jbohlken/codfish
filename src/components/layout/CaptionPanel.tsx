@@ -26,7 +26,7 @@ import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
 import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
 import type { ValidationWarning } from "../../lib/pipeline/types";
-import { WarningBadge } from "../WarningBadge";
+import { CaptionNumber } from "../CaptionNumber";
 import { generateSelectedMedia } from "../../lib/actions";
 import { isUpdating } from "../UpdateNotice";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
@@ -503,6 +503,10 @@ export function CaptionPanel() {
 
 // ── Caption row ───────────────────────────────────────────────────────────────
 
+// Editing a caption is also available by double-clicking its row, so the inline
+// Edit button is hidden for now. Flip to true to bring it back.
+const SHOW_CAPTION_EDIT_BUTTON = false;
+
 function CaptionRow({
   block,
   fps,
@@ -564,7 +568,7 @@ function CaptionRow({
   if (editing) {
     return (
       <div class="caption-row caption-row--selected" data-caption-index={block.index}>
-        <div class="caption-row-meta">#{block.index} · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}</div>
+        <div class="caption-row-meta"><CaptionNumber index={block.index} warnings={warnings} /> · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}</div>
         <textarea
           ref={textareaRef}
           class="caption-row-editor"
@@ -609,25 +613,24 @@ function CaptionRow({
       onKeyDown={(e) => { if (e.key === "Enter") onClick(); }}
     >
       <div class="caption-row-meta">
-        #{block.index} · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}
-        {warnings.length > 0 && (
-          <WarningBadge warnings={warnings} />
-        )}
+        <CaptionNumber index={block.index} warnings={warnings} /> · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}
       </div>
       <div class="caption-row-text">{block.lines.join("\n")}</div>
       {selected && (
         <div class="caption-row-actions" onClick={(e) => e.stopPropagation()}>
-          <button
-            class="btn-caption-action"
-            data-tooltip="Edit (E)"
-            onClick={() => {
-              isPlaying.value = false;
-              editingIndex.value = block.index;
-              editText.value = block.lines.join("\n");
-            }}
-          >
-            <PencilSimple size={14} />
-          </button>
+          {SHOW_CAPTION_EDIT_BUTTON && (
+            <button
+              class="btn-caption-action"
+              data-tooltip="Edit (E)"
+              onClick={() => {
+                isPlaying.value = false;
+                editingIndex.value = block.index;
+                editText.value = block.lines.join("\n");
+              }}
+            >
+              <PencilSimple size={14} />
+            </button>
+          )}
           <button
             class="btn-caption-action"
             disabled={!splitEnabled}

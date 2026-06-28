@@ -1136,6 +1136,7 @@ body.rows-dragging * {
 .caption-row {
   display: flex;
   flex-direction: column;
+  position: relative; /* anchors the floating .caption-row-actions overlay */
   gap: var(--space-1);
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -1175,30 +1176,22 @@ body.rows-dragging * {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-  display: flex;
-  align-items: center;
-  gap: 5px;
 }
 
-.caption-warning {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: default;
-  padding: 3px 4px;
-  margin: -3px -4px;
+/* The caption number doubles as the warning indicator (see CaptionNumber):
+   when a row is warned the number sits in a coloured pill — red for a strict
+   error, amber for a soft warning, split red/amber when it has both — with the
+   full warning list on hover. Only warned rows get the pill, so unwarned rows
+   keep their plain flush-left number and nothing reserves space. */
+.caption-num--badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  color: #1f2937; /* dark text reads on both the red and amber fills, any theme */
+  font-weight: var(--font-weight-medium);
 }
-
-.warning-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.warning-dot--strict { background: #f87171; }
-.warning-dot--fuzzy  { background: #fbbf24; }
-.warning-dot--both   { background: linear-gradient(to right, #f87171 50%, #fbbf24 50%); }
+.caption-num--strict { background: #f87171; }
+.caption-num--fuzzy  { background: #fbbf24; }
+.caption-num--both   { background: linear-gradient(to right, #f87171 50%, #fbbf24 50%); }
 
 .caption-row-text {
   font-size: var(--text-sm);
@@ -1207,19 +1200,39 @@ body.rows-dragging * {
   white-space: pre-wrap;
 }
 
+/* Floats over the selected row's top-right, overlapping the end-timecode on the
+   meta line, so the row never grows or reflows when it's selected. The left fade
+   masks the timecode showing through the inter-button gaps, so its solid end has
+   to match the row's own background — which depends on the row state, so the fade
+   is overridden to track it: hover wins the background on a plain selected row
+   (--color-surface-hover), but on a selected+playing row the accent rule wins
+   even when hovered (equal specificity, later in source), so that state needs its
+   own override back to the accent tint. */
 .caption-row-actions {
+  position: absolute;
+  top: 4px;
+  right: var(--space-3);
   display: flex;
   gap: var(--space-1);
-  margin-top: var(--space-1);
+  padding-left: 18px;
+  background: linear-gradient(to right, transparent, var(--color-accent-light) 18px);
+}
+
+.caption-row:hover .caption-row-actions {
+  background: linear-gradient(to right, transparent, var(--color-surface-hover) 18px);
+}
+
+.caption-row--selected.caption-row--playing:hover .caption-row-actions {
+  background: linear-gradient(to right, transparent, var(--color-accent-light) 18px);
 }
 
 .btn-caption-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px var(--space-2);
-  font-size: var(--text-xs);
-  font-family: var(--font-sans);
+  /* Square icon buttons — they overlay the row, so a compact footprint masks
+     less of the timecode behind them. */
+  padding: 4px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border-strong);
   background: var(--color-bg);
