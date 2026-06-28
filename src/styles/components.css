@@ -399,11 +399,14 @@
   color: var(--color-text-primary);
 }
 
-/* Drag strip on the right edge of the panel *header* only — below it, the
-   panel body's scrollbar owns that edge. Anchored inside the header so it
-   tracks the header height. Shows a 2px accent line on hover/drag;
-   double-click resets the width to the stylesheet default. */
-.project-panel .panel-header {
+/* Drag strip inside the panel *header* only — below it, the panel body's
+   scrollbar owns that edge. Anchored inside the header so it tracks the header
+   height. Sits on the panel's inner edge: the right edge for the left-docked
+   project panel, the left edge for the right-docked caption panel (the --left
+   modifier). Shows a 2px accent line on hover/drag; double-click resets the
+   width to the stylesheet default. */
+.project-panel .panel-header,
+.caption-panel .panel-header {
   position: relative;
 }
 
@@ -429,11 +432,19 @@
   transition: opacity 0.1s;
 }
 
+/* Right-docked panel (caption): flip the strip and its accent line to the
+   left edge so it sits on the panel's inner border. */
+.panel-resize-handle--left { right: auto; left: 0; }
+.panel-resize-handle--left::after { right: auto; left: 0; }
+
 .panel-resize-handle:hover::after {
   opacity: 0.5;
 }
 
-body.col-resizing .panel-resize-handle::after {
+/* Full-strength line only on the handle being dragged (the component toggles
+   this class). The two-class selector outranks :hover so it wins at drag start
+   while the cursor is still over the strip. The idle panel's handle stays dark. */
+.panel-resize-handle.panel-resize-handle--dragging::after {
   opacity: 1;
 }
 

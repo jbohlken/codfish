@@ -47,6 +47,7 @@ import { hideTooltip } from "../Tooltip";
 import { confirmUnsavedChanges } from "../UnsavedChanges";
 import { mediaSettingsId } from "../MediaSettings";
 import { sortMedia, SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../../lib/mediaSort";
+import { PanelResizeHandle } from "./PanelResizeHandle";
 import type { MediaItem, Bin } from "../../types/project";
 
 const missingIds = signal<ReadonlySet<string>>(new Set());
@@ -96,78 +97,7 @@ function osDropTargetAt(pos: { x: number; y: number }): string | null {
   return el.closest(".project-panel") ? ROOT_DROP : null;
 }
 
-// ── Panel resizing ──────────────────────────────────────────────────────────
-// The grid column is driven by --project-panel-width; dragging the handle
-// overrides it inline on <html> and persists per-user. Double-click resets
-// to the stylesheet default.
-
-const PANEL_WIDTH_KEY = "codfish:projectPanelWidth";
-const PANEL_WIDTH_MIN = 180;
-const PANEL_WIDTH_MAX = 560;
-
-function applyPanelWidth(px: number | null) {
-  const root = document.documentElement;
-  if (px === null) root.style.removeProperty("--project-panel-width");
-  else root.style.setProperty("--project-panel-width", `${px}px`);
-}
-
-function PanelResizeHandle() {
-  useEffect(() => {
-    const stored = Number(localStorage.getItem(PANEL_WIDTH_KEY));
-    if (Number.isFinite(stored) && stored >= PANEL_WIDTH_MIN && stored <= PANEL_WIDTH_MAX) {
-      // Re-apply the same half-window cap the drag enforces, so a width saved
-      // on a wide monitor can't swallow a narrower window on next launch.
-      applyPanelWidth(Math.min(stored, Math.round(window.innerWidth / 2)));
-    }
-    // Safety net: if the handle unmounts mid-drag (onUp never fires), don't
-    // leave the global drag cursor / text-selection lock stuck on <body>.
-    return () => document.body.classList.remove("col-resizing");
-  }, []);
-
-  const onPointerDown = (e: PointerEvent) => {
-    if (e.button !== 0) return;
-    const handle = e.currentTarget as HTMLElement;
-    // The handle lives in the panel header, which spans the panel's full
-    // width — so its width is the panel width.
-    const host = handle.parentElement;
-    if (!host) return;
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-    document.body.classList.add("col-resizing");
-
-    const startX = e.clientX;
-    const startWidth = host.getBoundingClientRect().width;
-    let width = startWidth;
-
-    const onMove = (ev: PointerEvent) => {
-      // Never let the panel eat more than half the window, even on small screens
-      const max = Math.min(PANEL_WIDTH_MAX, Math.round(window.innerWidth / 2));
-      width = Math.max(PANEL_WIDTH_MIN, Math.min(max, startWidth + (ev.clientX - startX)));
-      applyPanelWidth(width);
-    };
-    const onUp = () => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      handle.removeEventListener("pointercancel", onUp);
-      document.body.classList.remove("col-resizing");
-      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(width)));
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-    handle.addEventListener("pointercancel", onUp);
-  };
-
-  return (
-    <div
-      class="panel-resize-handle"
-      onPointerDown={onPointerDown}
-      onDblClick={() => {
-        applyPanelWidth(null);
-        localStorage.removeItem(PANEL_WIDTH_KEY);
-      }}
-    />
-  );
-}
+// Panel resize handles for both side panels live in ./PanelResizeHandle.
 
 // ── Sort & filter ───────────────────────────────────────────────────────────
 // Sort mode/direction live in store/app (so the batch/export id-lists can order
@@ -1190,7 +1120,11 @@ export function ProjectPanel() {
             )}
           </div>
         )}
-        <PanelResizeHandle />
+        <PanelResizeHandle
+          cssVar="--project-panel-width"
+          storageKey="codfish:projectPanelWidth"
+          edge="right"
+        />
       </div>
 
       {/* The whole scrollable body is the top-level drop zone: a pointer drag

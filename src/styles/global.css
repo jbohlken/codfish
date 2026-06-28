@@ -163,8 +163,11 @@
 
   /* Layout dimensions */
   --titlebar-height: 44px;
-  --project-panel-width: 220px;
-  --caption-panel-width: 300px;
+  /* Both side panels share one default width and the same min/max (the bounds
+     live in PanelResizeHandle); each is resized independently from here. */
+  --panel-default-width: 280px;
+  --project-panel-width: var(--panel-default-width);
+  --caption-panel-width: var(--panel-default-width);
   --timeline-height: 200px;
 }
 

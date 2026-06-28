@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "preact/hooks";
 import { signal, useSignalEffect } from "@preact/signals";
+import { PanelResizeHandle } from "./PanelResizeHandle";
 import {
   selectedMedia,
   selectedMediaId,
@@ -413,6 +414,13 @@ export function CaptionPanel() {
             </button>
           </div>
         )}
+        {/* Right-docked panel: handle sits on the header's left edge; dragging
+            left widens it. Mirrors the project panel (left-docked, right edge). */}
+        <PanelResizeHandle
+          cssVar="--caption-panel-width"
+          storageKey="codfish:captionPanelWidth"
+          edge="left"
+        />
       </div>
 
       <div class="panel-body scrollable" ref={listRef}>
