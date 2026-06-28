@@ -24,9 +24,11 @@ import { snapToFrame, breakTextIntoLines } from "../../lib/pipeline";
 import { getClipView } from "../../lib/clipView";
 import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
-import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning } from "@phosphor-icons/react";
+import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning, MagnifyingGlassIcon as MagnifyingGlass, SwapIcon as Swap, TextAaIcon as TextAa, RepeatOnceIcon as RepeatOnce, RepeatIcon as Repeat, DotsThreeVerticalIcon as DotsThreeVertical, SquareIcon as Square, CheckSquareIcon as CheckSquare } from "@phosphor-icons/react";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { CaptionNumber } from "../CaptionNumber";
+import { captionMatches, replaceInLines, splitOnMatches } from "../../lib/captionSearch";
+import { contextMenu, openContextMenu, closeContextMenu } from "../ContextMenu";
 import { generateSelectedMedia } from "../../lib/actions";
 import { isUpdating } from "../UpdateNotice";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
@@ -38,6 +40,124 @@ export { editingIndex, editText };
 
 // Flag to suppress onBlur commit when Escape is pressed in the textarea
 let _editCancelled = false;
+
+// ── Search / find-and-replace ───────────────────────────────────────────────
+// Module-level. Typing DIMS the non-matching captions (the list is never
+// filtered, so it stays congruent with the always-unfiltered timeline) and
+// highlights matches; the replace controls act on the current / all matches.
+// A "match" is a caption whose text contains the query.
+const searchOpen = signal(false);
+const replaceOpen = signal(false); // the replace row is a popped-open second line
+const findText = signal("");
+const replaceText = signal("");
+// Match-case is a persisted preference (like followPlayhead), not transient state.
+const caseSensitive = signal(localStorage.getItem("codfish:captionSearchCaseSensitive") === "true");
+// When on, the Replace action (button + Enter) replaces across all matches rather
+// than just the selected one. Persisted preference (default off — the safer non-bulk action).
+const replaceAllMode = signal(localStorage.getItem("codfish:captionSearchReplaceAll") === "true");
+
+function openCaptionSearch() {
+  searchOpen.value = true;
+}
+// Closing keeps the find/replace text and the replace-row state, so the query
+// carries across close→reopen AND across clip switches (one shared query) within
+// a session; only the clear-X empties it.
+function closeCaptionSearch() {
+  searchOpen.value = false;
+}
+
+// Reactive checkbox icon for the "Replace all" options-menu toggle — reads the
+// signal so it flips live while the kept-open menu stays on screen.
+function ReplaceAllCheck() {
+  return replaceAllMode.value ? <CheckSquare size={14} /> : <Square size={14} />;
+}
+
+// Ordered caption indices whose text contains the current query.
+function matchingIndices(): number[] {
+  const media = selectedMedia.peek();
+  const q = findText.peek().trim();
+  if (!media || !q) return [];
+  const cs = caseSensitive.peek();
+  return media.captions
+    .filter((c) => captionMatches(c.lines.join("\n"), q, cs))
+    .map((c) => c.index);
+}
+
+// Select a match and bring it into view, pausing playback + seeking so
+// followPlayhead can't override the selection. Mirrors a caption row click.
+function selectMatch(index: number) {
+  const block = selectedMedia.peek()?.captions.find((c) => c.index === index);
+  if (!block) return;
+  isPlaying.value = false;
+  editingIndex.value = null;
+  selectedCaptionIndex.value = index;
+  playbackTime.value = block.start;
+  revealCaptionTick.value++;
+}
+
+// Step to the next (+1) or previous (-1) matching caption, wrapping around. If
+// the current selection isn't a match, +1 → first, -1 → last.
+function gotoMatch(dir: 1 | -1) {
+  const matches = matchingIndices();
+  if (!matches.length) return;
+  const cur = selectedCaptionIndex.peek();
+  const at = cur == null ? -1 : matches.indexOf(cur);
+  const next = at < 0
+    ? (dir === 1 ? 0 : matches.length - 1)
+    : (at + dir + matches.length) % matches.length;
+  selectMatch(matches[next]);
+}
+
+function replaceLabel(query: string, count: number): string {
+  return count > 1 ? `Replace "${query}" (${count})` : `Replace "${query}"`;
+}
+
+// Replace within the selected caption (if it's a match), then settle on the
+// match now occupying its slot — the next one, since this caption drops out.
+function replaceInSelected() {
+  const proj = project.peek();
+  const media = selectedMedia.peek();
+  const q = findText.peek().trim();
+  if (!proj || !media || !q) return;
+  const idx = selectedCaptionIndex.peek();
+  if (idx == null) return;
+  const at = matchingIndices().indexOf(idx);
+  if (at < 0) return; // selection isn't a match
+  const cs = caseSensitive.peek();
+  const block = media.captions.find((c) => c.index === idx)!;
+  const newLines = replaceInLines(block.lines, q, replaceText.peek(), cs);
+  pushHistory({
+    ...proj,
+    media: proj.media.map((m) =>
+      m.id !== media.id ? m : {
+        ...m,
+        captions: m.captions.map((c) => (c.index !== idx ? c : { ...c, lines: newLines, edited: true })),
+      }),
+  }, replaceLabel(q, 1));
+  const after = matchingIndices();
+  if (after.length) selectMatch(after[Math.min(at, after.length - 1)]);
+}
+
+// Replace every occurrence across all matching captions in one undoable step.
+function replaceInAll() {
+  const proj = project.peek();
+  const media = selectedMedia.peek();
+  const q = findText.peek().trim();
+  if (!proj || !media || !q) return;
+  const cs = caseSensitive.peek();
+  const repl = replaceText.peek();
+  let count = 0;
+  const captions = media.captions.map((c) => {
+    if (!captionMatches(c.lines.join("\n"), q, cs)) return c;
+    count++;
+    return { ...c, lines: replaceInLines(c.lines, q, repl, cs), edited: true };
+  });
+  if (!count) return;
+  pushHistory({
+    ...proj,
+    media: proj.media.map((m) => (m.id !== media.id ? m : { ...m, captions })),
+  }, replaceLabel(q, count));
+}
 
 // ── Caption operations ────────────────────────────────────────────────────────
 
@@ -381,12 +501,75 @@ export function CaptionPanel() {
   const fps = media?.fps ?? profile.timing.defaultFps;
   const warningsByIndex = warningsByCaption.value;
 
+  // Search / find-and-replace derived state. The list renders ALL captions; an
+  // active query just dims the non-matches (decided per row) and highlights the
+  // matches — the list is never filtered, so it stays congruent with the timeline.
+  // matchIndices drives the count and ◀▶ / Enter navigation.
+  const searching = searchOpen.value;
+  const query = searching ? findText.value.trim() : "";
+  const caseOn = caseSensitive.value;
+  const matchIndices = query
+    ? (media?.captions ?? [])
+        .filter((c) => captionMatches(c.lines.join("\n"), query, caseOn))
+        .map((c) => c.index)
+    : [];
+  const matchTotal = matchIndices.length;
+  const curMatchPos = query ? matchIndices.indexOf(selectedCaptionIndex.value ?? -1) : -1;
+
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+
+  // Focus + select the field when its section opens (find on search-open, replace
+  // on replace-open) so a retained query can be overtyped immediately. Deferred a
+  // frame so it lands after the drawer is un-inerted and laid out.
+  useSignalEffect(() => {
+    if (!searchOpen.value) return;
+    requestAnimationFrame(() => { const el = findInputRef.current; if (el) { el.focus(); el.select(); } });
+  });
+  useSignalEffect(() => {
+    if (!replaceOpen.value) return;
+    requestAnimationFrame(() => { const el = replaceInputRef.current; if (el) { el.focus(); el.select(); } });
+  });
+
+  // Keep a match selected as the query/case changes so Replace and the counter
+  // have a current target. Light (no seek) so typing doesn't scrub the video —
+  // only explicit navigation (Enter / Shift+Enter) moves the playhead.
+  useSignalEffect(() => {
+    if (!searchOpen.value) return;
+    const q = findText.value.trim();
+    // peek: re-select only when the query/case changes, not on every project edit
+    // (which would teleport selection away from a caption you just finished editing).
+    const m = selectedMedia.peek();
+    if (!q || !m) return;
+    const cs = caseSensitive.value;
+    const matches = m.captions
+      .filter((c) => captionMatches(c.lines.join("\n"), q, cs))
+      .map((c) => c.index);
+    const cur = selectedCaptionIndex.peek();
+    if (matches.length && !(cur != null && matches.includes(cur))) {
+      selectedCaptionIndex.value = matches[0];
+    }
+  });
+
+  // Close the drawer on a clip switch but KEEP the query — it carries across clips.
+  useEffect(() => { closeCaptionSearch(); }, [scrolledMediaId]);
+
   return (
     <div class="panel caption-panel">
       <div class="panel-header">
         <span class="panel-header-title">Captions</span>
         {media && (
           <div style="display:flex;align-items:center;gap:2px">
+            {hasCaptions && (searchOpen.value || editingIndex.value === null) && (
+              <button
+                class={`btn btn-ghost btn-icon${searchOpen.value ? " is-active" : ""}`}
+                data-tooltip="Find & replace"
+                aria-pressed={searchOpen.value}
+                onClick={() => (searchOpen.value ? closeCaptionSearch() : openCaptionSearch())}
+              >
+                <MagnifyingGlass size={14} />
+              </button>
+            )}
             {media.alignmentDegraded && hasCaptions && (
               <button
                 class="btn btn-ghost btn-icon"
@@ -423,6 +606,149 @@ export function CaptionPanel() {
         />
       </div>
 
+      {/* Search/replace drawer — slides open below the header (grid 0fr→1fr,
+          animating to the content's natural height). Always mounted when there
+          are captions so the open/close transition can run; inert while closed
+          so its clipped inputs stay out of the tab order. */}
+      {media && hasCaptions && (
+        <div
+          class={`caption-search-drawer${searchOpen.value ? " is-open" : ""}`}
+          {...(searchOpen.value ? {} : { inert: true })}
+        >
+          <div class="caption-search-clip">
+            <div class="caption-search-bar">
+              <div class="caption-search-row">
+                <div class="caption-search-field">
+                  <input
+                    ref={findInputRef}
+                    class="panel-filter-input"
+                    type="text"
+                    placeholder="Find in captions…"
+                    value={findText.value}
+                    onInput={(e) => { findText.value = (e.target as HTMLInputElement).value; }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") { e.preventDefault(); closeCaptionSearch(); }
+                      else if (e.key === "Enter") { e.preventDefault(); gotoMatch(e.shiftKey ? -1 : 1); }
+                    }}
+                  />
+                  {query && (
+                    <span class="caption-search-count">
+                      {curMatchPos >= 0 ? `${curMatchPos + 1}/${matchTotal}` : `${matchTotal}`}
+                    </span>
+                  )}
+                  {findText.value && (
+                    <button class="panel-filter-clear" data-tooltip="Clear" onClick={() => { findText.value = ""; findInputRef.current?.focus(); }}>
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+                <div class="caption-search-tools">
+                  <button
+                    class={`btn btn-ghost btn-icon${caseOn ? " is-active" : ""}`}
+                    data-tooltip="Match case"
+                    aria-pressed={caseOn}
+                    onClick={() => {
+                      const next = !caseOn;
+                      caseSensitive.value = next;
+                      localStorage.setItem("codfish:captionSearchCaseSensitive", String(next));
+                    }}
+                  >
+                    <TextAa size={14} />
+                  </button>
+                  <button
+                    class={`btn btn-ghost btn-icon${replaceOpen.value ? " is-active" : ""}`}
+                    data-tooltip="Replace…"
+                    aria-pressed={replaceOpen.value}
+                    onClick={() => {
+                      const next = !replaceOpen.value;
+                      replaceOpen.value = next;
+                      if (!next) {
+                        // Back to searching: focus Find with the caret at the end. focus()
+                        // alone restores whatever range the field last had, which is why it
+                        // sometimes re-selected the text and sometimes didn't.
+                        const el = findInputRef.current;
+                        if (el) { el.focus(); const n = el.value.length; el.setSelectionRange(n, n); }
+                      }
+                    }}
+                  >
+                    <Swap size={14} />
+                  </button>
+                </div>
+              </div>
+              <div
+                class={`caption-replace-drawer${replaceOpen.value ? " is-open" : ""}`}
+                {...(replaceOpen.value ? {} : { inert: true })}
+              >
+                <div class="caption-replace-clip">
+                  <div class="caption-search-row">
+                    <div class="caption-search-field">
+                      <input
+                        ref={replaceInputRef}
+                        class="panel-filter-input"
+                        type="text"
+                        placeholder="Replace with…"
+                        value={replaceText.value}
+                        onInput={(e) => { replaceText.value = (e.target as HTMLInputElement).value; }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") { e.preventDefault(); closeCaptionSearch(); }
+                          else if (e.key === "Enter") { e.preventDefault(); if (replaceAllMode.value) replaceInAll(); else replaceInSelected(); }
+                        }}
+                      />
+                      {replaceText.value && (
+                        <button class="panel-filter-clear" data-tooltip="Clear" onClick={() => { replaceText.value = ""; replaceInputRef.current?.focus(); }}>
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                    <div class="caption-search-tools">
+                      <button
+                        class="btn btn-ghost btn-icon"
+                        data-tooltip={replaceAllMode.value ? "Replace all (Enter)" : "Replace (Enter)"}
+                        disabled={replaceAllMode.value ? matchTotal === 0 : curMatchPos < 0}
+                        onClick={() => { if (replaceAllMode.value) replaceInAll(); else replaceInSelected(); }}
+                      >
+                        {replaceAllMode.value ? <Repeat size={14} /> : <RepeatOnce size={14} />}
+                      </button>
+                      <button
+                        class={`btn btn-ghost btn-icon${contextMenu.value?.source === "caption-replace-options" ? " is-active" : ""}`}
+                        data-tooltip="Replace options"
+                        // Stop our own mousedown reaching the menu's outside-click close, so
+                        // a second click toggles the menu shut instead of close-then-reopen.
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (contextMenu.value?.source === "caption-replace-options") { closeContextMenu(); return; }
+                          // Anchor the menu to the button (open below it) rather than the
+                          // click point, so it behaves like a dropdown.
+                          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          openContextMenu(r.left, r.bottom + 4, [
+                            {
+                              label: "Replace all matches",
+                              keepOpen: true,
+                              icon: <ReplaceAllCheck />,
+                              onClick: () => {
+                                const next = !replaceAllMode.peek();
+                                replaceAllMode.value = next;
+                                localStorage.setItem("codfish:captionSearchReplaceAll", String(next));
+                              },
+                            },
+                            { separator: true },
+                            // Placeholder for a future "save this find/replace as a reusable rule" feature.
+                            { label: "Create rule…", disabled: true },
+                          ], "caption-replace-options");
+                        }}
+                      >
+                        <DotsThreeVertical size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div class="panel-body scrollable" ref={listRef}>
         {!media ? (
           <div class="empty-state">
@@ -443,12 +769,15 @@ export function CaptionPanel() {
           <div class="caption-list" onClick={(e) => { if (!(e.target as HTMLElement).closest(".caption-row")) selectedCaptionIndex.value = null; }}>
             {/* A click that misses every row (padding, the filler below the last
                 row) clears the selection — row clicks select and stop here by
-                hitting .caption-row first. Mirrors the project panel's idiom. */}
+                hitting .caption-row first. Mirrors the project panel's idiom. An
+                active query dims non-matching rows rather than hiding them. */}
             {media.captions.map((block) => (
               <CaptionRow
                 key={block.index}
                 block={block}
                 fps={fps}
+                query={query}
+                caseSensitive={caseOn}
                 selected={selectedCaptionIndex.value === block.index}
                 playing={playingIndex === block.index}
                 editing={editingIndex.value === block.index}
@@ -514,6 +843,8 @@ function CaptionRow({
   playing,
   editing,
   warnings,
+  query,
+  caseSensitive,
   splitEnabled,
   splitTooltip,
   mergeEnabled,
@@ -531,6 +862,8 @@ function CaptionRow({
   playing: boolean;
   editing: boolean;
   warnings: ValidationWarning[];
+  query: string;
+  caseSensitive: boolean;
   splitEnabled: boolean;
   splitTooltip: string;
   mergeEnabled: boolean;
@@ -602,9 +935,16 @@ function CaptionRow({
   }
 
 
+  const text = block.lines.join("\n");
+  const segments = query ? splitOnMatches(text, query, caseSensitive) : null;
+  const isMatch = !!segments?.some((s) => s.isMatch);
+  // Dim non-matching rows while a query is active (the list is never filtered);
+  // the selected/playing row stays full-strength so the active caption reads.
+  const dimmed = query !== "" && !isMatch && !selected && !playing;
+
   return (
     <div
-      class={`caption-row${selected ? " caption-row--selected" : ""}${playing ? " caption-row--playing" : ""}`}
+      class={`caption-row${selected ? " caption-row--selected" : ""}${playing ? " caption-row--playing" : ""}${dimmed ? " caption-row--dimmed" : ""}`}
       data-caption-index={block.index}
       onMouseDown={onMouseDown}
       onClick={onClick}
@@ -615,7 +955,12 @@ function CaptionRow({
       <div class="caption-row-meta">
         <CaptionNumber index={block.index} warnings={warnings} /> · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}
       </div>
-      <div class="caption-row-text">{block.lines.join("\n")}</div>
+      <div class="caption-row-text">
+        {segments
+          ? segments.map((seg, i) =>
+              seg.isMatch ? <mark key={i} class="caption-match">{seg.text}</mark> : seg.text)
+          : text}
+      </div>
       {selected && (
         <div class="caption-row-actions" onClick={(e) => e.stopPropagation()}>
           {SHOW_CAPTION_EDIT_BUTTON && (
