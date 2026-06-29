@@ -268,6 +268,15 @@
   gap: 2px; /* match the CaptionPanel header button group */
 }
 
+/* Title + its inline status badges, grouped on the left so the header's
+   space-between keeps the action buttons pinned to the right. */
+.panel-header-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 /* Sort dropdown (header). The menu is position:fixed (coords set inline from
    the trigger rect) so it escapes the panel's overflow:hidden. */
 .panel-sort {
@@ -1184,6 +1193,21 @@ body.rows-dragging * {
 }
 
 /* ── Caption Panel ──────────────────────────────────────────────────────── */
+
+/* Non-interactive status badge beside the panel title (generation info, degraded
+   alignment) — reveals its detail on hover via the tooltip (no hover color-shift:
+   it isn't clickable, and a static indicator matches the timeline fps/VFR badge).
+   Small + muted to match that badge's language; the --warning variant uses the
+   same amber as its VFR state (--color-warning). */
+.caption-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  cursor: help;
+}
+.caption-meta-badge--warning {
+  color: var(--color-warning, #e5a100);
+}
 
 .caption-list {
   padding: var(--space-2) 0;

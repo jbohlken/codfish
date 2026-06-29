@@ -29,6 +29,7 @@ import type { ValidationWarning } from "../../lib/pipeline/types";
 import { CaptionNumber } from "../CaptionNumber";
 import { captionMatches, replaceInLines, splitOnMatches } from "../../lib/captionSearch";
 import { contextMenu, openContextMenu, closeContextMenu } from "../ContextMenu";
+import { TOOLTIP_DIVIDER } from "../Tooltip";
 import { generateSelectedMedia } from "../../lib/actions";
 import { isUpdating } from "../UpdateNotice";
 import type { CaptionBlock, TranscriptionModel } from "../../types/project";
@@ -489,6 +490,9 @@ export function CaptionPanel() {
 
   const media = selectedMedia.value;
   const hasCaptions = (media?.captions.length ?? 0) > 0;
+  // Word-level alignment failed during generation (sentence-level timing) — the
+  // generation-status badge escalates to a warning when this is set.
+  const alignmentDegraded = !!media?.alignmentDegraded;
   // Undefined = unprobed (old projects) or probe failed — allow the attempt.
   // Only block when we explicitly know there's no audio stream.
   const canGenerate = media?.hasAudio ?? true;
@@ -557,7 +561,26 @@ export function CaptionPanel() {
   return (
     <div class="panel caption-panel">
       <div class="panel-header">
-        <span class="panel-header-title">Captions</span>
+        <div class="panel-header-title-group">
+          <span class="panel-header-title">Captions</span>
+          {/* One non-interactive caption-generation-status badge, revealing its
+              detail on hover. Neutral ⓘ when generated cleanly; escalates to an
+              amber ⚠ when word-level alignment degraded (its tooltip then leads
+              with the warning). Same muted indicator language as the timeline
+              fps/VFR badge. Alignment degradation only ever occurs during
+              generation, so a degraded badge always also carries the metadata. */}
+          {media && hasCaptions && (media.generatedAt || alignmentDegraded) && (
+            <span
+              class={`caption-meta-badge${alignmentDegraded ? " caption-meta-badge--warning" : ""}`}
+              data-tooltip={[
+                alignmentDegraded && "Word-level alignment failed for this media.\nCaptions are using sentence-level timing — try regenerating.",
+                media.generatedAt && `${formatGenerationMeta(media.generatedWithModel, media.generatedWithLanguage, media.detectedLanguage)}\n${formatFullTimestamp(media.generatedAt)}`,
+              ].filter(Boolean).join(`\n${TOOLTIP_DIVIDER}\n`)}
+            >
+              {alignmentDegraded ? <Warning size={13} /> : <Info size={13} />}
+            </span>
+          )}
+        </div>
         {media && (
           <div style="display:flex;align-items:center;gap:2px">
             {hasCaptions && (searchOpen.value || editingIndex.value === null) && (
@@ -568,23 +591,6 @@ export function CaptionPanel() {
                 onClick={() => (searchOpen.value ? closeCaptionSearch() : openCaptionSearch())}
               >
                 <MagnifyingGlass size={14} />
-              </button>
-            )}
-            {media.alignmentDegraded && hasCaptions && (
-              <button
-                class="btn btn-ghost btn-icon"
-                data-tooltip={"Word-level alignment failed for this media.\nCaptions are using sentence-level timing — try regenerating."}
-                style="color:var(--warning, #d97706)"
-              >
-                <Warning size={14} />
-              </button>
-            )}
-            {media.generatedAt && hasCaptions && (
-              <button
-                class="btn btn-ghost btn-icon"
-                data-tooltip={`${formatGenerationMeta(media.generatedWithModel, media.generatedWithLanguage, media.detectedLanguage)}\n${formatFullTimestamp(media.generatedAt)}`}
-              >
-                <Info size={14} />
               </button>
             )}
             <button
