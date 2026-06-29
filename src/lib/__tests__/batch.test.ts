@@ -478,12 +478,15 @@ describe("language autodetect", () => {
     expect(applied.generatedWithLanguage).toBeUndefined();
   });
 
-  it("project.language='en' → generatedWithLanguage='en', detectedLanguage=undefined", async () => {
+  it("project.language='en' is ignored while selection is disabled → still auto-detects", async () => {
+    // LANGUAGE_SELECTION_ENABLED is off: a language saved on an older project is
+    // not honored — generation always auto-detects (records detectedLanguage,
+    // leaves generatedWithLanguage undefined).
     project.value = makeProject([makeMedia({ id: "a" })], "en");
     await runBatchGeneration(["a"]);
     const applied = project.value!.media.find((m) => m.id === "a")!;
-    expect(applied.generatedWithLanguage).toBe("en");
-    expect(applied.detectedLanguage).toBeUndefined();
+    expect(applied.detectedLanguage).toBe("en");
+    expect(applied.generatedWithLanguage).toBeUndefined();
   });
 });
 

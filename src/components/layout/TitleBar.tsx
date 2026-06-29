@@ -18,6 +18,7 @@ import { openFormatManager } from "../FormatManager";
 import { hasUpdate, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
 import { listModels } from "../../lib/transcription";
 import { listFormats } from "../../lib/export";
+import { LANGUAGE_SELECTION_ENABLED } from "../../lib/features";
 import {
   eligibleMediaIds,
   allTranscribableMediaIds,
@@ -249,14 +250,16 @@ export function TitleBar() {
               value={proj.transcriptionModel}
               onChange={(v) => { project.value = { ...proj, transcriptionModel: v }; isDirty.value = true; }}
             />
-            <SelectButton
-              icon={Translate}
-              menuId="language"
-              tooltip="Language"
-              options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
-              value={proj.language}
-              onChange={(v) => { project.value = { ...proj, language: v }; isDirty.value = true; }}
-            />
+            {LANGUAGE_SELECTION_ENABLED && (
+              <SelectButton
+                icon={Translate}
+                menuId="language"
+                tooltip="Language"
+                options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+                value={proj.language}
+                onChange={(v) => { project.value = { ...proj, language: v }; isDirty.value = true; }}
+              />
+            )}
             <SelectButton
               icon={Sliders}
               menuId="profile"
