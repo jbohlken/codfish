@@ -346,25 +346,8 @@
   margin: var(--space-1) 0;
 }
 
-/* Filter row — sits between header and the scrollable list. */
-/* Search expands inline inside the panel header (replacing the title +
-   action buttons while open), so it occupies the header row rather than
-   pushing the list down or overlaying any rows. */
-.panel-header-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1;
-  min-width: 0;
-  margin-right: var(--space-2);
-}
-
-.panel-filter-icon {
-  display: inline-flex;
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
-}
-
+/* Search field internals — shared by both panels' search drawers (the input and
+   its trailing clear-X). The drawer shell itself is the .search-* chrome above. */
 .panel-filter-input {
   flex: 1;
   min-width: 0;
@@ -585,12 +568,6 @@ body.col-resizing {
   line-clamp: 2;
   overflow: hidden;
   overflow-wrap: anywhere;
-}
-
-.media-row-match {
-  background: var(--color-accent-light);
-  color: inherit;
-  border-radius: 2px;
 }
 
 .media-row-meta {
@@ -1127,54 +1104,52 @@ body.rows-dragging * {
   line-height: 1.4;
 }
 
-/* ── Caption Panel ──────────────────────────────────────────────────────── */
+/* ── Search drawer (shared: project + caption panels) ─────────────────────── */
 
-/* Search / find-and-replace drawer — slides open below the header. The grid
-   0fr→1fr trick animates to the content's natural height (so it works whether
-   replace is open or not, with no hard-coded height). The clip carries the
+/* Search drawer — slides open below a panel header. The grid 0fr→1fr trick
+   animates to the content's natural height (no hard-coded height, so it works
+   whether the caption replace row is open or not). The clip carries the
    overflow:hidden + min-height:0 the animation needs; the bar inside carries the
-   surface + border so they're clipped away when the drawer is closed (a border
-   on the grid item itself would show a 1px seam at 0fr). The replace row nests
-   the same way so it slides in independently. Replace reuses .panel-filter-icon
-   / .panel-filter-input, and the matching space-3 padding lines the replace input
-   up under the find input. */
-.caption-search-drawer,
+   surface + border so they're clipped away when closed (a border on the grid item
+   itself would show a 1px seam at 0fr). The caption panel's replace row nests the
+   same way (.caption-replace-*) so it slides in independently. */
+.search-drawer,
 .caption-replace-drawer {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 0.18s ease;
 }
-.caption-search-drawer.is-open,
+.search-drawer.is-open,
 .caption-replace-drawer.is-open {
   grid-template-rows: 1fr;
 }
-.caption-search-clip,
+.search-clip,
 .caption-replace-clip {
   overflow: hidden;
   min-height: 0;
 }
-.caption-search-bar {
+.search-bar {
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
   padding: var(--space-1) 0;
 }
-.caption-search-row {
+.search-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3);
 }
 @media (prefers-reduced-motion: reduce) {
-  .caption-search-drawer,
+  .search-drawer,
   .caption-replace-drawer {
     transition: none;
   }
 }
 
-/* The input plus its tucked-in trailing bits (match count, clear button). Both
-   rows wrap their input this way and end in an equal-width two-icon
-   .caption-search-tools cluster, so the find and replace inputs are the same width. */
-.caption-search-field {
+/* The input plus its tucked-in trailing bits (match count, clear button). The
+   caption find/replace rows also end in an equal-width .search-tools cluster so
+   their inputs stay the same width; the project search uses just the field. */
+.search-field {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -1182,39 +1157,33 @@ body.rows-dragging * {
   min-width: 0;
 }
 
-/* The two trailing icon buttons on each row (find: case + replace-toggle;
-   replace: replace + replace-all) — equal width across rows so the inputs align. */
-.caption-search-tools {
+/* Trailing icon-button cluster on a search row (caption find: case + replace
+   toggle; caption replace: replace + replace-all) — equal width so inputs align. */
+.search-tools {
   display: flex;
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
 }
 
-/* Match counter ("2/5"), tucked at the right end of the find field. */
-.caption-search-count {
+/* Match counter ("2/5"), tucked at the right end of a search field. */
+.search-count {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   flex-shrink: 0;
 }
 
-/* Active toggle = accent-coloured icon/text, no fill — matching the timeline's
-   .timeline-btn--active convention. The :hover variant repeats (and outranks) the
-   global .btn-ghost:hover rule, which is more specific (0,3,0) and would otherwise
-   reset the colour to neutral on hover — same trap as .project-panel-trash. */
-.btn-ghost.is-active,
-.btn-ghost.is-active:hover:not(:disabled) {
-  color: var(--color-accent);
-}
-
-/* Highlighted search match within a caption row (translucent amber so it reads
-   over the row tint in both themes; text colour is left untouched). */
-.caption-match {
+/* Highlighted search match within a row's text (translucent amber so it reads
+   over the row tint in both themes; text colour is left untouched). Shared by the
+   caption text and the project media/bin names. */
+.search-match {
   background: rgba(251, 191, 36, 0.4);
   color: inherit;
   border-radius: 2px;
 }
+
+/* ── Caption Panel ──────────────────────────────────────────────────────── */
 
 .caption-list {
   padding: var(--space-2) 0;

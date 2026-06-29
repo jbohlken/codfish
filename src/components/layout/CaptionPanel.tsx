@@ -612,13 +612,13 @@ export function CaptionPanel() {
           so its clipped inputs stay out of the tab order. */}
       {media && hasCaptions && (
         <div
-          class={`caption-search-drawer${searchOpen.value ? " is-open" : ""}`}
+          class={`search-drawer${searchOpen.value ? " is-open" : ""}`}
           {...(searchOpen.value ? {} : { inert: true })}
         >
-          <div class="caption-search-clip">
-            <div class="caption-search-bar">
-              <div class="caption-search-row">
-                <div class="caption-search-field">
+          <div class="search-clip">
+            <div class="search-bar">
+              <div class="search-row">
+                <div class="search-field">
                   <input
                     ref={findInputRef}
                     class="panel-filter-input"
@@ -632,7 +632,7 @@ export function CaptionPanel() {
                     }}
                   />
                   {query && (
-                    <span class="caption-search-count">
+                    <span class="search-count">
                       {curMatchPos >= 0 ? `${curMatchPos + 1}/${matchTotal}` : `${matchTotal}`}
                     </span>
                   )}
@@ -642,7 +642,7 @@ export function CaptionPanel() {
                     </button>
                   )}
                 </div>
-                <div class="caption-search-tools">
+                <div class="search-tools">
                   <button
                     class={`btn btn-ghost btn-icon${caseOn ? " is-active" : ""}`}
                     data-tooltip="Match case"
@@ -680,8 +680,8 @@ export function CaptionPanel() {
                 {...(replaceOpen.value ? {} : { inert: true })}
               >
                 <div class="caption-replace-clip">
-                  <div class="caption-search-row">
-                    <div class="caption-search-field">
+                  <div class="search-row">
+                    <div class="search-field">
                       <input
                         ref={replaceInputRef}
                         class="panel-filter-input"
@@ -700,7 +700,7 @@ export function CaptionPanel() {
                         </button>
                       )}
                     </div>
-                    <div class="caption-search-tools">
+                    <div class="search-tools">
                       <button
                         class="btn btn-ghost btn-icon"
                         data-tooltip={replaceAllMode.value ? "Replace all (Enter)" : "Replace (Enter)"}
@@ -958,7 +958,7 @@ function CaptionRow({
       <div class="caption-row-text">
         {segments
           ? segments.map((seg, i) =>
-              seg.isMatch ? <mark key={i} class="caption-match">{seg.text}</mark> : seg.text)
+              seg.isMatch ? <mark key={i} class="search-match">{seg.text}</mark> : seg.text)
           : text}
       </div>
       {selected && (
