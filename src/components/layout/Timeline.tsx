@@ -8,6 +8,7 @@ import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
 import { nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../../lib/playhead";
 import {
   selectedMedia,
+  selectedMediaId,
   selectedCaptionIndex,
   playbackTime,
   isPlaying,
@@ -41,6 +42,45 @@ const storedWaveStyle = localStorage.getItem("codfish:waveformStyle");
 const waveformStyle = signal<WaveformStyle>(storedWaveStyle === "bars" ? "bars" : "continuous");
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
+// True while a caption edge is being dragged — suspends timeline auto-follow so a
+// trim during playback isn't disrupted by the view paging out from under it.
+const isResizing = signal(false);
+// While playing, a manual interaction (scroll or trim) "detaches" auto-follow so
+// the view holds where you are; it re-attaches when the playhead catches up from
+// behind, or on a seek/reveal. No timer — a backward look / trim sticks.
+const followDetached = signal(false);
+
+const EDGE_PAN_PX = 48;        // px from each viewport edge that triggers edge-panning
+const EDGE_PAN_MAX_SPEED = 16; // px/frame at the very edge
+// Edge-pan rAF loop shared by the waveform scrub and the caption-edge resize drags:
+// while active() (the drag gate) and zoomed in, scroll `el` toward whichever viewport
+// edge the cursor (clientX()) is within EDGE_PAN_PX of — ramping with edge depth and
+// stopping at the content ends — then run onStep(clientX) so the caller re-derives
+// what tracks the cursor (seek while scrubbing, trim while resizing). Returns a stop().
+function startEdgePan(
+  el: HTMLElement | null,
+  active: () => boolean,
+  clientX: () => number,
+  onStep: (clientX: number) => void,
+): () => void {
+  let raf = requestAnimationFrame(function tick() {
+    raf = requestAnimationFrame(tick);
+    if (!active() || !el || zoomLevel.peek() <= 1) return;
+    const rect = el.getBoundingClientRect();
+    const x = clientX() - rect.left;
+    let delta = 0;
+    if (x < EDGE_PAN_PX) delta = -((EDGE_PAN_PX - x) / EDGE_PAN_PX) * EDGE_PAN_MAX_SPEED;
+    else if (x > rect.width - EDGE_PAN_PX) delta = ((x - (rect.width - EDGE_PAN_PX)) / EDGE_PAN_PX) * EDGE_PAN_MAX_SPEED;
+    if (!delta) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const next = Math.max(0, Math.min(max, el.scrollLeft + delta));
+    if (next === el.scrollLeft) return; // already at an end
+    el.scrollLeft = next;
+    onStep(clientX());
+  });
+  return () => cancelAnimationFrame(raf);
+}
+
 // Outer viewport width, mirrored into a signal so the virtualized ruler can
 // subscribe locally — the Timeline body itself stays off the per-frame
 // scroll/zoom hot path. (Scroll position lives in the store as timelineScroll so
@@ -266,39 +306,96 @@ export function Timeline() {
   // (which has its own playhead-anchored scroll), or the scrub-release edge don't
   // trigger it. Skipped at fit zoom and on a clip switch (the [media?.id] effect
   // restores the remembered scroll there; following the playhead would clobber it).
-  const lastAutoScrollClip = useRef<string | undefined>(undefined);
+  const lastAutoScrollClip = useRef<string | null | undefined>(undefined);
+  const lastRevealTick = useRef(0);
+  // Last playback time we saw — lets us tell forward playback drift from an
+  // explicit seek / backward step.
+  const lastFollowTime = useRef(0);
   useSignalEffect(() => {
     const scroll = scrollRef.current;
     const time = playbackTime.value;
-    const clipId = selectedMedia.value?.id;
-    const dur = mediaDuration.peek();
+    // The selection ID signal — only changes on an actual clip switch. NOT the
+    // selectedMedia computed: that re-emits on every caption edit, so a live
+    // resize/trim would re-fire this effect and yank the view to the playhead.
+    const clipId = selectedMediaId.value;
+    // Same duration fallback the rest of the timeline renders with (line ~148):
+    // the <video> clock (mediaDuration) is 0/unreliable for asset:// media, so fall
+    // back to the sidecar audio length, then the last caption end. Peeked (like the
+    // media reads above) so it doesn't re-fire the effect. Without this, auto-follow
+    // was dead for any clip whose <video> never reports a duration.
+    const m = selectedMedia.peek();
+    const dur = mediaDuration.peek() || waveformAudioDuration.peek()
+      || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
     const zoom = zoomLevel.peek();
     // Subscribe to panel reveal requests: re-clicking an active caption bumps this
     // so we re-scroll to it even though its start is already the playhead.
-    void revealCaptionTick.value;
+    const revealTick = revealCaptionTick.value;
 
     // Record the clip on every pass so a switch is detected exactly once — at the
     // switch itself — even when we bail below because the duration hasn't loaded
-    // yet. Recording only after the bail would defer "switched" onto the user's
-    // first seek in the new clip and swallow its scroll. On the switch pass we
-    // skip: the [media?.id] effect is restoring the remembered scroll.
+    // yet. On the switch pass we skip: the [media?.id] effect restores the
+    // remembered scroll.
     const switched = clipId !== lastAutoScrollClip.current;
     lastAutoScrollClip.current = clipId;
+    // A clip switch (or project close) clears any detach carried from the previous
+    // clip, so the new clip's auto-follow isn't silently suppressed — followDetached
+    // is a module signal that would otherwise leak across clips.
+    if (switched) followDetached.value = false;
+
+    const isReveal = revealTick !== lastRevealTick.current;
+    lastRevealTick.current = revealTick;
+
+    // What counts as explicit navigation we should follow to (vs. forward playback
+    // drift, which page-scrolls). While PAUSED, every playbackTime change is a seek
+    // / frame-step / region-jump, so always treat it as navigation — otherwise a
+    // small FORWARD step toward an off-left playhead has no path to reveal it, while
+    // the backward step (dt<0) does. While playing, only a backward move or a big
+    // forward jump is navigation; small forward deltas are drift.
+    const dt = time - lastFollowTime.current;
+    lastFollowTime.current = time;
+    const isNav = !isPlaying.peek() || dt < -0.01 || dt > 0.5;
 
     // Skipped while scrubbing/clicking the timeline (peeked, so the release edge
     // doesn't fire a scroll either) — the playhead is at the pointer, in view.
-    if (!scroll || !dur || zoom <= 1 || switched || scrubbing.peek()) return;
+    if (!scroll || !dur || zoom <= 1 || switched || scrubbing.peek() || isResizing.peek()) return;
 
     const totalWidth = scroll.scrollWidth;
     const visibleWidth = scroll.clientWidth;
     const playheadPx = (time / dur) * totalWidth;
     const scrollLeft = scroll.scrollLeft;
 
-    if (
-      playheadPx < scrollLeft + visibleWidth * 0.1 ||
-      playheadPx > scrollLeft + visibleWidth * 0.85
-    ) {
-      scroll.scrollLeft = Math.max(0, playheadPx - visibleWidth * 0.5);
+    // Explicit navigation (reveal / seek / backward step): center the playhead if
+    // it's outside the comfortable band, and re-attach following.
+    if (isReveal || isNav) {
+      followDetached.value = false;
+      if (
+        playheadPx < scrollLeft + visibleWidth * 0.1 ||
+        playheadPx > scrollLeft + visibleWidth * 0.85
+      ) {
+        scroll.scrollLeft = Math.max(0, playheadPx - visibleWidth * 0.5);
+      }
+      return;
+    }
+
+    // Manual scroll during playback "detaches" following (set in the wheel handler)
+    // so you can dwell on an earlier — or upcoming — caption for as long as you
+    // like, with no snap-back. It re-attaches only once the playhead has caught up
+    // from BEHIND — i.e. it's in the LEFT half of the view (a scroll-ahead that
+    // playback reached). A BACKWARD scroll pushes the playhead into the right half
+    // / off the right edge, so it stays detached and the view holds (resume by
+    // seeking or clicking a caption). Checking the left half — not mere visibility —
+    // is what stops a back-scroll from paging forward the instant the playhead
+    // crosses the right edge mid-scroll.
+    const caughtUp = playheadPx >= scrollLeft && playheadPx <= scrollLeft + visibleWidth * 0.5;
+    if (followDetached.peek()) {
+      if (!caughtUp) return;
+      followDetached.value = false;
+    }
+
+    // Forward playback = PAGE SCROLL: when the playhead advances past the right
+    // edge, jump one page so it reappears near the left with a fresh page ahead.
+    if (playheadPx > scrollLeft + visibleWidth * 0.9) {
+      scroll.scrollLeft = Math.max(0, playheadPx - visibleWidth * 0.1);
     }
   });
 
@@ -334,6 +431,10 @@ export function Timeline() {
       if (e.deltaY !== 0 && el.scrollWidth > el.clientWidth) {
         e.preventDefault();
         el.scrollLeft += e.deltaY;
+        // Manual scroll during playback detaches auto-follow so the view stays put
+        // wherever you scroll (see the follow effect); it re-attaches when the
+        // playhead catches up from behind, or on a seek/reveal.
+        if (isPlaying.peek()) followDetached.value = true;
       }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -369,24 +470,9 @@ export function Timeline() {
     const startX = e.clientX;
     let lastClientX = e.clientX;
     let dragged = false;
-    let raf = 0;
-    const EDGE = 48; // px from each viewport edge that triggers panning
-    const MAX_SPEED = 16; // px/frame at the very edge
-    const pan = () => {
-      raf = requestAnimationFrame(pan);
-      if (!dragged || !scroll || zoomLevel.peek() <= 1) return;
-      const rect = scroll.getBoundingClientRect();
-      const x = lastClientX - rect.left;
-      let delta = 0;
-      if (x < EDGE) delta = -((EDGE - x) / EDGE) * MAX_SPEED;
-      else if (x > rect.width - EDGE) delta = ((x - (rect.width - EDGE)) / EDGE) * MAX_SPEED;
-      if (!delta) return;
-      const max = scroll.scrollWidth - scroll.clientWidth;
-      const next = Math.max(0, Math.min(max, scroll.scrollLeft + delta));
-      if (next === scroll.scrollLeft) return; // already at an end
-      scroll.scrollLeft = next;
-      seekToClientX(lastClientX); // keep the playhead under the held pointer
-    };
+    // Edge-pan past the viewport while dragging, keeping the playhead under the
+    // pointer (a plain click never pans — the `dragged` gate).
+    const stopPan = startEdgePan(scroll, () => dragged, () => lastClientX, seekToClientX);
 
     const onMove = (ev: MouseEvent) => {
       if (Math.abs(ev.clientX - startX) > 4) dragged = true;
@@ -394,15 +480,19 @@ export function Timeline() {
       seekToClientX(ev.clientX);
     };
     const onUp = () => {
-      cancelAnimationFrame(raf);
+      stopPan();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onUp);
       if (wasPlaying) isPlaying.value = true;
       scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
     };
-    raf = requestAnimationFrame(pan);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    // If focus is lost mid-drag (alt-tab / OS dialog), the mouseup can be delivered
+    // to another window — end the drag on blur too so scrubbing / rAF / listeners
+    // don't strand (a stranded `scrubbing` would also suppress auto-follow).
+    window.addEventListener("blur", onUp);
   };
 
   const profile = activeProfile.value;
@@ -690,9 +780,9 @@ export function Timeline() {
                     fps={effectiveFps}
                     prev={media.captions[i - 1] ?? null}
                     next={media.captions[i + 1] ?? null}
-                    snapEnabled={snapEnabled.value}
                     minGap={minGap}
                     blocksRowRef={blocksRowRef}
+                    scrollRef={scrollRef}
                     selected={selectedCaptionIndex.value === block.index}
                     playing={playingIndex === block.index}
                     warnings={warningsByIndex.get(block.index) ?? []}
@@ -725,9 +815,9 @@ function ResizableCaptionBlock({
   fps,
   prev,
   next,
-  snapEnabled,
   minGap,
   blocksRowRef,
+  scrollRef,
   selected,
   playing,
   warnings,
@@ -741,9 +831,9 @@ function ResizableCaptionBlock({
   fps: number;
   prev: CaptionBlock | null;
   next: CaptionBlock | null;
-  snapEnabled: boolean;
   minGap: number | null;
   blocksRowRef: { current: HTMLDivElement | null };
+  scrollRef: { current: HTMLDivElement | null };
   selected: boolean;
   playing: boolean;
   warnings: ValidationWarning[];
@@ -786,6 +876,10 @@ function ResizableCaptionBlock({
     // the post-drag click (which is suppressed below). The playhead is left where
     // it is: a trim/roll targets the playhead, it shouldn't also move it.
     selectedCaptionIndex.value = block.index;
+    // Suspend auto-follow for the duration of the interaction so playback can't page
+    // the view out from under it. (Detaching follow so the view holds on release is
+    // gated on actual drag movement below — a bare click must not detach.)
+    isResizing.value = true;
 
     // After a drag, the browser fires a synthetic `click` whose target is the
     // common ancestor of the mousedown (this handle) and mouseup elements. When
@@ -803,10 +897,13 @@ function ResizableCaptionBlock({
     const minDuration = 1 / fps;
     const snapThresholdSec = SNAP_THRESHOLD_PX * secPerPx;
     const originX = e.clientX;
+    const originScrollLeft = scrollRef.current?.scrollLeft ?? 0;
     const originStart = block.start;
     const originEnd = block.end;
     let lastStart = originStart;
     let lastEnd = originEnd;
+    let lastClientX = e.clientX;
+    let dragged = false; // flips true past a small move threshold — gates pan / trim / detach
 
     // Shift-drag a handle sitting on a shared boundary = rolling edit: move the
     // cut between this caption and its neighbour, dragging both edges together.
@@ -818,8 +915,12 @@ function ResizableCaptionBlock({
     );
     if (rolling) e.preventDefault(); // don't let the shift-drag select page text
 
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - originX;
+    // Apply the trim/roll for a given cursor position. dx is the cursor's travel in
+    // CONTENT pixels = its viewport movement plus however far we've edge-panned, so
+    // the edit keeps tracking the cursor even as the timeline scrolls under it.
+    const applyTrim = (clientX: number) => {
+      const scroll = scrollRef.current;
+      const dx = (clientX - originX) + (scroll ? scroll.scrollLeft - originScrollLeft : 0);
       if (rolling) {
         // The cut follows the cursor; computeRoll clamps it within the two
         // captions (each keeps ≥ 1 frame), snaps to a frame, and reports both edges.
@@ -838,10 +939,13 @@ function ResizableCaptionBlock({
         }
         return;
       }
+      // Live snap state — snapEnabled is a signal, read per-move (not captured) so
+      // toggling gap snapping mid-drag takes effect on the active edit immediately.
+      const snap = snapEnabled.peek();
       if (edge === "left") {
         let rawTime = originStart + dx * secPerPx;
         let snapped: number | null = null;
-        if (snapEnabled) {
+        if (snap) {
           // Dead zone + snap only when there's an actual preceding caption;
           // at the media start (prevEnd === null) the first caption can begin
           // at 0 without a minGap buffer.
@@ -867,7 +971,7 @@ function ResizableCaptionBlock({
       } else {
         let rawTime = originEnd + dx * secPerPx;
         let snapped: number | null = null;
-        if (snapEnabled) {
+        if (snap) {
           // Dead zone + snap only when there's an actual following caption;
           // at the media end (nextStart === null) the last caption can run
           // all the way to duration without a minGap buffer.
@@ -893,7 +997,25 @@ function ResizableCaptionBlock({
       }
     };
 
+    // Edge-pan past the viewport while dragging, re-applying the trim under the
+    // cursor — the same loop the scrub uses.
+    const stopPan = startEdgePan(scrollRef.current, () => dragged, () => lastClientX, applyTrim);
+
+    const onMove = (ev: MouseEvent) => {
+      lastClientX = ev.clientX;
+      // Past a small threshold this is a real drag: only then detach follow,
+      // edge-pan, or apply the trim — so a bare click neither moves the caption,
+      // commits an undo entry, nor stops auto-follow (mirrors the scrub handler).
+      if (!dragged && Math.abs(ev.clientX - originX) > 4) {
+        dragged = true;
+        if (isPlaying.peek()) followDetached.value = true;
+      }
+      if (dragged) applyTrim(ev.clientX);
+    };
+
     const onUp = () => {
+      stopPan();
+      isResizing.value = false;
       resizeIndicator.value = null;
       resizeSnapped.value = false;
       // Skip commit if the final snapped values land back on the origin —
@@ -901,6 +1023,7 @@ function ResizableCaptionBlock({
       if (lastStart !== originStart || lastEnd !== originEnd) onResizeCommit(rolling ? "Roll edit" : undefined);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onUp);
       // Eat the trailing click (registered now so it's live before the click
       // fires); tidy the listener up next tick if no click follows.
       document.addEventListener("click", swallowClick, true);
@@ -909,6 +1032,10 @@ function ResizableCaptionBlock({
 
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    // End the drag if focus is lost mid-trim (alt-tab / OS dialog) so a stranded
+    // isResizing / followDetached / rAF / listeners can't persistently suppress
+    // auto-follow (see the follow effect's isResizing guard).
+    window.addEventListener("blur", onUp);
   };
 
   return (

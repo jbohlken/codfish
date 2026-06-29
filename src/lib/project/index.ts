@@ -16,6 +16,7 @@ import { makeBin, rememberCollapseState, expandBin, copyBinCollapseProject } fro
 import { copyClipViewProject, loadClipViewForProject, getActiveClip } from "../clipView";
 import { cancelActiveEdit } from "../../components/layout/CaptionPanel";
 import { resetTimelineView } from "../../components/layout/Timeline";
+import { openTitlebarMenu } from "../../components/titlebarMenu";
 
 const PROJECT_VERSION = 1;
 
@@ -65,6 +66,10 @@ function closeProject(): void {
   flushOpenClipView();
   cancelActiveEdit();
   resetTimelineView();
+  // The title-bar menu-bar group's open state is a module signal that outlives
+  // the (proj-gated) dropdowns. Clear it so a menu left open during a keyboard /
+  // menu-driven close doesn't make the next project's dropdown render expanded.
+  openTitlebarMenu.value = null;
   resetHistory();
   project.value = null;
   projectPath.value = null;
@@ -597,6 +602,9 @@ export function resetSelectionForLoad(): void {
 
 function loadIntoStore(proj: CodProject, filePath: string): void {
   resetHistory(proj);
+  // Every load flows through here; make sure a stale open title-bar menu can't
+  // carry over onto the freshly loaded project (paths that don't pre-close).
+  openTitlebarMenu.value = null;
   project.value = proj;
   projectPath.value = filePath;
   isDirty.value = false;

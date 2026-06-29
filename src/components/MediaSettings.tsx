@@ -1,5 +1,6 @@
 import { signal } from "@preact/signals";
-import { XIcon as X } from "@phosphor-icons/react";
+import { XIcon as X, FolderOpenIcon as FolderOpen } from "@phosphor-icons/react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { project, pushHistory } from "../store/app";
 import { isDropFrameRate } from "../lib/time";
 
@@ -38,6 +39,16 @@ export function MediaSettings() {
           <div class="ms-row">
             <label class="ms-label">Path</label>
             <span class="ms-path">{item.path}</span>
+            <button
+              class="btn btn-ghost btn-icon"
+              data-tooltip="Open file location"
+              onClick={async () => {
+                try { await revealItemInDir(item.path); }
+                catch (e) { console.error("reveal failed", e); }
+              }}
+            >
+              <FolderOpen size={14} />
+            </button>
           </div>
           <div class="ms-row">
             <label class="ms-label">Frame rate</label>

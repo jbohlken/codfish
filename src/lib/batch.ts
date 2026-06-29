@@ -17,6 +17,7 @@ import { collectSubtree, orderMediaIdsForDisplay } from "./bins";
 import { transcribeMedia } from "./transcription";
 import { runPipeline } from "./pipeline";
 import { fileExists } from "./project";
+import { LANGUAGE_SELECTION_ENABLED } from "./features";
 import { showError } from "../components/ErrorModal";
 import type { CodProject, MediaItem, Word, CaptionBlock } from "../types/project";
 
@@ -118,14 +119,18 @@ export async function runBatchGeneration(mediaIds: string[]): Promise<void> {
       commit();
 
       try {
+        // Language selection is parked (LANGUAGE_SELECTION_ENABLED): always
+        // auto-detect, ignoring any language saved on an older project. When the
+        // picker is re-enabled this honors the per-project language again.
+        const requestedLanguage = LANGUAGE_SELECTION_ENABLED ? (current.language || null) : null;
+        const autoDetect = LANGUAGE_SELECTION_ENABLED ? !current.language : true;
         const { words, detectedLanguage, alignmentDegraded } = await transcribeMedia(
           media.path,
           current.transcriptionModel,
-          current.language || null,
+          requestedLanguage,
           (p) => { batchProgress.value = p; },
         );
         const { captions } = runPipeline(words, activeProfile.value, media.fps ?? undefined);
-        const autoDetect = !current.language;
         const result: BatchResult = {
           mediaId: id,
           words,

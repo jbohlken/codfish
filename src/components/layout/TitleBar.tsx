@@ -12,12 +12,13 @@ import {
   exportFormats,
 } from "../../store/app";
 import type { TranscriptionModel } from "../../types/project";
-import { CircleIcon as Circle, WaveformIcon as Waveform, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, WrenchIcon as Wrench, FileTextIcon as FileText, ArrowsClockwiseIcon as ArrowsClockwise, ExportIcon as ExportIcon } from "@phosphor-icons/react";
+import { CircleIcon as Circle, RobotIcon as Robot, TranslateIcon as Translate, SlidersIcon as Sliders, FishIcon as Fish, WrenchIcon as Wrench, FileTextIcon as FileText, ArrowsClockwiseIcon as ArrowsClockwise, ExportIcon as ExportIcon } from "@phosphor-icons/react";
 import { openProfileManager } from "../ProfileManager";
 import { openFormatManager } from "../FormatManager";
 import { hasUpdate, toggleUpdatePopover, UpdatePopover } from "../UpdateNotice";
 import { listModels } from "../../lib/transcription";
 import { listFormats } from "../../lib/export";
+import { LANGUAGE_SELECTION_ENABLED } from "../../lib/features";
 import {
   eligibleMediaIds,
   allTranscribableMediaIds,
@@ -237,7 +238,8 @@ export function TitleBar() {
         {proj && (
           <>
             <SelectButton
-              icon={Waveform}
+              icon={Robot}
+              menuId="model"
               tooltip="Transcription model"
               options={TRANSCRIPTION_MODELS.map((m) => ({
                 value: m.id,
@@ -248,15 +250,19 @@ export function TitleBar() {
               value={proj.transcriptionModel}
               onChange={(v) => { project.value = { ...proj, transcriptionModel: v }; isDirty.value = true; }}
             />
-            <SelectButton
-              icon={Translate}
-              tooltip="Language"
-              options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
-              value={proj.language}
-              onChange={(v) => { project.value = { ...proj, language: v }; isDirty.value = true; }}
-            />
+            {LANGUAGE_SELECTION_ENABLED && (
+              <SelectButton
+                icon={Translate}
+                menuId="language"
+                tooltip="Language"
+                options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+                value={proj.language}
+                onChange={(v) => { project.value = { ...proj, language: v }; isDirty.value = true; }}
+              />
+            )}
             <SelectButton
               icon={Sliders}
+              menuId="profile"
               tooltip="Caption profile"
               options={buildProfileOptions()}
               value={selectedProfile.value}
@@ -272,6 +278,7 @@ export function TitleBar() {
             />
             <ActionMenuButton
               icon={ArrowsClockwise}
+              menuId="generate"
               label="Generate"
               tooltip="Generate captions"
               items={generateItems}
@@ -281,6 +288,7 @@ export function TitleBar() {
 
             <SelectButton
               icon={FileText}
+              menuId="format"
               tooltip="Export format"
               options={buildFormatOptions()}
               value={selectedExportFormat.value}
@@ -293,6 +301,7 @@ export function TitleBar() {
             />
             <ActionMenuButton
               icon={ExportIcon}
+              menuId="export"
               label="Export"
               tooltip="Export captions"
               items={exportItems}

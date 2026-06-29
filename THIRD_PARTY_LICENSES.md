@@ -113,13 +113,6 @@ Copyright 2024 The Geist Project Authors
 Font source and license: https://vercel.com/font
 
 
-## Artwork
-
-The Codfish app icon is based on a fish illustration from
-[SVG Repo](https://www.svgrepo.com/svg/65669/fish), released under
-CC0 (public domain dedication). No attribution is required by CC0;
-this credit is provided as a courtesy.
-
 ## Trademarks
 
 "Codfish" is a trademark of Jared Bohlken. The Apache-2.0 license under

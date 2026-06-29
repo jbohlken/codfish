@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "preact/hooks";
-import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, TrashIcon as Trash, XIcon as X } from "@phosphor-icons/react";
+import { FilmSlateIcon as FilmSlate, MusicNoteIcon as MusicNote, WarningCircleIcon as WarningCircle, PlusIcon as Plus, FilePlusIcon as FilePlus, FolderOpenIcon as FolderOpen, FolderIcon as Folder, FolderPlusIcon as FolderPlus, ArrowsDownUpIcon as ArrowsDownUp, CheckIcon as Check, MagnifyingGlassIcon as MagnifyingGlass, TrashIcon as Trash, ArrowsClockwiseIcon as ArrowsClockwise, ExportIcon as Export, LinkIcon as Link, FolderMinusIcon as FolderMinus, XIcon as X } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
 import { signal, computed, useComputed } from "@preact/signals";
 import { project, projectPath, selectedMediaId, selectedMediaIds, selectedBinIds, selectedCaptionIndex, pushHistory, deselectAll, openClip, sortMode, sortDir, setSortMode, setSortDir } from "../../store/app";
@@ -754,12 +754,12 @@ export function ProjectPanel() {
     const captioned = selectionCaptionedMedia.value.length;
     if (transcribable > 0) {
       out.push(
-        { label: `Generate missing in ${scope} (${missing})`, disabled: missing === 0, onClick: () => { void generateMissingInSelection(); } },
-        { label: `Regenerate ${scope} (${transcribable})`, danger: true, disabled: captioned === 0, onClick: () => { void regenerateSelection(); } },
+        { label: `Generate missing in ${scope} (${missing})`, icon: <ArrowsClockwise size={12} />, disabled: missing === 0, onClick: () => { void generateMissingInSelection(); } },
+        { label: `Regenerate ${scope} (${transcribable})`, icon: <ArrowsClockwise size={12} />, danger: true, disabled: captioned === 0, onClick: () => { void regenerateSelection(); } },
       );
     }
     if (captioned > 0) {
-      out.push({ label: `Export ${scope} (${captioned})`, onClick: () => { void exportSelection(); } });
+      out.push({ label: `Export ${scope} (${captioned})`, icon: <Export size={12} />, onClick: () => { void exportSelection(); } });
     }
     if (out.length) out.push({ separator: true });
     return out;
@@ -775,18 +775,19 @@ export function ProjectPanel() {
       return [
         {
           label: hasCaptions ? "Regenerate captions" : "Generate captions",
+          icon: <ArrowsClockwise size={12} />,
           danger: hasCaptions, // red only when replacing existing captions/edits
           disabled: !hasAudio,
           onClick: () => { void generateSelectedMedia(); },
         },
-        { label: "Export captions", disabled: !hasCaptions, onClick: () => { void exportSelectedMedia(); } },
+        { label: "Export captions", icon: <Export size={12} />, disabled: !hasCaptions, onClick: () => { void exportSelectedMedia(); } },
         { separator: true },
         { label: "Properties…", onClick: () => { mediaSettingsId.value = id; } },
-        { label: "Re-link file…", onClick: () => relinkMediaItem(id) },
+        { label: "Re-link file…", icon: <Link size={12} />, onClick: () => relinkMediaItem(id) },
         { separator: true },
         { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
         { separator: true },
-        { label: "Remove from project", danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
+        { label: "Remove from project", icon: <Trash size={12} />, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
       ];
     }
     // Single bin: full bin menu, grouped — generate/export · create/rename · organize · destroy.
@@ -802,9 +803,9 @@ export function ProjectPanel() {
         { label: "Rename", onClick: () => { editingBinId.value = id; } },
         { separator: true },
         { label: "Move to…", submenu: buildMoveSubmenu(mediaIds, binIds) },
-        { label: "Dissolve bin", onClick: () => dissolveSelectedBins([id]) },
+        { label: "Dissolve bin", icon: <FolderMinus size={12} />, onClick: () => dissolveSelectedBins([id]) },
         { separator: true },
-        { label: "Delete bin", danger: true, onClick: () => { void removeSelection([], [id]); } },
+        { label: "Delete bin", icon: <Trash size={12} />, danger: true, onClick: () => { void removeSelection([], [id]); } },
       ];
     }
     // Multi / mixed: cross-kind actions. Dissolve only shows for a bins-only
@@ -816,11 +817,11 @@ export function ProjectPanel() {
       { label: `Move ${label} to…`, submenu: buildMoveSubmenu(mediaIds, binIds) },
     ];
     if (binIds.length > 1 && mediaIds.length === 0) {
-      items.push({ label: `Dissolve ${binIds.length} bins`, onClick: () => dissolveSelectedBins(binIds) });
+      items.push({ label: `Dissolve ${binIds.length} bins`, icon: <FolderMinus size={12} />, onClick: () => dissolveSelectedBins(binIds) });
     }
     items.push(
       { separator: true },
-      { label: `Remove ${label} from project`, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
+      { label: `Remove ${label} from project`, icon: <Trash size={12} />, danger: true, onClick: () => { void removeSelection(mediaIds, binIds); } },
     );
     return items;
   };

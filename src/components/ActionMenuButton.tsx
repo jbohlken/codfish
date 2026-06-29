@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { CaretDownIcon as CaretDown, type Icon } from "@phosphor-icons/react";
+import { openTitlebarMenu } from "./titlebarMenu";
 
 export interface ActionMenuItem {
   label: string;
@@ -35,14 +36,24 @@ export function ActionMenuButton({
   label,
   tooltip,
   items,
+  menuId,
 }: {
   icon: Icon;
   label: string;
   tooltip?: string;
   items: ActionMenuEntry[];
+  /** When set, joins the title-bar menu-bar group (single-owner + hover-swap). */
+  menuId?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  const grouped = menuId !== undefined;
+  const open = grouped ? openTitlebarMenu.value === menuId : localOpen;
+  const setOpen = (next: boolean) => {
+    if (grouped) openTitlebarMenu.value = next ? menuId! : null;
+    else setLocalOpen(next);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -58,7 +69,14 @@ export function ActionMenuButton({
       <button
         class="titlebar-select-btn titlebar-select-btn--action"
         data-tooltip={tooltip}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
+        onMouseEnter={grouped ? () => {
+          // Menu-bar swap: hovering this trigger while another title-bar menu is
+          // open switches to it.
+          if (openTitlebarMenu.value !== null && openTitlebarMenu.value !== menuId) {
+            openTitlebarMenu.value = menuId!;
+          }
+        } : undefined}
       >
         <Icon size={13} />
         <span class="titlebar-select-label">{label}</span>

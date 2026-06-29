@@ -49,6 +49,7 @@ import {
   selectedExportFormat,
   exportFormats,
 } from "../../../store/app";
+import { openTitlebarMenu } from "../../titlebarMenu";
 import type { CodProject, MediaItem, CaptionBlock } from "../../../types/project";
 import type { CaptionProfile } from "../../../types/profile";
 
@@ -124,6 +125,7 @@ function makeProject(media: MediaItem[] = []): CodProject {
 
 beforeEach(() => {
   cleanup();
+  openTitlebarMenu.value = null; // shared title-bar menu-bar group state — reset between tests
   project.value = null;
   isDirty.value = false;
   selectedMediaId.value = null;

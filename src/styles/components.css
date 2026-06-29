@@ -855,6 +855,11 @@ body.rows-dragging * {
    item's text color and uses the same 6px gap as the menu-bar dropdowns. */
 .context-menu-item-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Fixed column so a menu that mixes icon and icon-less rows keeps its labels
+     aligned (icon-less rows render an empty span of this width). */
+  min-width: 14px;
   flex-shrink: 0;
 }
 
@@ -967,6 +972,8 @@ body.rows-dragging * {
 }
 
 .ms-path {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-secondary);
@@ -1473,6 +1480,7 @@ body.rows-dragging * {
   font-size: var(--text-xs);
   color: var(--tl-text-secondary);
   user-select: none;
+  cursor: help; /* it's an info-on-hover badge, like the caption header badge */
 }
 
 .timeline-fps-badge--default {
@@ -2511,8 +2519,8 @@ body.rows-dragging * {
 }
 
 .splash-icon {
-  width: 96px;
-  height: 96px;
+  width: 124px;
+  height: 124px;
   animation: splash-swim 3s linear infinite;
 }
 
@@ -3155,7 +3163,6 @@ body.rows-dragging * {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
-  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--color-text-primary);
   outline: none;
@@ -3163,6 +3170,9 @@ body.rows-dragging * {
   width: 100%;
   box-sizing: border-box;
 }
+/* Name / extension are plain text → sans; the template is code → mono. */
+.fb-input { font-family: var(--font-sans); }
+.fb-textarea { font-family: var(--font-mono); }
 
 .fb-input:focus,
 .fb-textarea:focus {

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { daemonStatus, daemonError } from "../store/app";
-import iconUrl from "../assets/codfish-alpha.svg";
+import iconUrl from "../assets/codfish.svg";
 
 export async function startDaemon() {
   daemonStatus.value = "booting";
