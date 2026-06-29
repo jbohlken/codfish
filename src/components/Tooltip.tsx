@@ -1,6 +1,11 @@
 import { signal, useSignalEffect } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 
+/** Sentinel line for a `data-tooltip` string: a line exactly equal to this
+ *  renders as a horizontal divider instead of text, letting a plain text tooltip
+ *  separate groups (e.g. a warning above the generation metadata). */
+export const TOOLTIP_DIVIDER = "<hr>";
+
 interface TextTooltip {
   type: "text";
   text: string;
@@ -168,7 +173,8 @@ export function Tooltip() {
   return (
     <div ref={ref} class="tooltip" style={{ left: `${state.x}px`, top: `${state.y}px` }}>
       {state.type === "text" ? (
-        state.text.split("\n").map((line, i) => <div key={i}>{line}</div>)
+        state.text.split("\n").map((line, i) =>
+          line === TOOLTIP_DIVIDER ? <div key={i} class="tooltip-divider" /> : <div key={i}>{line}</div>)
       ) : (
         <>
           {state.lines?.map((line, i) => (

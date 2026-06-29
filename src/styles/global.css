@@ -163,8 +163,11 @@
 
   /* Layout dimensions */
   --titlebar-height: 44px;
-  --project-panel-width: 220px;
-  --caption-panel-width: 300px;
+  /* Both side panels share one default width and the same min/max (the bounds
+     live in PanelResizeHandle); each is resized independently from here. */
+  --panel-default-width: 280px;
+  --project-panel-width: var(--panel-default-width);
+  --caption-panel-width: var(--panel-default-width);
   --timeline-height: 200px;
 }
 
@@ -333,6 +336,16 @@ a:hover {
 .btn-ghost:hover:not(:disabled) {
   background: var(--color-surface-hover);
   color: var(--color-text-primary);
+}
+
+/* Active toggle = accent-coloured icon/text, no fill — matching the timeline's
+   .timeline-btn--active convention. Used by both panels' search 🔍 toggles (and
+   the caption search tools). The :hover variant repeats (and outranks) the
+   .btn-ghost:hover rule above, which is more specific (0,3,0) and would otherwise
+   reset the colour to neutral on hover. */
+.btn-ghost.is-active,
+.btn-ghost.is-active:hover:not(:disabled) {
+  color: var(--color-accent);
 }
 
 .btn:disabled {

@@ -14,6 +14,9 @@ export interface ContextMenuItem {
   indent?: number;
   /** Action to run on click. Omitted for items that only open a submenu. */
   onClick?: () => void;
+  /** When true, clicking runs onClick but leaves the menu open — for toggles /
+   *  checkable options the user may flip without the menu dismissing. */
+  keepOpen?: boolean;
   /** When present, the item opens a flyout of these instead of acting. */
   submenu?: ContextMenuEntry[];
 }
@@ -57,6 +60,9 @@ interface ContextMenuState {
   x: number;
   y: number;
   items: ContextMenuEntry[];
+  /** Optional owner tag so a dropdown-toggle button can tell whether ITS menu
+   *  is the one open (vs some other menu elsewhere). */
+  source?: string;
 }
 
 export const contextMenu = signal<ContextMenuState | null>(null);
@@ -64,7 +70,20 @@ export const contextMenu = signal<ContextMenuState | null>(null);
 export function showContextMenu(e: MouseEvent, items: ContextMenuEntry[]) {
   e.preventDefault();
   e.stopPropagation();
-  contextMenu.value = { x: e.clientX, y: e.clientY, items };
+  openContextMenu(e.clientX, e.clientY, items);
+}
+
+/** Open the menu at explicit viewport coordinates — e.g. anchored to a button's
+ *  bounding rect for a dropdown, so its position doesn't depend on where the
+ *  click landed. `source` tags the owner so a toggle button can gate its active
+ *  state on its own menu. The viewport-overflow nudge keeps it on screen. */
+export function openContextMenu(x: number, y: number, items: ContextMenuEntry[], source?: string) {
+  contextMenu.value = { x, y, items, source };
+}
+
+/** Close the menu (e.g. for a dropdown-toggle button that toggles its own menu). */
+export function closeContextMenu() {
+  contextMenu.value = null;
 }
 
 /** A divider (with optional group label) between menu sections. */
@@ -156,7 +175,7 @@ export function ContextMenu() {
             disabled={item.disabled}
             // Hovering a non-submenu sibling closes any open flyout.
             onMouseEnter={() => setOpenIndex(null)}
-            onClick={() => { close(); item.onClick?.(); }}
+            onClick={() => { if (item.keepOpen) item.onClick?.(); else { close(); item.onClick?.(); } }}
           >
             <ItemBody item={item} />
           </button>
@@ -197,7 +216,7 @@ function Submenu({ items, onClose }: { items: ContextMenuEntry[]; onClose: () =>
             class={`context-menu-item ${sub.danger ? "context-menu-item--danger" : ""}`}
             style={indentStyle(sub)}
             disabled={sub.disabled}
-            onClick={() => { onClose(); sub.onClick?.(); }}
+            onClick={() => { if (sub.keepOpen) sub.onClick?.(); else { onClose(); sub.onClick?.(); } }}
           >
             <ItemBody item={sub} />
           </button>

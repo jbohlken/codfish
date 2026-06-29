@@ -268,6 +268,15 @@
   gap: 2px; /* match the CaptionPanel header button group */
 }
 
+/* Title + its inline status badges, grouped on the left so the header's
+   space-between keeps the action buttons pinned to the right. */
+.panel-header-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 /* Sort dropdown (header). The menu is position:fixed (coords set inline from
    the trigger rect) so it escapes the panel's overflow:hidden. */
 .panel-sort {
@@ -346,25 +355,8 @@
   margin: var(--space-1) 0;
 }
 
-/* Filter row — sits between header and the scrollable list. */
-/* Search expands inline inside the panel header (replacing the title +
-   action buttons while open), so it occupies the header row rather than
-   pushing the list down or overlaying any rows. */
-.panel-header-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1;
-  min-width: 0;
-  margin-right: var(--space-2);
-}
-
-.panel-filter-icon {
-  display: inline-flex;
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
-}
-
+/* Search field internals — shared by both panels' search drawers (the input and
+   its trailing clear-X). The drawer shell itself is the .search-* chrome above. */
 .panel-filter-input {
   flex: 1;
   min-width: 0;
@@ -399,11 +391,14 @@
   color: var(--color-text-primary);
 }
 
-/* Drag strip on the right edge of the panel *header* only — below it, the
-   panel body's scrollbar owns that edge. Anchored inside the header so it
-   tracks the header height. Shows a 2px accent line on hover/drag;
-   double-click resets the width to the stylesheet default. */
-.project-panel .panel-header {
+/* Drag strip inside the panel *header* only — below it, the panel body's
+   scrollbar owns that edge. Anchored inside the header so it tracks the header
+   height. Sits on the panel's inner edge: the right edge for the left-docked
+   project panel, the left edge for the right-docked caption panel (the --left
+   modifier). Shows a 2px accent line on hover/drag; double-click resets the
+   width to the stylesheet default. */
+.project-panel .panel-header,
+.caption-panel .panel-header {
   position: relative;
 }
 
@@ -429,11 +424,19 @@
   transition: opacity 0.1s;
 }
 
+/* Right-docked panel (caption): flip the strip and its accent line to the
+   left edge so it sits on the panel's inner border. */
+.panel-resize-handle--left { right: auto; left: 0; }
+.panel-resize-handle--left::after { right: auto; left: 0; }
+
 .panel-resize-handle:hover::after {
   opacity: 0.5;
 }
 
-body.col-resizing .panel-resize-handle::after {
+/* Full-strength line only on the handle being dragged (the component toggles
+   this class). The two-class selector outranks :hover so it wins at drag start
+   while the cursor is still over the strip. The idle panel's handle stays dark. */
+.panel-resize-handle.panel-resize-handle--dragging::after {
   opacity: 1;
 }
 
@@ -574,12 +577,6 @@ body.col-resizing {
   line-clamp: 2;
   overflow: hidden;
   overflow-wrap: anywhere;
-}
-
-.media-row-match {
-  background: var(--color-accent-light);
-  color: inherit;
-  border-radius: 2px;
 }
 
 .media-row-meta {
@@ -1116,7 +1113,102 @@ body.rows-dragging * {
   line-height: 1.4;
 }
 
+/* ── Search drawer (shared: project + caption panels) ─────────────────────── */
+
+/* Search drawer — slides open below a panel header. The grid 0fr→1fr trick
+   animates to the content's natural height (no hard-coded height, so it works
+   whether the caption replace row is open or not). The clip carries the
+   overflow:hidden + min-height:0 the animation needs; the bar inside carries the
+   surface + border so they're clipped away when closed (a border on the grid item
+   itself would show a 1px seam at 0fr). The caption panel's replace row nests the
+   same way (.caption-replace-*) so it slides in independently. */
+.search-drawer,
+.caption-replace-drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.18s ease;
+}
+.search-drawer.is-open,
+.caption-replace-drawer.is-open {
+  grid-template-rows: 1fr;
+}
+.search-clip,
+.caption-replace-clip {
+  overflow: hidden;
+  min-height: 0;
+}
+.search-bar {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-1) 0;
+}
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-drawer,
+  .caption-replace-drawer {
+    transition: none;
+  }
+}
+
+/* The input plus its tucked-in trailing bits (match count, clear button). The
+   caption find/replace rows also end in an equal-width .search-tools cluster so
+   their inputs stay the same width; the project search uses just the field. */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+
+/* Trailing icon-button cluster on a search row (caption find: case + replace
+   toggle; caption replace: replace + replace-all) — equal width so inputs align. */
+.search-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Match counter ("2/5"), tucked at the right end of a search field. */
+.search-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+/* Highlighted search match within a row's text (translucent amber so it reads
+   over the row tint in both themes; text colour is left untouched). Shared by the
+   caption text and the project media/bin names. */
+.search-match {
+  background: rgba(251, 191, 36, 0.4);
+  color: inherit;
+  border-radius: 2px;
+}
+
 /* ── Caption Panel ──────────────────────────────────────────────────────── */
+
+/* Non-interactive status badge beside the panel title (generation info, degraded
+   alignment) — reveals its detail on hover via the tooltip (no hover color-shift:
+   it isn't clickable, and a static indicator matches the timeline fps/VFR badge).
+   Small + muted to match that badge's language; the --warning variant uses the
+   same amber as its VFR state (--color-warning). */
+.caption-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  cursor: help;
+}
+.caption-meta-badge--warning {
+  color: var(--color-warning, #e5a100);
+}
+
 .caption-list {
   padding: var(--space-2) 0;
   min-height: 100%;
@@ -1125,6 +1217,7 @@ body.rows-dragging * {
 .caption-row {
   display: flex;
   flex-direction: column;
+  position: relative; /* anchors the floating .caption-row-actions overlay */
   gap: var(--space-1);
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -1160,34 +1253,36 @@ body.rows-dragging * {
   border-left-color: var(--color-playing-border);
 }
 
+/* While a search query is active, non-matching rows are dimmed (not hidden) so
+   the list stays congruent with the timeline. Selected/playing rows aren't given
+   this class; hovering a dimmed row restores it to full strength for reading. */
+.caption-row--dimmed {
+  opacity: 0.4;
+}
+.caption-row--dimmed:hover {
+  opacity: 1;
+}
+
 .caption-row-meta {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-  display: flex;
-  align-items: center;
-  gap: 5px;
 }
 
-.caption-warning {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: default;
-  padding: 3px 4px;
-  margin: -3px -4px;
+/* The caption number doubles as the warning indicator (see CaptionNumber):
+   when a row is warned the number sits in a coloured pill — red for a strict
+   error, amber for a soft warning, split red/amber when it has both — with the
+   full warning list on hover. Only warned rows get the pill, so unwarned rows
+   keep their plain flush-left number and nothing reserves space. */
+.caption-num--badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  color: #1f2937; /* dark text reads on both the red and amber fills, any theme */
+  font-weight: var(--font-weight-medium);
 }
-
-.warning-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.warning-dot--strict { background: #f87171; }
-.warning-dot--fuzzy  { background: #fbbf24; }
-.warning-dot--both   { background: linear-gradient(to right, #f87171 50%, #fbbf24 50%); }
+.caption-num--strict { background: #f87171; }
+.caption-num--fuzzy  { background: #fbbf24; }
+.caption-num--both   { background: linear-gradient(to right, #f87171 50%, #fbbf24 50%); }
 
 .caption-row-text {
   font-size: var(--text-sm);
@@ -1196,19 +1291,39 @@ body.rows-dragging * {
   white-space: pre-wrap;
 }
 
+/* Floats over the selected row's top-right, overlapping the end-timecode on the
+   meta line, so the row never grows or reflows when it's selected. The left fade
+   masks the timecode showing through the inter-button gaps, so its solid end has
+   to match the row's own background — which depends on the row state, so the fade
+   is overridden to track it: hover wins the background on a plain selected row
+   (--color-surface-hover), but on a selected+playing row the accent rule wins
+   even when hovered (equal specificity, later in source), so that state needs its
+   own override back to the accent tint. */
 .caption-row-actions {
+  position: absolute;
+  top: 4px;
+  right: var(--space-3);
   display: flex;
   gap: var(--space-1);
-  margin-top: var(--space-1);
+  padding-left: 18px;
+  background: linear-gradient(to right, transparent, var(--color-accent-light) 18px);
+}
+
+.caption-row:hover .caption-row-actions {
+  background: linear-gradient(to right, transparent, var(--color-surface-hover) 18px);
+}
+
+.caption-row--selected.caption-row--playing:hover .caption-row-actions {
+  background: linear-gradient(to right, transparent, var(--color-accent-light) 18px);
 }
 
 .btn-caption-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px var(--space-2);
-  font-size: var(--text-xs);
-  font-family: var(--font-sans);
+  /* Square icon buttons — they overlay the row, so a compact footprint masks
+     less of the timecode behind them. */
+  padding: 4px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border-strong);
   background: var(--color-bg);

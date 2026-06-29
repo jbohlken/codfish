@@ -47,6 +47,7 @@ import { hideTooltip } from "../Tooltip";
 import { confirmUnsavedChanges } from "../UnsavedChanges";
 import { mediaSettingsId } from "../MediaSettings";
 import { sortMedia, SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../../lib/mediaSort";
+import { PanelResizeHandle } from "./PanelResizeHandle";
 import type { MediaItem, Bin } from "../../types/project";
 
 const missingIds = signal<ReadonlySet<string>>(new Set());
@@ -96,78 +97,7 @@ function osDropTargetAt(pos: { x: number; y: number }): string | null {
   return el.closest(".project-panel") ? ROOT_DROP : null;
 }
 
-// ── Panel resizing ──────────────────────────────────────────────────────────
-// The grid column is driven by --project-panel-width; dragging the handle
-// overrides it inline on <html> and persists per-user. Double-click resets
-// to the stylesheet default.
-
-const PANEL_WIDTH_KEY = "codfish:projectPanelWidth";
-const PANEL_WIDTH_MIN = 180;
-const PANEL_WIDTH_MAX = 560;
-
-function applyPanelWidth(px: number | null) {
-  const root = document.documentElement;
-  if (px === null) root.style.removeProperty("--project-panel-width");
-  else root.style.setProperty("--project-panel-width", `${px}px`);
-}
-
-function PanelResizeHandle() {
-  useEffect(() => {
-    const stored = Number(localStorage.getItem(PANEL_WIDTH_KEY));
-    if (Number.isFinite(stored) && stored >= PANEL_WIDTH_MIN && stored <= PANEL_WIDTH_MAX) {
-      // Re-apply the same half-window cap the drag enforces, so a width saved
-      // on a wide monitor can't swallow a narrower window on next launch.
-      applyPanelWidth(Math.min(stored, Math.round(window.innerWidth / 2)));
-    }
-    // Safety net: if the handle unmounts mid-drag (onUp never fires), don't
-    // leave the global drag cursor / text-selection lock stuck on <body>.
-    return () => document.body.classList.remove("col-resizing");
-  }, []);
-
-  const onPointerDown = (e: PointerEvent) => {
-    if (e.button !== 0) return;
-    const handle = e.currentTarget as HTMLElement;
-    // The handle lives in the panel header, which spans the panel's full
-    // width — so its width is the panel width.
-    const host = handle.parentElement;
-    if (!host) return;
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-    document.body.classList.add("col-resizing");
-
-    const startX = e.clientX;
-    const startWidth = host.getBoundingClientRect().width;
-    let width = startWidth;
-
-    const onMove = (ev: PointerEvent) => {
-      // Never let the panel eat more than half the window, even on small screens
-      const max = Math.min(PANEL_WIDTH_MAX, Math.round(window.innerWidth / 2));
-      width = Math.max(PANEL_WIDTH_MIN, Math.min(max, startWidth + (ev.clientX - startX)));
-      applyPanelWidth(width);
-    };
-    const onUp = () => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      handle.removeEventListener("pointercancel", onUp);
-      document.body.classList.remove("col-resizing");
-      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(width)));
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-    handle.addEventListener("pointercancel", onUp);
-  };
-
-  return (
-    <div
-      class="panel-resize-handle"
-      onPointerDown={onPointerDown}
-      onDblClick={() => {
-        applyPanelWidth(null);
-        localStorage.removeItem(PANEL_WIDTH_KEY);
-      }}
-    />
-  );
-}
+// Panel resize handles for both side panels live in ./PanelResizeHandle.
 
 // ── Sort & filter ───────────────────────────────────────────────────────────
 // Sort mode/direction live in store/app (so the batch/export id-lists can order
@@ -185,10 +115,11 @@ const DIR_LABELS: Record<SortMode, Record<SortDir, string>> = {
 };
 
 const filterText = signal("");
-// Search is hidden behind a header button; the filter row only renders while
-// open. It opens focused and closes when it loses focus while empty (or on
-// Escape / project switch). Closing always clears the query so there's never
-// a hidden filter.
+// Search lives in a drawer below the header (shared chrome with the caption
+// panel), toggled by the header search button. Closing keeps the query text:
+// every filter read is gated on searchOpen, so a closed drawer never filters
+// even with text retained, and reopening within the project restores it. Escape
+// closes; a project switch clears the text (see the reset block below).
 const searchOpen = signal(false);
 
 // Which row should show the "open in editor" marker: the open clip's own row
@@ -201,7 +132,7 @@ const openIndicatorId = computed<string | null>(() => {
   if (!openId) return null;
   // Searching force-expands the tree and filters the list, so collapse-ancestor
   // logic is moot — just mark the open clip's own row if it's in the results.
-  if (filterText.value.trim().length > 0) return openId;
+  if (searchOpen.value && filterText.value.trim().length > 0) return openId;
   const proj = project.value;
   const clip = proj?.media.find((m) => m.id === openId);
   if (!clip?.binId) return openId; // ungrouped, or not found → its own row
@@ -232,7 +163,6 @@ function openSearch() {
 }
 function closeSearch() {
   searchOpen.value = false;
-  filterText.value = "";
 }
 
 // Shift-click range anchor (the last plain/ctrl click) and the bin currently
@@ -244,7 +174,7 @@ const editingBinId = signal<string | null>(null);
  *  Shared by the render and by removeMediaIds' selection fallback so both
  *  agree on "visible order". */
 function visibleOrder(media: MediaItem[]): MediaItem[] {
-  const q = filterText.value.trim().toLowerCase();
+  const q = searchOpen.value ? filterText.value.trim().toLowerCase() : "";
   return sortMedia(media, sortMode.value, sortDir.value)
     .filter((m) => !q || m.name.toLowerCase().includes(q));
 }
@@ -417,9 +347,12 @@ export function ProjectPanel() {
     checkMissingMedia(proj?.media ?? []);
   }, [mediaPathSig]);
 
-  // Focus the search field when it opens.
+  // Focus + select the search field when the drawer opens, deferred a frame so
+  // it lands after the drawer is un-inerted and laid out (mirrors the caption
+  // search). Selecting lets a retained query be overtyped immediately.
   useEffect(() => {
-    if (searchOpen.value) searchInputRef.current?.focus();
+    if (!searchOpen.value) return;
+    requestAnimationFrame(() => { const el = searchInputRef.current; if (el) { el.focus(); el.select(); } });
   }, [searchOpen.value]);
 
   // OS file drop: dropping media files from the desktop onto the panel imports
@@ -495,6 +428,15 @@ export function ProjectPanel() {
   const hasBins = bins.length > 0;
   const searching = query.length > 0;
 
+  // If the project is emptied while search is open (e.g. the last clip is deleted
+  // with the drawer open), drop the search. Otherwise the carried-over query stays
+  // active and a later re-import in the same project shows up wrongly hidden behind
+  // it, with the drawer re-mounting open + unfocused. (Cross-project switches clear
+  // via the reset block above; this covers same-project empty→refill.)
+  useEffect(() => {
+    if (!hasMedia && !hasBins) { searchOpen.value = false; filterText.value = ""; }
+  }, [hasMedia, hasBins]);
+
   // Search matches clip names AND bin names. A matched bin reveals its whole
   // sub-tree — every clip and sub-bin inside shows regardless of their own
   // names — so `revealedBins` is the matched bins plus everything under them.
@@ -515,8 +457,6 @@ export function ProjectPanel() {
     );
     return { visibleMedia: vm, revealedBins: revealed };
   }, [media, bins, sMode, sDir, query]);
-
-  const showSearch = !!proj && (hasMedia || hasBins) && searchOpen.value;
 
   // Selection and drop highlights are bound per-row to computed signals (see
   // MediaRow/BinGroup) rather than read here — so selecting or dragging updates
@@ -1099,43 +1039,16 @@ export function ProjectPanel() {
 
   return (
     <div class="panel project-panel">
-      {/* Search expands inline in the header, replacing only the title — the
-          action buttons stay put, so opening search neither pushes the list
-          down, covers any rows, nor hides sort/import. */}
       <div class="panel-header">
-        {showSearch ? (
-          <div class="panel-header-search">
-            <span class="panel-filter-icon"><MagnifyingGlass size={13} /></span>
-            <input
-              ref={searchInputRef}
-              class="panel-filter-input"
-              type="text"
-              placeholder="Search project…"
-              value={filterText.value}
-              onInput={(e) => { filterText.value = (e.target as HTMLInputElement).value; }}
-              onKeyDown={(e) => { if (e.key === "Escape") closeSearch(); }}
-              onBlur={() => { if (!filterText.value) closeSearch(); }}
-            />
-            {filterText.value && (
-              <button
-                class="panel-filter-clear"
-                data-tooltip="Clear search"
-                onClick={() => { filterText.value = ""; searchInputRef.current?.focus(); }}
-              >
-                <X size={12} />
-              </button>
-            )}
-          </div>
-        ) : (
-          <span class="panel-header-title">Project</span>
-        )}
+        <span class="panel-header-title">Project</span>
         {proj && (
           <div class="panel-header-actions">
-            {(hasMedia || hasBins) && !showSearch && (
+            {(hasMedia || hasBins) && (
               <button
-                class="btn btn-ghost btn-icon"
+                class={`btn btn-ghost btn-icon${searchOpen.value ? " is-active" : ""}`}
                 data-tooltip="Search project"
-                onClick={() => { openSearch(); searchInputRef.current?.focus(); }}
+                aria-pressed={searchOpen.value}
+                onClick={() => (searchOpen.value ? closeSearch() : openSearch())}
               >
                 <MagnifyingGlass size={14} />
               </button>
@@ -1190,8 +1103,51 @@ export function ProjectPanel() {
             )}
           </div>
         )}
-        <PanelResizeHandle />
+        <PanelResizeHandle
+          cssVar="--project-panel-width"
+          storageKey="codfish:projectPanelWidth"
+          edge="right"
+        />
       </div>
+
+      {/* Search drawer — slides open below the header (shared chrome with the
+          caption panel). Mounted whenever the project has content so the
+          open/close transition can run; inert while closed so its input stays out
+          of the tab order. Filtering + bin-reveal are unchanged; closing keeps the
+          text (every filter read is gated on searchOpen). */}
+      {proj && (hasMedia || hasBins) && (
+        <div
+          class={`search-drawer${searchOpen.value ? " is-open" : ""}`}
+          {...(searchOpen.value ? {} : { inert: true })}
+        >
+          <div class="search-clip">
+            <div class="search-bar">
+              <div class="search-row">
+                <div class="search-field">
+                  <input
+                    ref={searchInputRef}
+                    class="panel-filter-input"
+                    type="text"
+                    placeholder="Search project…"
+                    value={filterText.value}
+                    onInput={(e) => { filterText.value = (e.target as HTMLInputElement).value; }}
+                    onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); closeSearch(); } }}
+                  />
+                  {filterText.value && (
+                    <button
+                      class="panel-filter-clear"
+                      data-tooltip="Clear search"
+                      onClick={() => { filterText.value = ""; searchInputRef.current?.focus(); }}
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* The whole scrollable body is the top-level drop zone: a pointer drag
           that ends here (outside any bin) drops to the root. The drag hit-test
@@ -1458,7 +1414,7 @@ function highlightMatch(name: string, query: string): ComponentChildren {
   return (
     <>
       {name.slice(0, idx)}
-      <mark class="media-row-match">{name.slice(idx, end)}</mark>
+      <mark class="search-match">{name.slice(idx, end)}</mark>
       {name.slice(end)}
     </>
   );
