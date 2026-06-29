@@ -38,10 +38,12 @@ const MENU_INDENT_STEP = 16;
 
 /** Render an item's leading icon (if any) + its label. Shared by the root menu
  *  and submenu flyouts so both pick up icons and indentation. */
-function ItemBody({ item }: { item: ContextMenuItem }) {
+function ItemBody({ item, reserveIcon }: { item: ContextMenuItem; reserveIcon?: boolean }) {
   return (
     <>
-      {item.icon && <span class="context-menu-item-icon">{item.icon}</span>}
+      {item.icon
+        ? <span class="context-menu-item-icon">{item.icon}</span>
+        : reserveIcon && <span class="context-menu-item-icon" aria-hidden="true" />}
       <span class="context-menu-item-label">{item.label}</span>
     </>
   );
@@ -131,6 +133,9 @@ export function ContextMenu() {
   if (!state) return null;
 
   const close = () => { contextMenu.value = null; };
+  // Reserve a leading icon column when any item has an icon, so icon-less rows
+  // stay aligned (their ItemBody renders an empty icon-width span).
+  const reserveIcon = state.items.some((it) => !isSeparator(it) && !!it.icon);
 
   return (
     <div
@@ -160,7 +165,7 @@ export function ContextMenu() {
               // mouseover before the click would tap it straight back closed.
               onClick={() => setOpenIndex(i)}
             >
-              <span class="context-menu-item-parent-label"><ItemBody item={item} /></span>
+              <span class="context-menu-item-parent-label"><ItemBody item={item} reserveIcon={reserveIcon} /></span>
               <CaretRight size={12} />
             </button>
             {openIndex === i && item.submenu.length > 0 && (
@@ -177,7 +182,7 @@ export function ContextMenu() {
             onMouseEnter={() => setOpenIndex(null)}
             onClick={() => { if (item.keepOpen) item.onClick?.(); else { close(); item.onClick?.(); } }}
           >
-            <ItemBody item={item} />
+            <ItemBody item={item} reserveIcon={reserveIcon} />
           </button>
         )
       )}
@@ -205,6 +210,8 @@ function Submenu({ items, onClose }: { items: ContextMenuEntry[]; onClose: () =>
     if (overflowY > 0) el.style.top = `${el.offsetTop - overflowY}px`;
   }, []);
 
+  const reserveIcon = items.some((it) => !isSeparator(it) && !!it.icon);
+
   return (
     <div ref={ref} class="context-menu context-menu-submenu">
       {items.map((sub, j) =>
@@ -218,7 +225,7 @@ function Submenu({ items, onClose }: { items: ContextMenuEntry[]; onClose: () =>
             disabled={sub.disabled}
             onClick={() => { if (sub.keepOpen) sub.onClick?.(); else { onClose(); sub.onClick?.(); } }}
           >
-            <ItemBody item={sub} />
+            <ItemBody item={sub} reserveIcon={reserveIcon} />
           </button>
         )
       )}

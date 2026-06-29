@@ -855,6 +855,11 @@ body.rows-dragging * {
    item's text color and uses the same 6px gap as the menu-bar dropdowns. */
 .context-menu-item-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Fixed column so a menu that mixes icon and icon-less rows keeps its labels
+     aligned (icon-less rows render an empty span of this width). */
+  min-width: 14px;
   flex-shrink: 0;
 }
 
@@ -967,6 +972,8 @@ body.rows-dragging * {
 }
 
 .ms-path {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-secondary);
