@@ -2519,8 +2519,8 @@ body.rows-dragging * {
 }
 
 .splash-icon {
-  width: 96px;
-  height: 96px;
+  width: 124px;
+  height: 124px;
   animation: splash-swim 3s linear infinite;
 }
 
