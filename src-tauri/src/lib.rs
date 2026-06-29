@@ -26,7 +26,9 @@ struct MenuItems {
     close_project: MenuItem<Wry>,
     undo: MenuItem<Wry>,
     redo: MenuItem<Wry>,
-    dark_mode: CheckMenuItem<Wry>,
+    theme_light: CheckMenuItem<Wry>,
+    theme_dark: CheckMenuItem<Wry>,
+    theme_auto: CheckMenuItem<Wry>,
     export_formats: MenuItem<Wry>,
     profiles: MenuItem<Wry>,
     about: MenuItem<Wry>,
@@ -79,13 +81,16 @@ fn frontend_log(app: AppHandle, message: String) {
 
 #[tauri::command]
 fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Result<(), String> {
-    // open_recent (Submenu) and dark_mode (CheckMenuItem) are different types
-    // from the regular MenuItems, so they can't go through the match arm.
+    // open_recent (Submenu) and the theme CheckMenuItems are different types from
+    // the regular MenuItems, so they can't go through the match arm. "theme"
+    // enables the whole Light/Dark/Auto group at once.
     if id == "open_recent" {
         return items.recent_submenu.set_enabled(enabled).map_err(|e| e.to_string());
     }
-    if id == "dark_mode" {
-        return items.dark_mode.set_enabled(enabled).map_err(|e| e.to_string());
+    if id == "theme" {
+        items.theme_light.set_enabled(enabled).map_err(|e| e.to_string())?;
+        items.theme_dark.set_enabled(enabled).map_err(|e| e.to_string())?;
+        return items.theme_auto.set_enabled(enabled).map_err(|e| e.to_string());
     }
     let item = match id.as_str() {
         "new_project" => &items.new_project,
@@ -118,7 +123,9 @@ fn set_menu_text(items: State<MenuItems>, id: String, text: String) -> Result<()
 #[tauri::command]
 fn set_menu_checked(items: State<MenuItems>, id: String, checked: bool) -> Result<(), String> {
     let item = match id.as_str() {
-        "dark_mode" => &items.dark_mode,
+        "theme_light" => &items.theme_light,
+        "theme_dark" => &items.theme_dark,
+        "theme_auto" => &items.theme_auto,
         other => return Err(format!("unknown menu id: {other}")),
     };
     item.set_checked(checked).map_err(|e| e.to_string())
@@ -1439,11 +1446,29 @@ pub fn run() {
                 .enabled(false)
                 .build(handle)?;
 
-            let dark_mode_item = CheckMenuItemBuilder::new("Dark Mode")
-                .id("menu_dark_mode")
+            // Theme submenu: Light / Dark / Auto as a radio group. Checked state is
+            // driven from the frontend (only the active mode is checked); Auto starts
+            // checked to match the default mode.
+            let theme_light = CheckMenuItemBuilder::new("Light")
+                .id("menu_theme_light")
+                .checked(false)
+                .enabled(false)
+                .build(handle)?;
+            let theme_dark = CheckMenuItemBuilder::new("Dark")
+                .id("menu_theme_dark")
+                .checked(false)
+                .enabled(false)
+                .build(handle)?;
+            let theme_auto = CheckMenuItemBuilder::new("Auto")
+                .id("menu_theme_auto")
                 .checked(true)
                 .enabled(false)
                 .build(handle)?;
+            let theme_submenu = SubmenuBuilder::new(handle, "Theme")
+                .item(&theme_light)
+                .item(&theme_dark)
+                .item(&theme_auto)
+                .build()?;
 
             menu_builder = menu_builder.item(&file_menu);
 
@@ -1462,7 +1487,7 @@ pub fn run() {
                     .item(&export_formats)
                     .build()?;
                 let view_menu = SubmenuBuilder::new(handle, "View")
-                    .item(&dark_mode_item)
+                    .item(&theme_submenu)
                     .build()?;
                 // Note: deliberately omitting .close_window() so Close Project
                 // (File menu, Cmd+W) owns the Cmd+W binding — matches Adobe and
@@ -1492,7 +1517,7 @@ pub fn run() {
                     .item(&export_formats)
                     .build()?;
                 let view_menu = SubmenuBuilder::new(handle, "View")
-                    .item(&dark_mode_item)
+                    .item(&theme_submenu)
                     .build()?;
                 let help_menu = SubmenuBuilder::new(handle, "Help")
                     .item(&feedback_item)
@@ -1514,7 +1539,9 @@ pub fn run() {
                 close_project: close_proj.clone(),
                 undo: undo_item.clone(),
                 redo: redo_item.clone(),
-                dark_mode: dark_mode_item.clone(),
+                theme_light: theme_light.clone(),
+                theme_dark: theme_dark.clone(),
+                theme_auto: theme_auto.clone(),
                 export_formats: export_formats.clone(),
                 profiles: profiles_item.clone(),
                 about: about_item.clone(),

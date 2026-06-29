@@ -43,8 +43,19 @@ import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery
 import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
 import { FormatManager, openFormatManager, requestCloseFormatManager } from "./components/FormatManager";
-import { theme, toggleTheme } from "./store/theme";
+import { themeMode, setThemeMode } from "./store/theme";
 
+
+// Re-assert the Theme radio group's checks from the current mode. Called on a mode
+// change AND after every Theme menu click: a native CheckMenuItem auto-toggles its
+// own check on click (Windows/GTK), so re-clicking the already-active item would
+// otherwise leave it cosmetically unchecked with nothing to correct it.
+function applyThemeMenuChecks() {
+  const mode = themeMode.peek();
+  invoke("set_menu_checked", { id: "theme_light", checked: mode === "light" }).catch(() => {});
+  invoke("set_menu_checked", { id: "theme_dark", checked: mode === "dark" }).catch(() => {});
+  invoke("set_menu_checked", { id: "theme_auto", checked: mode === "auto" }).catch(() => {});
+}
 
 export function App() {
   useUpdateChecker();
@@ -291,7 +302,7 @@ export function App() {
     // only live escape hatch).
     set("export_formats", ready);
     set("profiles", ready);
-    set("dark_mode", ready);
+    set("theme", ready);
     set("about", ready);
     set("feedback", ready);
     const setText = (id: string, text: string) =>
@@ -300,9 +311,12 @@ export function App() {
     setText("redo", redoDescription.value ? `Redo ${redoDescription.value}` : "Redo");
   });
 
-  // Sync the View → Dark Mode checkbox with the theme signal.
+  // Sync the View → Theme radio group (Light / Dark / Auto) with the mode — initial
+  // + on change. The menu dispatch below also re-asserts after each click (a
+  // same-mode re-click is a signal no-op, so this effect alone wouldn't re-run).
   useSignalEffect(() => {
-    invoke("set_menu_checked", { id: "dark_mode", checked: theme.value === "dark" }).catch(() => {});
+    void themeMode.value; // re-run when the mode changes
+    applyThemeMenuChecks();
   });
 
   useEffect(() => {
@@ -339,7 +353,12 @@ export function App() {
         case "clear_recent": clearRecent(); break;
         case "export_formats": requestCloseProfileManager().then((ok) => { if (ok) openFormatManager(); }); break;
         case "profiles": requestCloseFormatManager().then((ok) => { if (ok) openProfileManager(); }); break;
-        case "dark_mode": toggleTheme(); break;
+        // Re-assert the radio after each click: a same-mode re-click is a signal
+        // no-op (sync effect won't fire), but the native item just toggled its own
+        // check off — applyThemeMenuChecks puts the group back.
+        case "theme_light": setThemeMode("light"); applyThemeMenuChecks(); break;
+        case "theme_dark": setThemeMode("dark"); applyThemeMenuChecks(); break;
+        case "theme_auto": setThemeMode("auto"); applyThemeMenuChecks(); break;
         case "about": bugReportOpen.value = false; aboutOpen.value = true; break;
         case "feedback": aboutOpen.value = false; bugReportOpen.value = true; break;
       }
