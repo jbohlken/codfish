@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { CaretDownIcon as CaretDown, DownloadSimpleIcon as DownloadSimple, type Icon } from "@phosphor-icons/react";
 import type { ComponentChildren } from "preact";
+import { openTitlebarMenu } from "./titlebarMenu";
 
 export function SelectButton<T extends string>({
   icon: Icon,
@@ -10,6 +11,7 @@ export function SelectButton<T extends string>({
   tooltip,
   direction = "down",
   footer,
+  menuId,
 }: {
   icon: Icon;
   tooltip: string;
@@ -18,18 +20,34 @@ export function SelectButton<T extends string>({
   onChange: (value: T) => void;
   direction?: "up" | "down";
   footer?: (close: () => void) => ComponentChildren;
+  /** When set, this dropdown joins the title-bar menu-bar group: only one such
+   *  menu is open at a time and hovering across them swaps. Omit for standalone. */
+  menuId?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
   const [fixedPos, setFixedPos] = useState<{ bottom: number; left: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const current = options.find((o): o is { value: T; label: string } => !("separator" in o) && o.value === value);
 
-  const handleOpen = () => {
-    if (!open && direction === "up" && ref.current) {
+  const grouped = menuId !== undefined;
+  const open = grouped ? openTitlebarMenu.value === menuId : localOpen;
+  const setOpen = (next: boolean) => {
+    if (grouped) openTitlebarMenu.value = next ? menuId! : null;
+    else setLocalOpen(next);
+  };
+
+  // For an upward menu, capture the trigger rect so the fixed-position menu opens
+  // above it. (Title-bar menus are "down" and skip this.)
+  const captureUpPos = () => {
+    if (direction === "up" && ref.current) {
       const rect = ref.current.getBoundingClientRect();
       setFixedPos({ bottom: window.innerHeight - rect.top + 4, left: rect.left });
     }
-    setOpen((v) => !v);
+  };
+
+  const handleOpen = () => {
+    if (!open) captureUpPos();
+    setOpen(!open);
   };
 
   useEffect(() => {
@@ -79,7 +97,19 @@ export function SelectButton<T extends string>({
 
   return (
     <div class="titlebar-select" ref={ref}>
-      <button class="titlebar-select-btn" data-tooltip={tooltip} onClick={handleOpen}>
+      <button
+        class="titlebar-select-btn"
+        data-tooltip={tooltip}
+        onClick={handleOpen}
+        onMouseEnter={grouped ? () => {
+          // Menu-bar swap: if another title-bar menu is already open, hovering
+          // this trigger switches to it.
+          if (openTitlebarMenu.value !== null && openTitlebarMenu.value !== menuId) {
+            captureUpPos();
+            openTitlebarMenu.value = menuId!;
+          }
+        } : undefined}
+      >
         <Icon size={13} />
         <span class="titlebar-select-label">{current?.label}</span>
         <CaretDown size={10} />

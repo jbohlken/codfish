@@ -19,6 +19,7 @@ vi.mock("../../recent", () => ({
 
 import { closeProjectGuarded } from "../index";
 import { project, projectPath, isDirty } from "../../../store/app";
+import { openTitlebarMenu } from "../../../components/titlebarMenu";
 import type { CodProject } from "../../../types/project";
 
 function makeProject(): CodProject {
@@ -37,6 +38,7 @@ beforeEach(() => {
   project.value = null;
   projectPath.value = null;
   isDirty.value = false;
+  openTitlebarMenu.value = null;
   confirmMock.mockReset();
   clearRecoveryMock.mockClear();
 });
@@ -58,6 +60,23 @@ describe("closeProjectGuarded", () => {
     expect(clearRecoveryMock).toHaveBeenCalledOnce();
     expect(project.value).toBeNull();
     expect(projectPath.value).toBeNull();
+  });
+
+  it("clean project: clears an open title-bar menu so the next project isn't born expanded", async () => {
+    project.value = makeProject();
+    projectPath.value = "/tmp/foo.cod";
+    openTitlebarMenu.value = "model"; // a header dropdown was left open at close time
+    await closeProjectGuarded();
+    expect(openTitlebarMenu.value).toBeNull();
+  });
+
+  it("dirty + cancel: leaves the title-bar menu state untouched (project stays open)", async () => {
+    project.value = makeProject();
+    isDirty.value = true;
+    openTitlebarMenu.value = "model";
+    confirmMock.mockResolvedValue("cancel");
+    await closeProjectGuarded();
+    expect(openTitlebarMenu.value).toBe("model"); // not closed → no reset
   });
 
   it("dirty + cancel: leaves project intact", async () => {
