@@ -3162,7 +3162,6 @@ body.rows-dragging * {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
-  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--color-text-primary);
   outline: none;
@@ -3170,6 +3169,9 @@ body.rows-dragging * {
   width: 100%;
   box-sizing: border-box;
 }
+/* Name / extension are plain text → sans; the template is code → mono. */
+.fb-input { font-family: var(--font-sans); }
+.fb-textarea { font-family: var(--font-mono); }
 
 .fb-input:focus,
 .fb-textarea:focus {

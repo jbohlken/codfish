@@ -194,6 +194,13 @@ body {
   user-select: none;
 }
 
+/* Form controls don't inherit the document font by default (UA stylesheet), so
+   make them use Geist like everything else. A control's own rule can still
+   override this — e.g. the export-format template field stays mono. */
+input, textarea, select, button {
+  font-family: inherit;
+}
+
 a {
   color: var(--color-accent);
   text-decoration: underline;
