@@ -78,6 +78,13 @@ export function VideoPanel() {
         rafRef.current = requestAnimationFrame(tick);
       };
 
+      // Play pressed at the end → restart from the top (standard player behavior);
+      // otherwise play() sits at the end and does nothing.
+      if (video.duration > 0 && video.currentTime >= video.duration - 1 / fps) {
+        video.currentTime = 0;
+        playbackTime.value = 0;
+      }
+
       // Wait for play() to resolve before starting rAF. On Mac the decoder
       // can take 50–300ms to actually start producing frames; ticking during
       // that window spins re-renders against stale video.currentTime reads

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "preact/hooks";
-import { signal, useSignalEffect } from "@preact/signals";
+import { signal, computed, useSignalEffect } from "@preact/signals";
 import { PanelResizeHandle } from "./PanelResizeHandle";
 import {
   selectedMedia,
@@ -24,6 +24,7 @@ import { snapToFrame, breakTextIntoLines } from "../../lib/pipeline";
 import { getClipView } from "../../lib/clipView";
 import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
+import { computeAddCaption } from "../../lib/playhead";
 import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning, MagnifyingGlassIcon as MagnifyingGlass, SwapIcon as Swap, TextAaIcon as TextAa, RepeatOnceIcon as RepeatOnce, RepeatIcon as Repeat, DotsThreeVerticalIcon as DotsThreeVertical, SquareIcon as Square, CheckSquareIcon as CheckSquare } from "@phosphor-icons/react";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { CaptionNumber } from "../CaptionNumber";
@@ -331,26 +332,27 @@ function mergeCaption(index: number) {
   selectedCaptionIndex.value = pos + 1;
 }
 
+// Whether Add-caption would actually insert at the playhead — drives both the
+// header button's enabled state and addCaption itself, so the two can't drift.
+// False when the playhead is inside a caption or there's no room before the media
+// end. A computed (not a render-time read of playbackTime) so the caption list
+// re-renders only when this flips, not every playhead tick.
+const canAddCaption = computed(() => {
+  const m = selectedMedia.value;
+  if (!m) return false;
+  const fps = m.fps ?? activeProfile.value.timing.defaultFps;
+  return computeAddCaption(m.captions, playbackTime.value, fps, mediaDuration.value ?? Infinity) !== null;
+});
+
 function addCaption() {
   const proj = project.value;
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
-  const start = snapToFrame(playbackTime.value, fps);
-
-  // Can't add inside an existing caption. Check on the snapped start, not the
-  // raw playhead — snapping can round into a caption if its end isn't frame-
-  // aligned (possible with imports / pre-frame-snap project files).
-  if (media.captions.some((c) => start >= c.start && start < c.end)) return;
-
-  const nextCaption = media.captions.find((c) => c.start > start);
-  const maxEnd = nextCaption?.start ?? mediaDuration.value ?? Infinity;
-  const end = snapToFrame(Math.min(start + 2, maxEnd), fps);
-
-  if (end <= start) return;
-
-  const insertPos = media.captions.filter((c) => c.end <= start).length;
+  const add = computeAddCaption(media.captions, playbackTime.value, fps, mediaDuration.value ?? Infinity);
+  if (!add) return;
+  const { start, end, insertPos } = add;
 
   const newBlock: CaptionBlock = {
     index: 0,
@@ -499,7 +501,6 @@ export function CaptionPanel() {
   // Subscribes only to caption-boundary crossings, not every rAF tick.
   // Per-row "playhead inside this caption" derives from the same index.
   const playingIndex = playingCaptionIndex.value;
-  const canAddCaption = playingIndex === null;
 
   const profile = activeProfile.value;
   const fps = media?.fps ?? profile.timing.defaultFps;
@@ -595,8 +596,14 @@ export function CaptionPanel() {
             )}
             <button
               class="btn btn-ghost btn-icon"
-              disabled={!canAddCaption}
-              data-tooltip={canAddCaption ? "Add caption at playhead (A)" : "Playhead is inside an existing caption"}
+              disabled={!canAddCaption.value}
+              data-tooltip={
+                canAddCaption.value
+                  ? "Add caption at playhead (A)"
+                  : playingIndex !== null
+                    ? "Playhead is inside an existing caption"
+                    : "Playhead is at the end of the media"
+              }
               onClick={addCaption}
             >
               <Plus size={14} />

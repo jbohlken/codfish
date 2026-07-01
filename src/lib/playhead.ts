@@ -67,9 +67,32 @@ export function clampStart(time: number, prevEnd: number | null, ownEnd: number,
 }
 
 /** Clamp a caption's end edge: at least `minDur` after its own start, and not
- *  past the next caption's start (or the clip duration). */
+ *  past the next caption's start (or the clip duration). Callers snapping the
+ *  result must use snapToMediaFrame so the round can't cross the media end. */
 export function clampEnd(time: number, ownStart: number, nextStart: number | null, dur: number, minDur: number): number {
   return Math.max(ownStart + minDur, Math.min(time, nextStart ?? dur));
+}
+
+/**
+ * Round a time to the nearest frame boundary that actually EXISTS in the media:
+ * the regular frame grid truncated at the media end, with `dur` itself as the
+ * final boundary. When the media ends mid-frame (audio, or a duration reported a
+ * hair short of the frame boundary) the tail cell is partial — to the user the end
+ * of the timeline IS the next boundary, so rounding inside that cell flips at its
+ * visible midpoint (between the last whole frame and the media end), never at the
+ * midpoint of a phantom frame that extends past the end. On a frame-perfect
+ * duration this is exactly snapToFrame.
+ */
+export function snapToMediaFrame(time: number, fps: number, dur: number): number {
+  // Last whole-frame boundary ≤ dur (epsilon absorbs float error so a frame-
+  // aligned dur stays on its own boundary).
+  const lastWhole = Math.floor(dur * fps + FRAME_EPS) / fps;
+  if (time > lastWhole) {
+    // Inside the partial tail cell: its real flanking boundaries are the last
+    // whole frame and the media end — round to the nearer of the two.
+    return dur - time <= time - lastWhole ? dur : lastWhole;
+  }
+  return snapToFrame(time, fps);
 }
 
 export interface TrimResult { start: number; end: number; }
@@ -101,7 +124,7 @@ export function computeTrim(
     return start === cap.start ? null : { start, end: cap.end };
   }
   const nextStart = pos < captions.length - 1 ? captions[pos + 1].start : null;
-  const end = snapToFrame(clampEnd(time, cap.start, nextStart, dur, minDur), fps);
+  const end = snapToMediaFrame(clampEnd(time, cap.start, nextStart, dur, minDur), fps, dur);
   return end === cap.end ? null : { start: cap.start, end };
 }
 
@@ -141,4 +164,32 @@ export function computeRoll(
     left: { index: left.index, start: left.start, end: cut },
     right: { index: right.index, start: cut, end: right.end },
   };
+}
+
+export interface AddCaptionResult { start: number; end: number; insertPos: number; }
+
+/**
+ * Where/how the Add-caption action would insert a caption at `playhead`. Snaps the
+ * start to the nearest existing boundary (snapToMediaFrame — a start that rounds to
+ * the media end means "nothing left to caption" → null, and the flip point in a
+ * partial tail cell is its visible midpoint); the end is start + 2s, capped at the
+ * next caption's start or the media end. Returns null when it would be a no-op: the
+ * playhead sits inside an existing caption, or it's at the media end. `captions`
+ * are assumed sorted by start. Shared by addCaption and the header button's
+ * enabled state so the two can't disagree.
+ */
+export function computeAddCaption(
+  captions: readonly { start: number; end: number }[],
+  playhead: number,
+  fps: number,
+  dur: number,
+): AddCaptionResult | null {
+  const start = snapToMediaFrame(playhead, fps, dur);
+  if (captions.some((c) => start >= c.start && start < c.end)) return null;
+  const nextStart = captions.find((c) => c.start > start)?.start;
+  const maxEnd = nextStart ?? dur;
+  const end = snapToMediaFrame(Math.min(start + 2, maxEnd), fps, dur);
+  if (end <= start) return null;
+  const insertPos = captions.filter((c) => c.end <= start).length;
+  return { start, end, insertPos };
 }

@@ -5,7 +5,7 @@ import { useSignalEffect, signal, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
-import { nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../../lib/playhead";
+import { nextBoundary, clampStart, clampEnd, snapToMediaFrame, computeTrim, computeRoll } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedMediaId,
@@ -989,7 +989,7 @@ function ResizableCaptionBlock({
         }
         const newEnd = snapped !== null
           ? clampEnd(snapped, originStart, nextStart, duration, minDuration)
-          : snapToFrame(clampEnd(rawTime, originStart, nextStart, duration, minDuration), fps);
+          : snapToMediaFrame(clampEnd(rawTime, originStart, nextStart, duration, minDuration), fps, duration);
         resizeIndicator.value = newEnd;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);
