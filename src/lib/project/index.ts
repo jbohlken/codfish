@@ -20,8 +20,8 @@ import { openTitlebarMenu } from "../../components/titlebarMenu";
 
 const PROJECT_VERSION = 1;
 
-export const VIDEO_EXTS = ["mp4", "mov", "webm"];
-export const AUDIO_EXTS = ["mp3", "wav", "aac", "flac", "ogg"];
+export { VIDEO_EXTS, AUDIO_EXTS } from "../mediaExts";
+import { VIDEO_EXTS, AUDIO_EXTS } from "../mediaExts";
 const MEDIA_EXTS = [...VIDEO_EXTS, ...AUDIO_EXTS];
 
 // ── Public actions ────────────────────────────────────────────────────────────

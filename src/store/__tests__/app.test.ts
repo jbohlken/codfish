@@ -10,6 +10,8 @@ import {
   followPlayhead,
   isPlaying,
   mediaDuration,
+  waveformAudioDuration,
+  timelineDuration,
   stepPlayhead,
   scrubbing,
   zoomLevel,
@@ -609,5 +611,52 @@ describe("stepPlayhead (frame-step, shared by the keys + transport)", () => {
     playbackTime.value = 2;
     stepPlayhead(1);
     expect(playbackTime.value).toBe(2);
+  });
+});
+
+describe("timelineDuration (the shared timeline extent)", () => {
+  // makeProject("dur", 2): captions at 0→1.5 and 2→3.5; media-1 is /test.mp4.
+  const asAudio = () => {
+    const proj = project.value!;
+    project.value = {
+      ...proj,
+      media: proj.media.map((m) => ({ ...m, name: "test.mp3", path: "/test.mp3" })),
+    };
+  };
+  beforeEach(() => {
+    project.value = makeProject("dur", 2);
+    resetHistory(project.value);
+    selectedMediaId.value = "media-1";
+    mediaDuration.value = 0;
+    waveformAudioDuration.value = 0;
+  });
+  afterEach(() => {
+    mediaDuration.value = 0;
+    waveformAudioDuration.value = 0;
+  });
+
+  it("video: the element clock wins even when the decoded audio is shorter", () => {
+    // An audio track ending before the picture is legitimate for video files.
+    mediaDuration.value = 10;
+    waveformAudioDuration.value = 8;
+    expect(timelineDuration.value).toBe(10);
+  });
+  it("audio-only: the decoded duration wins over the element estimate", () => {
+    asAudio();
+    mediaDuration.value = 10.05; // VBR MP3 demuxer estimate
+    waveformAudioDuration.value = 10.0; // decoded ground truth
+    expect(timelineDuration.value).toBe(10.0);
+  });
+  it("audio-only: uses the element clock until peaks have loaded", () => {
+    asAudio();
+    mediaDuration.value = 10.05;
+    expect(timelineDuration.value).toBe(10.05);
+  });
+  it("falls back to the decoded length when the element reports nothing", () => {
+    waveformAudioDuration.value = 7;
+    expect(timelineDuration.value).toBe(7);
+  });
+  it("falls back to the last caption end with no media clocks at all", () => {
+    expect(timelineDuration.value).toBeCloseTo(3.5, 9);
   });
 });

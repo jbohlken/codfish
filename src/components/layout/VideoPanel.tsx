@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "preact/hooks";
 import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { selectedMedia, playbackTime, isPlaying, mediaDuration, activeProfile } from "../../store/app";
+import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, activeProfile } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
 import { findCaptionAt } from "../../lib/pipeline";
@@ -61,6 +61,12 @@ export function VideoPanel() {
 
     if (playing) {
       let cancelled = false;
+      // For audio-only media the decoded waveform length (once known) is the real
+      // end — the element clock is a demuxer estimate that can run long for VBR
+      // MP3. Video keeps the element clock: its extent fallbacks (decoded audio /
+      // caption end) are NOT playback bounds, so clamping against them would
+      // freeze the playhead while the picture plays.
+      const audioOnly = media != null && isAudioOnly(media.path);
 
       const tick = () => {
         // If playbackTime has drifted from what rAF last wrote, an external
@@ -71,7 +77,12 @@ export function VideoPanel() {
           video.currentTime = pt;
           rafLastWrittenRef.current = pt;
         } else {
-          const vt = video.currentTime;
+          // Audio-only: clamp to the decoded end so the playhead can't slide
+          // past the ruler on the estimate's phantom tail. rafLastWrittenRef
+          // gets the same clamped value so the drift check above stays stable.
+          // Peeked per-tick — peaks can finish loading mid-play.
+          const decodedEnd = audioOnly ? waveformAudioDuration.peek() : 0;
+          const vt = decodedEnd > 0 ? Math.min(video.currentTime, decodedEnd) : video.currentTime;
           playbackTime.value = vt;
           rafLastWrittenRef.current = vt;
         }
@@ -79,8 +90,15 @@ export function VideoPanel() {
       };
 
       // Play pressed at the end → restart from the top (standard player behavior);
-      // otherwise play() sits at the end and does nothing.
-      if (video.duration > 0 && video.currentTime >= video.duration - 1 / fps) {
+      // otherwise play() sits at the end and does nothing. "The end" is the shared
+      // timeline end: for audio-only media the playhead parks at the decoded end,
+      // which can sit more than a frame short of the element's estimated duration —
+      // checking only the element clock would make the restart unreachable there.
+      const decodedEnd = audioOnly ? waveformAudioDuration.peek() : 0;
+      const endOfMedia = decodedEnd > 0
+        ? Math.min(video.duration > 0 ? video.duration : Infinity, decodedEnd)
+        : video.duration;
+      if (endOfMedia > 0 && Number.isFinite(endOfMedia) && video.currentTime >= endOfMedia - 1 / fps) {
         video.currentTime = 0;
         playbackTime.value = 0;
       }

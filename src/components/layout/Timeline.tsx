@@ -18,6 +18,8 @@ import {
   zoomLevel,
   timelineScroll,
   mediaDuration,
+  waveformAudioDuration,
+  timelineDuration,
   project,
   pushHistory,
   activeProfile,
@@ -93,11 +95,8 @@ export function resetTimelineView(): void {
 }
 type WaveformState = "idle" | "loading" | "ready" | "failed" | "no-audio";
 const waveformState = signal<WaveformState>("idle");
-// The sidecar/ffmpeg-reported audio length for the current clip's peaks. The
-// <video> element's duration (mediaDuration) is 0 mid-switch and unreliable for
-// asset:// media (the reason peaks come from the sidecar at all), so this is the
-// timeline length used when the video clock hasn't reported one.
-const waveformAudioDuration = signal(0);
+// waveformAudioDuration (the decoded audio length backing timelineDuration) lives
+// in the store; this file writes it when peaks load and resets it on clip switch.
 
 const SNAP_THRESHOLD_PX = 8;
 
@@ -142,10 +141,9 @@ export function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const painterRef = useRef<ReturnType<typeof createWaveformPainter> | null>(null);
 
-  const captionDuration = media?.captions.length
-    ? media.captions[media.captions.length - 1].end
-    : 0;
-  const duration = mediaDuration.value || waveformAudioDuration.value || captionDuration;
+  // THE extent every editing surface shares — see timelineDuration in the store
+  // (decoded audio length for audio-only files, element clock for video).
+  const duration = timelineDuration.value;
   const waveStyle = waveformStyle.value;
 
   // Init / reinit the waveform painter when media changes
@@ -323,9 +321,7 @@ export function Timeline() {
     // back to the sidecar audio length, then the last caption end. Peeked (like the
     // media reads above) so it doesn't re-fire the effect. Without this, auto-follow
     // was dead for any clip whose <video> never reports a duration.
-    const m = selectedMedia.peek();
-    const dur = mediaDuration.peek() || waveformAudioDuration.peek()
-      || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+    const dur = timelineDuration.peek();
     const zoom = zoomLevel.peek();
     // Subscribe to panel reveal requests: re-clicking an active caption bumps this
     // so we re-scroll to it even though its start is already the playhead.
@@ -541,9 +537,7 @@ export function Timeline() {
     const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
     if (newZoom === oldZoom) return;
 
-    const m = selectedMedia.peek();
-    const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
-    const liveDuration = mediaDuration.peek() || capDur;
+    const liveDuration = timelineDuration.peek();
 
     if (!scroll || !liveDuration) {
       zoomLevel.value = newZoom;
@@ -602,7 +596,7 @@ export function Timeline() {
         // timeline start (0) and end. Down → next, Up → previous.
         e.preventDefault();
         const m = selectedMedia.value;
-        const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        const dur = timelineDuration.peek();
         if (!dur) return;
         isPlaying.value = false; // jumping is a paused review action
         const bounds = [0, dur];
@@ -617,7 +611,7 @@ export function Timeline() {
         const idx = selectedCaptionIndex.value;
         if (!m || idx == null) return;
         const f = m.fps ?? activeProfile.value.timing.defaultFps;
-        const dur = mediaDuration.peek() || (m.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        const dur = timelineDuration.peek();
         const trimmed = computeTrim(m.captions, idx, e.key === "[" ? "in" : "out", playbackTime.peek(), f, dur);
         if (!trimmed) return; // caption not found, or clamped to no change
         handleResizeLive(idx, trimmed.start, trimmed.end);

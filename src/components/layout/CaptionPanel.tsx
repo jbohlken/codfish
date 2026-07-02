@@ -14,7 +14,7 @@ import {
   commitPendingAdd,
   cancelPendingAdd,
   getPendingAddIndex,
-  mediaDuration,
+  timelineDuration,
   isPlaying,
   playingCaptionIndex,
   warningsByCaption,
@@ -341,7 +341,7 @@ const canAddCaption = computed(() => {
   const m = selectedMedia.value;
   if (!m) return false;
   const fps = m.fps ?? activeProfile.value.timing.defaultFps;
-  return computeAddCaption(m.captions, playbackTime.value, fps, mediaDuration.value ?? Infinity) !== null;
+  return computeAddCaption(m.captions, playbackTime.value, fps, timelineDuration.value) !== null;
 });
 
 function addCaption() {
@@ -350,7 +350,7 @@ function addCaption() {
   if (!proj || !media) return;
 
   const fps = media.fps ?? activeProfile.value.timing.defaultFps;
-  const add = computeAddCaption(media.captions, playbackTime.value, fps, mediaDuration.value ?? Infinity);
+  const add = computeAddCaption(media.captions, playbackTime.value, fps, timelineDuration.value);
   if (!add) return;
   const { start, end, insertPos } = add;
 

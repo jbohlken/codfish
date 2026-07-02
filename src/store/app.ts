@@ -8,6 +8,7 @@ import { findCaptionAt } from "../lib/pipeline";
 import { frameStep } from "../lib/playhead";
 import type { ValidationWarning } from "../lib/pipeline/types";
 import { SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../lib/mediaSort";
+import { isAudioPath } from "../lib/mediaExts";
 import { getClipView, rememberClipView, rememberActiveClip } from "../lib/clipView";
 
 // ── Project ────────────────────────────────────────────────────────────────
@@ -73,6 +74,12 @@ export function setSortDir(dir: SortDir): void {
 export const playbackTime = signal(0);   // seconds
 export const isPlaying = signal(false);
 export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
+// The sidecar/ffmpeg-reported audio length for the current clip's peaks — the
+// DECODED length, which is ground truth. Written by the Timeline when peaks load
+// (reset on clip switch). Kept separate from mediaDuration (the <video> element's
+// clock): the element duration is a demuxer estimate that can be wrong for VBR
+// MP3, and video files can legitimately have audio shorter than the picture.
+export const waveformAudioDuration = signal(0);
 // True only while the user is dragging the waveform to scrub. Lets the view-state
 // persist effect below skip the continuous drag and fire once on release — when
 // the playhead has "landed somewhere" — instead of writing on every pointermove.
@@ -456,6 +463,25 @@ export const selectedMedia = computed((): MediaItem | null => {
   return project.value.media.find((m) => m.id === selectedMediaId.value) ?? null;
 });
 
+/** The timeline's extent for the current clip — THE duration every editing
+ * surface (extent/ruler, trim/roll clamps, add-caption, frame-step, go-to-end)
+ * must share, so they can't disagree about where the media ends.
+ *
+ * For AUDIO-ONLY media the decoded waveform length wins once peaks have loaded:
+ * the <video> element's duration is a demuxer estimate that's wrong for VBR MP3
+ * (the waveform wouldn't reach the timeline's end). For video files the element/
+ * container duration stays authoritative — the audio track ending before the
+ * picture is legitimate there, not a mis-estimate. Falls back to the element
+ * clock, then the decoded length, then the last caption's end. */
+export const timelineDuration = computed((): number => {
+  const m = selectedMedia.value;
+  const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
+  if (m && isAudioPath(m.path) && waveformAudioDuration.value > 0) {
+    return waveformAudioDuration.value;
+  }
+  return mediaDuration.value || waveformAudioDuration.value || capDur;
+});
+
 /** Index of the caption the playhead is currently inside, or null. Computed
  * from playbackTime + selectedMedia. Only emits change notifications when the
  * index actually changes, so subscribers re-render on caption boundary
@@ -492,7 +518,7 @@ effect(() => {
 export function stepPlayhead(dir: 1 | -1): void {
   const m = selectedMedia.peek();
   const f = m?.fps ?? activeProfile.peek().timing.defaultFps;
-  const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+  const dur = timelineDuration.peek();
   if (!f || !dur) return;
   isPlaying.value = false; // stepping is a paused review action
   const next = frameStep(playbackTime.peek(), f, dir);

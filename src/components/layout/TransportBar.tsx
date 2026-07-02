@@ -6,7 +6,7 @@ import {
   PlayIcon as Play,
   PauseIcon as Pause,
 } from "@phosphor-icons/react";
-import { selectedMedia, isPlaying, playbackTime, mediaDuration, stepPlayhead } from "../../store/app";
+import { selectedMedia, isPlaying, playbackTime, timelineDuration, stepPlayhead } from "../../store/app";
 
 /**
  * Playback transport — a strip docked under the video preview: go to start,
@@ -20,8 +20,7 @@ export function TransportBar() {
   if (!media) return null;
 
   const goToEnd = () => {
-    const m = selectedMedia.peek();
-    const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+    const dur = timelineDuration.peek();
     if (dur) playbackTime.value = dur;
   };
 
