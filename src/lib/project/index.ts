@@ -7,6 +7,7 @@ import { confirmUnsavedChanges } from "../../components/UnsavedChanges";
 import { clearRecovery } from "../recovery";
 import { addRecent, loadRecent } from "../recent";
 import { hashContent } from "../hash";
+import { sanitizeCaptionSpans } from "../spans";
 import { selectedExportFormat, exportFormats, selectedProfile, profiles } from "../../store/app";
 import { loadFormatSource, listFormats } from "../export";
 import { loadProfiles, loadProfileSource } from "../profiles";
@@ -116,7 +117,9 @@ export async function newProject(): Promise<boolean> {
 
 export async function loadProjectFromPath(filePath: string): Promise<boolean> {
   const json = await invoke<string>("load_project", { path: filePath });
-  const proj = JSON.parse(json) as CodProject;
+  // Styling overlays are untrusted on ingest: an older Codfish may have
+  // rewritten caption text under them. Validate before anything sees them.
+  const proj = sanitizeCaptionSpans(JSON.parse(json) as CodProject);
   // Sync the displayed name to the current filename. The .cod's `name` field
   // is a cache of the filename (saveAs writes it that way), so if the file
   // was renamed externally the persisted name is stale and the TitleBar

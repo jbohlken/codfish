@@ -6,6 +6,21 @@ export interface Word {
   speaker?: string;
 }
 
+export type SpanStyleKey = "emphasis" | "strong" | "underline";
+
+/// Inline styling overlay on a caption's lines. Offsets are UTF-16 code-unit
+/// indices (JS string indexing) within a single line. Spans may overlap when
+/// their styles differ; same-style overlaps are merged into canonical form by
+/// normalizeSpans (lib/spans). Keys are semantic — each surface decides the
+/// visuals (CSS in-app, a format's `styles:` mapping on export).
+export interface StyleSpan {
+  line: number;   // index into CaptionBlock.lines
+  start: number;  // UTF-16 offset within the line, inclusive
+  end: number;    // UTF-16 offset within the line, exclusive
+  style: SpanStyleKey;
+  value?: string; // reserved for future styles (color key, class, voice id)
+}
+
 export interface CaptionBlock {
   index: number;
   start: number;    // seconds
@@ -17,6 +32,16 @@ export interface CaptionBlock {
   /// manually added. Split/merge fall back to text-only operations on edited
   /// captions so user edits aren't overwritten by rawWords-derived text.
   edited?: boolean;
+  /// Inline styling overlay. Absent when the caption has no styling.
+  /// Optional and additive: older .cod files simply lack it.
+  spans?: StyleSpan[];
+  /// Integrity token: hashLines(lines) from the moment spans were written.
+  /// Older app versions rewrite `lines` while spreading unknown fields
+  /// through (`{ ...c, lines }`), leaving spans pointing at the wrong
+  /// characters; a hash mismatch on load means exactly that happened, and
+  /// the spans are dropped rather than mis-styled. Spans without a matching
+  /// hash are never honored.
+  spansHash?: string;
 }
 
 export interface ExportRecord {

@@ -41,6 +41,7 @@ import { BatchBlocker } from "./components/BatchBlocker";
 import { BugReportModal, bugReportOpen } from "./components/BugReportModal";
 import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery";
 import type { CodProject } from "./types/project";
+import { sanitizeCaptionSpans } from "./lib/spans";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
 import { FormatManager, openFormatManager, requestCloseFormatManager } from "./components/FormatManager";
 import { themeMode, setThemeMode } from "./store/theme";
@@ -81,7 +82,9 @@ export function App() {
       if (cancelled) return;
       if (restore) {
         try {
-          const proj = JSON.parse(blob.json) as CodProject;
+          // Same span validation as the normal load path — recovery blobs
+          // can carry stale styling overlays too.
+          const proj = sanitizeCaptionSpans(JSON.parse(blob.json) as CodProject);
           resetHistory(proj);
           project.value = proj;
           projectPath.value = blob.original_path ?? null;

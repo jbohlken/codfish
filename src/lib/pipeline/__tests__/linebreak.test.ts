@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { breakIntoLines, formatPhraseToCaptionLines } from "../linebreak";
+import { breakIntoLines, formatPhraseToCaptionLines, breakTextIntoLines, breakStyledTextIntoLines } from "../linebreak";
 import { makePhrase } from "../types";
 import { makeWords } from "./helpers";
 
@@ -78,5 +78,65 @@ describe("formatPhraseToCaptionLines", () => {
     const phrase = makePhrase(makeWords("A very long sentence that keeps going and going"));
     const lines = formatPhraseToCaptionLines(phrase, 42, 2);
     expect(lines.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("breakStyledTextIntoLines", () => {
+  const em = (line: number, start: number, end: number) =>
+    ({ line, start, end, style: "emphasis" as const });
+
+  it("passes through short text with its spans unchanged", () => {
+    const out = breakStyledTextIntoLines(["Hello world"], [em(0, 0, 5)]);
+    expect(out.lines).toEqual(["Hello world"]);
+    expect(out.spans).toEqual([em(0, 0, 5)]);
+  });
+
+  it("wraps unstyled captions exactly like breakTextIntoLines", () => {
+    const text = "A very long sentence that keeps going and going";
+    const out = breakStyledTextIntoLines([text], [], 25, 2);
+    expect(out.lines).toEqual(breakTextIntoLines(text, 25, 2));
+    expect(out.spans).toEqual([]);
+  });
+
+  it("splits a span that straddles a new line break", () => {
+    // Breaks after the comma: ["one two,", "three four"]
+    const out = breakStyledTextIntoLines(["one two, three four"], [em(0, 4, 14)], 10, 2);
+    expect(out.lines).toEqual(["one two,", "three four"]);
+    expect(out.spans).toEqual([em(0, 4, 8), em(1, 0, 5)]);
+  });
+
+  it("re-flows two input lines into one and re-bases spans", () => {
+    const out = breakStyledTextIntoLines(["Hello", "world"], [em(0, 0, 5), em(1, 0, 5)]);
+    expect(out.lines).toEqual(["Hello world"]);
+    expect(out.spans).toEqual([em(0, 0, 5), em(0, 6, 11)]);
+  });
+
+  it("maps offsets through interior whitespace collapse", () => {
+    const out = breakStyledTextIntoLines(["one  two"], [em(0, 5, 8)]);
+    expect(out.lines).toEqual(["one two"]);
+    expect(out.spans).toEqual([em(0, 4, 7)]);
+  });
+
+  it("drops whitespace-only spans instead of smearing them", () => {
+    const out = breakStyledTextIntoLines(["one  two"], [em(0, 3, 5)]);
+    expect(out.lines).toEqual(["one two"]);
+    expect(out.spans).toEqual([]);
+  });
+
+  it("carries the value field through the reflow", () => {
+    const out = breakStyledTextIntoLines(["Hello world"], [{ ...em(0, 0, 5), value: "x" }]);
+    expect(out.spans).toEqual([{ ...em(0, 0, 5), value: "x" }]);
+  });
+
+  it("clamps spans whose offsets exceed the line length", () => {
+    const out = breakStyledTextIntoLines(["Hello"], [em(0, 2, 99)]);
+    expect(out.lines).toEqual(["Hello"]);
+    expect(out.spans).toEqual([em(0, 2, 5)]);
+  });
+
+  it("returns a single empty line for empty input", () => {
+    const out = breakStyledTextIntoLines([""], []);
+    expect(out.lines).toEqual([""]);
+    expect(out.spans).toEqual([]);
   });
 });

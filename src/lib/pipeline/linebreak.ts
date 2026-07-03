@@ -1,4 +1,13 @@
 import { makePhrase, type Phrase } from "./types";
+import type { StyleSpan } from "../../types/project";
+import {
+  collapseWhitespace,
+  globalizeSpans,
+  localizeSpans,
+  mapRangeThroughCollapse,
+  normalizeSpans,
+  type GlobalSpan,
+} from "../spans";
 
 const BREAK_AFTER_SENTENCE = 100;
 const BREAK_AFTER_CLAUSE = 80;
@@ -119,4 +128,31 @@ export function breakTextIntoLines(
   if (tokens.length === 0) return [""];
   const words = tokens.map((t) => ({ text: t, start: 0, end: 0, confidence: 1 }));
   return breakIntoLines(makePhrase(words), maxCharsPerLine, maxLines);
+}
+
+/** Re-flow styled caption text across lines, preserving spans. Text is joined
+ * with single spaces, whitespace-collapsed (tokenizing on /\s+/ merges
+ * interior runs — offsets are mapped through, not carried raw), re-broken by
+ * breakIntoLines, and the spans re-projected onto the new lines. A span that
+ * straddles a new break becomes one span per resulting line. For captions
+ * with no spans this wraps exactly like breakTextIntoLines. */
+export function breakStyledTextIntoLines(
+  lines: string[],
+  spans: StyleSpan[],
+  maxCharsPerLine = 42,
+  maxLines = 2,
+): { lines: string[]; spans: StyleSpan[] } {
+  const joined = lines.join(" ");
+  const { normalized, charMap } = collapseWhitespace(joined);
+  const newLines = breakTextIntoLines(normalized, maxCharsPerLine, maxLines);
+  if (spans.length === 0) return { lines: newLines, spans: [] };
+
+  const mapped: GlobalSpan[] = [];
+  for (const g of globalizeSpans(lines, spans)) {
+    const r = mapRangeThroughCollapse(charMap, g.start, g.end);
+    if (r) mapped.push({ ...g, start: r.start, end: r.end });
+  }
+  // breakIntoLines splits at word boundaries only, so newLines.join(" ")
+  // reproduces `normalized` and collapsed offsets localize directly.
+  return { lines: newLines, spans: normalizeSpans(newLines, localizeSpans(newLines, mapped)) };
 }
