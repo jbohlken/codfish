@@ -18,6 +18,8 @@ vi.mock("@tauri-apps/api/window", () => {
   const win = {
     onCloseRequested: vi.fn(async () => vi.fn()),
     setTitle: vi.fn(async () => {}),
+    scaleFactor: vi.fn(async () => 1),
+    onScaleChanged: vi.fn(async () => vi.fn()),
   };
   return { getCurrentWindow: vi.fn(() => win) };
 });

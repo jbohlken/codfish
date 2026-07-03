@@ -1676,9 +1676,23 @@ pub fn run() {
             // which sets ALLOW_EXIT and exits cleanly.
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 if !ALLOW_EXIT.load(std::sync::atomic::Ordering::SeqCst) {
-                    api.prevent_exit();
                     if let Some(window) = app_handle.get_webview_window("main") {
+                        api.prevent_exit();
                         let _ = window.emit("app://quit-requested", ());
+                    } else {
+                        // No window left to run the exit gate (something destroyed
+                        // it directly). Preventing exit here would strand a
+                        // windowless event loop — a zombie process holding the
+                        // sidecar. Kill the daemon synchronously and let the exit
+                        // proceed instead.
+                        log(app_handle, "exit requested with no window; shutting down daemon");
+                        let state = app_handle.state::<DaemonState>();
+                        tauri::async_runtime::block_on(async {
+                            let daemon = state.lock().await.take();
+                            if let Some(d) = daemon {
+                                d.shutdown().await;
+                            }
+                        });
                     }
                 }
             }

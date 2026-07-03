@@ -14,6 +14,7 @@ import {
   VIDEO_EXTS,
 } from "../../lib/project";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   buildBinForest,
   sortBins,
@@ -87,10 +88,13 @@ function createDragGhost(label: string): HTMLElement {
 // to a target in the project panel: a bin (its data-bin-id), the panel itself
 // (ROOT_DROP = top level), or null when the drop is outside the panel or no
 // project is open. Reuses the same hit-test shape as the in-app pointer drag.
-function osDropTargetAt(pos: { x: number; y: number }): string | null {
+// `scale` is the WINDOW's scale factor — Tauri produced the physical position
+// with it, so it (not window.devicePixelRatio, which can disagree on macOS
+// scaled/Retina displays and put the hit-test at the wrong spot) converts back
+// to the CSS pixels elementFromPoint expects.
+function osDropTargetAt(pos: { x: number; y: number }, scale: number): string | null {
   if (!project.peek()) return null;
-  const dpr = window.devicePixelRatio || 1;
-  const el = document.elementFromPoint(pos.x / dpr, pos.y / dpr) as HTMLElement | null;
+  const el = document.elementFromPoint(pos.x / scale, pos.y / scale) as HTMLElement | null;
   if (!el) return null;
   const binEl = el.closest("[data-bin-id]");
   if (binEl) return binEl.getAttribute("data-bin-id");
@@ -362,20 +366,30 @@ export function ProjectPanel() {
   // in-app drag. Guarded so it's a no-op outside a Tauri webview (e.g. tests).
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenScale: (() => void) | undefined;
     let disposed = false;
+    // The drop position is in physical pixels, scaled by the WINDOW's scale
+    // factor. Cache it (it's async) and track moves between monitors; fall back
+    // to devicePixelRatio until the real factor arrives.
+    let scale = window.devicePixelRatio || 1;
     try {
+      const win = getCurrentWindow();
+      win.scaleFactor().then((s) => { scale = s; }).catch(() => {});
+      win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
+        .then((un) => { if (disposed) un(); else unlistenScale = un; })
+        .catch(() => {});
       getCurrentWebview()
         .onDragDropEvent((event) => {
           const p = event.payload;
           if (p.type === "leave") {
             dropTarget.value = null;
           } else if (p.type === "drop") {
-            const target = osDropTargetAt(p.position);
+            const target = osDropTargetAt(p.position, scale);
             dropTarget.value = null;
             if (target !== null) void importDrop(p.paths, target === ROOT_DROP ? undefined : target);
           } else {
             // enter / over
-            dropTarget.value = osDropTargetAt(p.position);
+            dropTarget.value = osDropTargetAt(p.position, scale);
           }
         })
         .then((un) => { if (disposed) un(); else unlisten = un; })
@@ -383,7 +397,7 @@ export function ProjectPanel() {
     } catch {
       // not running in a Tauri webview
     }
-    return () => { disposed = true; unlisten?.(); };
+    return () => { disposed = true; unlisten?.(); unlistenScale?.(); };
   }, []);
 
   // Clear any leftover filter when a different project is opened — a stale

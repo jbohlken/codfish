@@ -1,11 +1,14 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair } from "@phosphor-icons/react";
-import { useSignalEffect, signal, batch } from "@preact/signals";
+import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair, FishIcon as Fish } from "@phosphor-icons/react";
+import codfishUrl from "../../assets/codfish.svg";
+import { codometer, approach, buildReaderSchedule, readerPosition } from "../../lib/codometer";
+import { CODOMETER_ENABLED } from "../../lib/features";
+import { useSignalEffect, signal, computed, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
-import { nextBoundary, clampStart, clampEnd, computeTrim, computeRoll } from "../../lib/playhead";
+import { nextBoundary, clampStart, clampEnd, snapToMediaFrame, computeTrim, computeRoll } from "../../lib/playhead";
 import {
   selectedMedia,
   selectedMediaId,
@@ -18,6 +21,8 @@ import {
   zoomLevel,
   timelineScroll,
   mediaDuration,
+  waveformAudioDuration,
+  timelineDuration,
   project,
   pushHistory,
   activeProfile,
@@ -40,6 +45,18 @@ const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored
 const snapEnabled = signal(true);
 const storedWaveStyle = localStorage.getItem("codfish:waveformStyle");
 const waveformStyle = signal<WaveformStyle>(storedWaveStyle === "bars" ? "bars" : "continuous");
+// Cod-o-meter: the mascot is a virtual reader pacing the media at the profile's
+// max CPS — its position vs the playhead is the cumulative reading balance
+// (behind = viewers can't keep up), its swim speed the current caption's CPS,
+// belly-up = the current caption exceeds the limit. Off by default.
+const codometerEnabled = signal(localStorage.getItem("codfish:codometer") === "true");
+// The reader's schedule re-derives only on caption/profile edits; the per-tick
+// work in TimelinePlayhead is a binary search over it.
+const readerSchedule = computed(() =>
+  buildReaderSchedule(selectedMedia.value?.captions ?? [], activeProfile.value.timing.maxCps.value));
+// Static read is enough: honoring a mid-session OS toggle isn't worth a listener.
+const reducedMotion = typeof window !== "undefined"
+  && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 // True while a caption edge is being dragged — suspends timeline auto-follow so a
@@ -93,11 +110,8 @@ export function resetTimelineView(): void {
 }
 type WaveformState = "idle" | "loading" | "ready" | "failed" | "no-audio";
 const waveformState = signal<WaveformState>("idle");
-// The sidecar/ffmpeg-reported audio length for the current clip's peaks. The
-// <video> element's duration (mediaDuration) is 0 mid-switch and unreliable for
-// asset:// media (the reason peaks come from the sidecar at all), so this is the
-// timeline length used when the video clock hasn't reported one.
-const waveformAudioDuration = signal(0);
+// waveformAudioDuration (the decoded audio length backing timelineDuration) lives
+// in the store; this file writes it when peaks load and resets it on clip switch.
 
 const SNAP_THRESHOLD_PX = 8;
 
@@ -142,10 +156,9 @@ export function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const painterRef = useRef<ReturnType<typeof createWaveformPainter> | null>(null);
 
-  const captionDuration = media?.captions.length
-    ? media.captions[media.captions.length - 1].end
-    : 0;
-  const duration = mediaDuration.value || waveformAudioDuration.value || captionDuration;
+  // THE extent every editing surface shares — see timelineDuration in the store
+  // (decoded audio length for audio-only files, element clock for video).
+  const duration = timelineDuration.value;
   const waveStyle = waveformStyle.value;
 
   // Init / reinit the waveform painter when media changes
@@ -323,9 +336,7 @@ export function Timeline() {
     // back to the sidecar audio length, then the last caption end. Peeked (like the
     // media reads above) so it doesn't re-fire the effect. Without this, auto-follow
     // was dead for any clip whose <video> never reports a duration.
-    const m = selectedMedia.peek();
-    const dur = mediaDuration.peek() || waveformAudioDuration.peek()
-      || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+    const dur = timelineDuration.peek();
     const zoom = zoomLevel.peek();
     // Subscribe to panel reveal requests: re-clicking an active caption bumps this
     // so we re-scroll to it even though its start is already the playhead.
@@ -484,7 +495,13 @@ export function Timeline() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("blur", onUp);
-      if (wasPlaying) isPlaying.value = true;
+      // Don't resume when the scrub landed at the media end: resuming trips
+      // VideoPanel's play-at-end restart and rewinds to 0, but a scrub to the
+      // end means "park here — playback over". (1.5 frames covers the restart
+      // check's frame-midpoint seek slack.) An explicit play/space afterward
+      // still restarts from the top, as intended.
+      const atEnd = playbackTime.peek() >= duration - 1.5 / effectiveFps;
+      if (wasPlaying && !atEnd) isPlaying.value = true;
       scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
     };
     window.addEventListener("mousemove", onMove);
@@ -541,9 +558,7 @@ export function Timeline() {
     const newZoom = Math.max(1, Math.min(500, oldZoom * factor));
     if (newZoom === oldZoom) return;
 
-    const m = selectedMedia.peek();
-    const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
-    const liveDuration = mediaDuration.peek() || capDur;
+    const liveDuration = timelineDuration.peek();
 
     if (!scroll || !liveDuration) {
       zoomLevel.value = newZoom;
@@ -602,7 +617,7 @@ export function Timeline() {
         // timeline start (0) and end. Down → next, Up → previous.
         e.preventDefault();
         const m = selectedMedia.value;
-        const dur = mediaDuration.peek() || (m?.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        const dur = timelineDuration.peek();
         if (!dur) return;
         isPlaying.value = false; // jumping is a paused review action
         const bounds = [0, dur];
@@ -617,7 +632,7 @@ export function Timeline() {
         const idx = selectedCaptionIndex.value;
         if (!m || idx == null) return;
         const f = m.fps ?? activeProfile.value.timing.defaultFps;
-        const dur = mediaDuration.peek() || (m.captions.length ? m.captions[m.captions.length - 1].end : 0);
+        const dur = timelineDuration.peek();
         const trimmed = computeTrim(m.captions, idx, e.key === "[" ? "in" : "out", playbackTime.peek(), f, dur);
         if (!trimmed) return; // caption not found, or clamped to no change
         handleResizeLive(idx, trimmed.start, trimmed.end);
@@ -702,6 +717,21 @@ export function Timeline() {
         >
           <Crosshair size={14} />
         </button>
+
+        {CODOMETER_ENABLED && (
+          <button
+            class={`timeline-btn${codometerEnabled.value ? " timeline-btn--active" : ""}`}
+            onClick={() => {
+              codometerEnabled.value = !codometerEnabled.value;
+              localStorage.setItem("codfish:codometer", String(codometerEnabled.value));
+            }}
+            data-tooltip={codometerEnabled.value
+              ? "Cod-o-meter on: swims at the caption's reading speed — belly-up past max CPS"
+              : "Cod-o-meter off"}
+          >
+            <Fish size={14} />
+          </button>
+        )}
 
         <button
           class="timeline-btn"
@@ -842,8 +872,14 @@ function ResizableCaptionBlock({
   onClick: () => void;
   onDblClick: () => void;
 }) {
+  // Drawn geometry clamps to the extent: an end committed against a longer clock
+  // (a pre-0.6.9 project, or edits made before an MP3's decoded length landed)
+  // can sit past the media end, and an unclamped width would push the right
+  // resize handle into the row's overflow:hidden — unreachable. Clamping keeps
+  // the handle grabbable at the row edge so the user can pull the end back in;
+  // the stored times are untouched until they do.
   const left = (block.start / duration) * 100;
-  const width = ((block.end - block.start) / duration) * 100;
+  const width = (Math.max(0, Math.min(block.end, duration) - block.start) / duration) * 100;
 
   // The trim/snap code works off the neighbours' adjacent edges; rolling also
   // needs their far edges + indices, so the component takes the whole neighbour
@@ -989,7 +1025,7 @@ function ResizableCaptionBlock({
         }
         const newEnd = snapped !== null
           ? clampEnd(snapped, originStart, nextStart, duration, minDuration)
-          : snapToFrame(clampEnd(rawTime, originStart, nextStart, duration, minDuration), fps);
+          : snapToMediaFrame(clampEnd(rawTime, originStart, nextStart, duration, minDuration), fps, duration);
         resizeIndicator.value = newEnd;
         resizeSnapped.value = snapped !== null;
         onResizeLive(block.index, originStart, newEnd);
@@ -1064,11 +1100,75 @@ function ResizableCaptionBlock({
  *  subscribe to the rAF tick — only this 1-div component re-renders 60×/s. */
 function TimelinePlayhead({ duration }: { duration: number }) {
   const currentTime = playbackTime.value;
+  // Cod-o-meter: the fish is drawn at the VIRTUAL READER's media position (see
+  // lib/codometer) — on the playhead when captions read at exactly max CPS,
+  // hovering back over still-unread text when they run hot, parked ahead at the
+  // current caption's end when they run light. Swim speed stays the current
+  // caption's instantaneous CPS. Rendered here because this component already
+  // re-renders per tick; the per-tick cost is a binary search of the schedule.
+  //
+  // The swim itself is a phase accumulator advanced per tick — speed changes
+  // only alter how fast the phase advances (eased via approach), never the
+  // fish's position in its bob, so caption boundaries ramp instead of hitching.
+  const phaseRef = useRef(0);
+  const periodRef = useRef(0);
+  const bobAmpRef = useRef(0);
+  const tiltAmpRef = useRef(0);
+  const offsetRef = useRef(0);
+  const lastNowRef = useRef(0);
+  let fish = null;
+  if (CODOMETER_ENABLED && codometerEnabled.value && isPlaying.value) {
+    const m = selectedMedia.value;
+    const idx = playingCaptionIndex.value;
+    const block = (idx !== null ? m?.captions.find((c) => c.index === idx) : null) ?? null;
+    const { mode, period, cps } = codometer(block, activeProfile.value.timing.maxCps.value);
+
+    const now = performance.now();
+    // First frame after appearing (or a long stall): no time step, just seed.
+    const dt = lastNowRef.current ? Math.min((now - lastNowRef.current) / 1000, 0.1) : 0;
+    lastNowRef.current = now;
+    const SMOOTH = 0.3; // seconds to ~63% of a speed change
+    // Horizontal motion: readerPosition is continuous but its VELOCITY steps at
+    // reading boundaries (each caption maps reading progress onto its own span,
+    // and a behind reader hops display gaps) — a visible hitch. Ease the fish's
+    // OFFSET from the playhead instead of its absolute position: velocity steps
+    // become short glides, while riding at-target (constant offset 0) stays
+    // exactly on the playhead with no smoothing lag.
+    const targetOffset = readerPosition(readerSchedule.value, currentTime) - currentTime;
+    offsetRef.current = dt > 0 ? approach(offsetRef.current, targetOffset, dt, 0.2) : targetOffset;
+    const readerTime = Math.max(0, Math.min(currentTime + offsetRef.current, duration));
+
+    periodRef.current = approach(periodRef.current || period, period, dt, SMOOTH);
+    bobAmpRef.current = approach(bobAmpRef.current, mode === "bellyup" ? 4 : 3, dt, SMOOTH);
+    tiltAmpRef.current = approach(tiltAmpRef.current, mode === "bellyup" ? 0 : 6, dt, SMOOTH);
+    phaseRef.current = (phaseRef.current + dt / periodRef.current) % 1;
+    const a = 2 * Math.PI * phaseRef.current;
+    // translateY bobs, rotate leads the bob — the splash-swim shape, JS-driven.
+    const swimStyle = reducedMotion ? undefined : {
+      transform: `translateY(${(-bobAmpRef.current * Math.sin(a)).toFixed(2)}px) rotate(${(-tiltAmpRef.current * Math.cos(a)).toFixed(2)}deg)`,
+    };
+    fish = (
+      <div class="codometer-track" style={{ left: `${(readerTime / duration) * 100}%` }}>
+        <div class="codometer-swim" style={swimStyle}>
+          <img src={codfishUrl} alt="" class={`codometer codometer--${mode}`} />
+        </div>
+        {/* Debug readout: the CPS actually driving the fish (– in gaps). */}
+        <span class={`codometer-cps${mode === "bellyup" ? " codometer-cps--over" : ""}`}>
+          {block ? cps.toFixed(1) : "–"}
+        </span>
+      </div>
+    );
+  } else {
+    lastNowRef.current = 0; // re-seed dt when the fish next appears
+  }
   return (
-    <div
-      class="timeline-playhead"
-      style={{ left: `${(currentTime / duration) * 100}%` }}
-    />
+    <>
+      <div
+        class="timeline-playhead"
+        style={{ left: `${(currentTime / duration) * 100}%` }}
+      />
+      {fish}
+    </>
   );
 }
 
