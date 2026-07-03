@@ -122,9 +122,13 @@ export function App() {
       return true;
     };
 
+    // Both teardown paths converge on force_quit (kills the sidecar, sets
+    // ALLOW_EXIT, exits). Ending the close path in win.destroy() instead left
+    // Rust's ExitRequested gate with no window to re-ask — the event loop kept
+    // running windowless (zombie Codfish.exe + lingering sidecar on Windows).
     const unlistenClose = win.onCloseRequested(async (e) => {
       e.preventDefault();
-      if (await runExitGate()) await win.destroy();
+      if (await runExitGate()) await invoke("force_quit");
     });
 
     // Cmd+Q / app menu Quit on macOS routes through here. The Rust side
