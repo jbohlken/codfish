@@ -1,7 +1,10 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair } from "@phosphor-icons/react";
-import { useSignalEffect, signal, batch } from "@preact/signals";
+import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair, FishIcon as Fish } from "@phosphor-icons/react";
+import codfishUrl from "../../assets/codfish.svg";
+import { codometer, approach, buildReaderSchedule, readerPosition } from "../../lib/codometer";
+import { CODOMETER_ENABLED } from "../../lib/features";
+import { useSignalEffect, signal, computed, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
 import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
@@ -42,6 +45,18 @@ const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored
 const snapEnabled = signal(true);
 const storedWaveStyle = localStorage.getItem("codfish:waveformStyle");
 const waveformStyle = signal<WaveformStyle>(storedWaveStyle === "bars" ? "bars" : "continuous");
+// Cod-o-meter: the mascot is a virtual reader pacing the media at the profile's
+// max CPS — its position vs the playhead is the cumulative reading balance
+// (behind = viewers can't keep up), its swim speed the current caption's CPS,
+// belly-up = the current caption exceeds the limit. Off by default.
+const codometerEnabled = signal(localStorage.getItem("codfish:codometer") === "true");
+// The reader's schedule re-derives only on caption/profile edits; the per-tick
+// work in TimelinePlayhead is a binary search over it.
+const readerSchedule = computed(() =>
+  buildReaderSchedule(selectedMedia.value?.captions ?? [], activeProfile.value.timing.maxCps.value));
+// Static read is enough: honoring a mid-session OS toggle isn't worth a listener.
+const reducedMotion = typeof window !== "undefined"
+  && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 const resizeIndicator = signal<number | null>(null);
 const resizeSnapped = signal(false);
 // True while a caption edge is being dragged — suspends timeline auto-follow so a
@@ -697,6 +712,21 @@ export function Timeline() {
           <Crosshair size={14} />
         </button>
 
+        {CODOMETER_ENABLED && (
+          <button
+            class={`timeline-btn${codometerEnabled.value ? " timeline-btn--active" : ""}`}
+            onClick={() => {
+              codometerEnabled.value = !codometerEnabled.value;
+              localStorage.setItem("codfish:codometer", String(codometerEnabled.value));
+            }}
+            data-tooltip={codometerEnabled.value
+              ? "Cod-o-meter on: swims at the caption's reading speed — belly-up past max CPS"
+              : "Cod-o-meter off"}
+          >
+            <Fish size={14} />
+          </button>
+        )}
+
         <button
           class="timeline-btn"
           onClick={() => {
@@ -1058,11 +1088,75 @@ function ResizableCaptionBlock({
  *  subscribe to the rAF tick — only this 1-div component re-renders 60×/s. */
 function TimelinePlayhead({ duration }: { duration: number }) {
   const currentTime = playbackTime.value;
+  // Cod-o-meter: the fish is drawn at the VIRTUAL READER's media position (see
+  // lib/codometer) — on the playhead when captions read at exactly max CPS,
+  // hovering back over still-unread text when they run hot, parked ahead at the
+  // current caption's end when they run light. Swim speed stays the current
+  // caption's instantaneous CPS. Rendered here because this component already
+  // re-renders per tick; the per-tick cost is a binary search of the schedule.
+  //
+  // The swim itself is a phase accumulator advanced per tick — speed changes
+  // only alter how fast the phase advances (eased via approach), never the
+  // fish's position in its bob, so caption boundaries ramp instead of hitching.
+  const phaseRef = useRef(0);
+  const periodRef = useRef(0);
+  const bobAmpRef = useRef(0);
+  const tiltAmpRef = useRef(0);
+  const offsetRef = useRef(0);
+  const lastNowRef = useRef(0);
+  let fish = null;
+  if (CODOMETER_ENABLED && codometerEnabled.value && isPlaying.value) {
+    const m = selectedMedia.value;
+    const idx = playingCaptionIndex.value;
+    const block = (idx !== null ? m?.captions.find((c) => c.index === idx) : null) ?? null;
+    const { mode, period, cps } = codometer(block, activeProfile.value.timing.maxCps.value);
+
+    const now = performance.now();
+    // First frame after appearing (or a long stall): no time step, just seed.
+    const dt = lastNowRef.current ? Math.min((now - lastNowRef.current) / 1000, 0.1) : 0;
+    lastNowRef.current = now;
+    const SMOOTH = 0.3; // seconds to ~63% of a speed change
+    // Horizontal motion: readerPosition is continuous but its VELOCITY steps at
+    // reading boundaries (each caption maps reading progress onto its own span,
+    // and a behind reader hops display gaps) — a visible hitch. Ease the fish's
+    // OFFSET from the playhead instead of its absolute position: velocity steps
+    // become short glides, while riding at-target (constant offset 0) stays
+    // exactly on the playhead with no smoothing lag.
+    const targetOffset = readerPosition(readerSchedule.value, currentTime) - currentTime;
+    offsetRef.current = dt > 0 ? approach(offsetRef.current, targetOffset, dt, 0.2) : targetOffset;
+    const readerTime = Math.max(0, Math.min(currentTime + offsetRef.current, duration));
+
+    periodRef.current = approach(periodRef.current || period, period, dt, SMOOTH);
+    bobAmpRef.current = approach(bobAmpRef.current, mode === "bellyup" ? 4 : 3, dt, SMOOTH);
+    tiltAmpRef.current = approach(tiltAmpRef.current, mode === "bellyup" ? 0 : 6, dt, SMOOTH);
+    phaseRef.current = (phaseRef.current + dt / periodRef.current) % 1;
+    const a = 2 * Math.PI * phaseRef.current;
+    // translateY bobs, rotate leads the bob — the splash-swim shape, JS-driven.
+    const swimStyle = reducedMotion ? undefined : {
+      transform: `translateY(${(-bobAmpRef.current * Math.sin(a)).toFixed(2)}px) rotate(${(-tiltAmpRef.current * Math.cos(a)).toFixed(2)}deg)`,
+    };
+    fish = (
+      <div class="codometer-track" style={{ left: `${(readerTime / duration) * 100}%` }}>
+        <div class="codometer-swim" style={swimStyle}>
+          <img src={codfishUrl} alt="" class={`codometer codometer--${mode}`} />
+        </div>
+        {/* Debug readout: the CPS actually driving the fish (– in gaps). */}
+        <span class={`codometer-cps${mode === "bellyup" ? " codometer-cps--over" : ""}`}>
+          {block ? cps.toFixed(1) : "–"}
+        </span>
+      </div>
+    );
+  } else {
+    lastNowRef.current = 0; // re-seed dt when the fish next appears
+  }
   return (
-    <div
-      class="timeline-playhead"
-      style={{ left: `${(currentTime / duration) * 100}%` }}
-    />
+    <>
+      <div
+        class="timeline-playhead"
+        style={{ left: `${(currentTime / duration) * 100}%` }}
+      />
+      {fish}
+    </>
   );
 }
 

@@ -1709,6 +1709,66 @@ body.rows-dragging * {
   border-radius: 50%;
 }
 
+/* ── Cod-o-meter ──────────────────────────────────────────────────────────
+   The mascot is a virtual reader pacing the media at the profile's max CPS: the
+   track sits at the READER's media position (on the playhead = reading exactly
+   at target; behind = hovering over text viewers are still reading; ahead =
+   finished the current caption early). Swim speed (animation-duration, set
+   inline from lib/codometer) is the current caption's CPS; belly-up = over max. */
+.codometer-track {
+  position: absolute;
+  top: 4px;
+  width: 26px;
+  height: 26px;
+  margin-left: -13px; /* center the fish on the reader position */
+  pointer-events: none;
+  z-index: 10; /* alongside the playhead line */
+}
+
+/* The swim (bob + tilt) is a JS-driven transform on this wrapper — a phase
+   accumulator in TimelinePlayhead, so speed changes ramp smoothly instead of
+   restarting a CSS animation mid-cycle. */
+.codometer-swim {
+  width: 100%;
+  height: 100%;
+}
+
+/* The img carries the belly-up flip so it can transition independently of the
+   swim transform on the wrapper. */
+.codometer {
+  width: 100%;
+  height: 100%;
+  transition: transform 0.5s ease, filter 0.5s ease, opacity 0.5s ease;
+}
+
+/* Dead fish: a slow roll onto its back, drained of color. */
+.codometer--bellyup {
+  transform: rotateX(180deg);
+  filter: grayscale(0.85);
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codometer { transition: none; } /* the belly-up state still reads, instantly */
+}
+
+/* Debug readout: the CPS value feeding the fish, floated to its right. */
+.codometer-cps {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.codometer-cps--over {
+  color: var(--color-warning);
+}
+
 .timeline-resize-indicator {
   position: absolute;
   top: 0;
