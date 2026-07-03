@@ -495,7 +495,13 @@ export function Timeline() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("blur", onUp);
-      if (wasPlaying) isPlaying.value = true;
+      // Don't resume when the scrub landed at the media end: resuming trips
+      // VideoPanel's play-at-end restart and rewinds to 0, but a scrub to the
+      // end means "park here — playback over". (1.5 frames covers the restart
+      // check's frame-midpoint seek slack.) An explicit play/space afterward
+      // still restarts from the top, as intended.
+      const atEnd = playbackTime.peek() >= duration - 1.5 / effectiveFps;
+      if (wasPlaying && !atEnd) isPlaying.value = true;
       scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
     };
     window.addEventListener("mousemove", onMove);
@@ -866,8 +872,14 @@ function ResizableCaptionBlock({
   onClick: () => void;
   onDblClick: () => void;
 }) {
+  // Drawn geometry clamps to the extent: an end committed against a longer clock
+  // (a pre-0.6.9 project, or edits made before an MP3's decoded length landed)
+  // can sit past the media end, and an unclamped width would push the right
+  // resize handle into the row's overflow:hidden — unreachable. Clamping keeps
+  // the handle grabbable at the row edge so the user can pull the end back in;
+  // the stored times are untouched until they do.
   const left = (block.start / duration) * 100;
-  const width = ((block.end - block.start) / duration) * 100;
+  const width = (Math.max(0, Math.min(block.end, duration) - block.start) / duration) * 100;
 
   // The trim/snap code works off the neighbours' adjacent edges; rolling also
   // needs their far edges + indices, so the component takes the whole neighbour
