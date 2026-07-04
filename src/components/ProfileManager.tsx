@@ -789,15 +789,20 @@ function PlainRow({ label, desc, value, min, max, step, unit, disabled, onChange
   );
 }
 
-function ToggleRow({ label, desc, checked, disabled, onChange }: {
+/** Shared on/off row (label + optional description + On/Off pill). Also used
+ *  by the FormatManager's Styles tab so toggles look the same everywhere.
+ *  `wide` lets the label/description fill the row (for panes without the
+ *  profile builder's fixed label column), pill right-aligned. */
+export function ToggleRow({ label, desc, checked, disabled, onChange, wide }: {
   label: string;
   desc?: string;
   checked: boolean;
   disabled?: boolean;
   onChange: (v: boolean) => void;
+  wide?: boolean;
 }) {
   return (
-    <div class="pe-row">
+    <div class={`pe-row${wide ? " pe-row--wide" : ""}`}>
       <div class="pe-label-wrap">
         <span class="pe-label">{label}</span>
         {desc && <span class="pe-desc">{desc}</span>}

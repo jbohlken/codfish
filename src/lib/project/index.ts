@@ -553,6 +553,12 @@ export async function checkFormatCompatibility(proj: CodProject): Promise<void> 
     // Format exists — select it.
     selectedExportFormat.value = match.name;
     if (!proj.exportFormatHash) return;
+    // Builtins are version-managed by the app (seed_format_files overwrites
+    // them on every launch), so their content legitimately changes across
+    // updates — e.g. 0.7.0 adding styles blocks. The mismatch warning exists
+    // to catch a USER'S custom format drifting between machines; firing it
+    // for builtins would toast every existing project after each upgrade.
+    if (match.source === "builtin") return;
     const source = await loadFormatSource(match.formatPath);
     const hash = await hashContent(source);
     if (hash !== proj.exportFormatHash) {

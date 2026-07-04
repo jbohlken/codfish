@@ -7,15 +7,45 @@
  */
 
 import type { SerializedCaption } from "./index";
+import type { SpanStyleKey } from "../../types/project";
+import { STYLE_ORDER, segmentLine, isKnownSpanStyle, type SegmentStyle } from "../spans";
 import { timeComponents, formatSmpte } from "../time";
 export { formatSmpte } from "../time";
 
-// ── Public config type ──────────────────────────────────────────────────────
+// ── Public config types ─────────────────────────────────────────────────────
+
+/** Per-style open/close markup declared by a format's `styles:` block.
+ *  A `{{value}}` placeholder in either string substitutes the span's value
+ *  (reserved for future value-bearing keys, e.g. VTT `<c.{{value}}>`). */
+export interface StyleMapping {
+  open: string;
+  close: string;
+}
+
+/** Map from semantic span key to format-specific markup. Emission nesting
+ *  order is fixed by STYLE_ORDER (lib/spans) — format authors don't choose
+ *  it, so output is deterministic and matches the in-app renderer. */
+export type StylesMap = Partial<Record<SpanStyleKey, StyleMapping>>;
+
+/** Text-content escaping policy. "html" escapes & < > in caption TEXT
+ *  (styled or not — uniformly), with mapping markup inserted raw. */
+export type EscapeMode = "html";
 
 export interface FormatConfig {
   name: string;
   extension: string;
   template: string;
+  /** Per-style markup mapping. When present, `{{text}}` / `{{text:space}}`
+   *  emit styled markup for captions that carry spans. */
+  styles?: StylesMap;
+  /** Optional text-content escaping (`escape: html` header). */
+  escape?: EscapeMode;
+}
+
+/** The subset of FormatConfig that changes template execution. */
+export interface ExecuteOptions {
+  styles?: StylesMap;
+  escape?: EscapeMode;
 }
 
 // ── Token definitions ───────────────────────────────────────────────────────
@@ -42,8 +72,8 @@ export const TOKEN_GROUPS: TokenGroup[] = [
     tokens: [
       { token: "{{index}}", description: "0-based. {{index:N}} for N-based, {{index:N:W}} to pad to W digits", perCaption: true },
       { token: "{{index:1}}", description: "1-based (offset by 1)", perCaption: true },
-      { token: "{{text}}", description: "All lines joined with newlines", perCaption: true },
-      { token: "{{text:space}}", description: "All lines joined with spaces", perCaption: true },
+      { token: "{{text}}", description: "All lines joined with newlines — styled markup when the format declares styles", perCaption: true },
+      { token: "{{text:space}}", description: "All lines joined with spaces — styled markup when the format declares styles", perCaption: true },
     ],
   },
   {
@@ -95,9 +125,11 @@ export const TOKENS: TokenDef[] = TOKEN_GROUPS.flatMap((g) => g.tokens);
 // ── Sample captions for live preview ────────────────────────────────────────
 
 export const SAMPLE_CAPTIONS: SerializedCaption[] = [
-  { index: 0, start: 1.2, end: 3.5, lines: ["Hello world"] },
-  { index: 1, start: 3.8, end: 5.1, lines: ["From the builder"] },
-  { index: 2, start: 6.0, end: 8.75, lines: ["Line one", "Line two"] },
+  { index: 0, start: 1.2, end: 3.5, lines: ["Hello world"], spans: [{ line: 0, start: 0, end: 5, style: "emphasis" }] },
+  { index: 1, start: 3.8, end: 5.1, lines: ["From the builder"], spans: [{ line: 0, start: 9, end: 16, style: "strong" }] },
+  // Multi-line + escapable characters: shows the escape toggle's effect in
+  // the live preview (same example as the toggle's description).
+  { index: 2, start: 6.0, end: 8.75, lines: ["Fish & chips", "for < $5"] },
 ];
 
 /** Preview fps for SMPTE tokens. 29.97 so DF preview is meaningful. */
@@ -145,39 +177,48 @@ export function findInvalidEachOffsets(template: string): Set<number> {
 }
 
 /** Execute a template against caption data. */
-export function executeTemplate(template: string, captions: SerializedCaption[], fps = SAMPLE_FPS, dropFrame = false): string {
+export function executeTemplate(
+  template: string,
+  captions: SerializedCaption[],
+  fps = SAMPLE_FPS,
+  dropFrame = false,
+  opts: ExecuteOptions = {},
+): string {
   // Normalize line endings
   const t = template.replace(/\r\n/g, "\n");
   const blocks = findEachBlocks(t);
 
   if (blocks.length === 0) {
-    return resolveTokens(t, null, 0, captions.length, captions, fps, dropFrame);
+    return resolveTokens(t, null, 0, captions.length, captions, fps, dropFrame, opts);
   }
 
   let result = "";
   let cursor = 0;
   for (const { open, close } of blocks) {
     // Segment before this block — global context
-    result += resolveTokens(t.substring(cursor, open), null, 0, captions.length, captions, fps, dropFrame);
+    result += resolveTokens(t.substring(cursor, open), null, 0, captions.length, captions, fps, dropFrame, opts);
 
     // Block body — strip the leading newline right after `{{each}}`
     let body = t.substring(open + "{{each}}".length, close);
     if (body.startsWith("\n")) body = body.substring(1);
     for (let i = 0; i < captions.length; i++) {
-      result += resolveTokens(body, captions[i], i, captions.length, captions, fps, dropFrame);
+      result += resolveTokens(body, captions[i], i, captions.length, captions, fps, dropFrame, opts);
     }
 
     cursor = close + "{{/each}}".length;
   }
   // Trailing segment after the last block
-  result += resolveTokens(t.substring(cursor), null, 0, captions.length, captions, fps, dropFrame);
+  result += resolveTokens(t.substring(cursor), null, 0, captions.length, captions, fps, dropFrame, opts);
   return result;
 }
 
 /** Preview a format config against sample data. */
 export function previewTemplate(config: FormatConfig): string {
   try {
-    return executeTemplate(config.template, SAMPLE_CAPTIONS, SAMPLE_FPS, true);
+    return executeTemplate(config.template, SAMPLE_CAPTIONS, SAMPLE_FPS, true, {
+      styles: config.styles,
+      escape: config.escape,
+    });
   } catch (e) {
     return `Error: ${e}`;
   }
@@ -194,9 +235,10 @@ function resolveTokens(
   allCaptions: SerializedCaption[],
   fps: number,
   dropFrame: boolean,
+  opts: ExecuteOptions,
 ): string {
   return text.replace(/\{\{([^}]+)\}\}/g, (_match, key: string) => {
-    return resolveToken(key, caption, index, total, allCaptions, fps, dropFrame);
+    return resolveToken(key, caption, index, total, allCaptions, fps, dropFrame, opts);
   });
 }
 
@@ -209,6 +251,7 @@ function resolveToken(
   allCaptions: SerializedCaption[],
   fps: number,
   dropFrame: boolean,
+  opts: ExecuteOptions,
 ): string {
   // ── Global tokens (work everywhere) ───────────────────────────────
   if (key === "count") return String(total);
@@ -248,12 +291,74 @@ function resolveToken(
     return formatSmpte(caption[field], fps, dropFrame);
   }
 
-  // Text
-  if (key === "text") return caption.lines.join("\n");
-  if (key === "text:space") return caption.lines.join(" ");
+  // Text — styled markup when the format declares a styles mapping and the
+  // caption carries spans; plain otherwise. Escaping (when declared) applies
+  // to text content uniformly, styled or not, so the same text can never
+  // export differently depending on whether a caption happens to be styled.
+  if (key === "text" || key === "text:space") {
+    const joiner = key === "text:space" ? " " : "\n";
+    return caption.lines
+      .map((line, li) =>
+        renderLine(line, (caption.spans ?? []).filter((s) => s.line === li), opts))
+      .join(joiner);
+  }
 
   // Unknown — pass through literally
   return `{{${key}}}`;
+}
+
+// ── Styled text emission ────────────────────────────────────────────────────
+
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** Substitute the reserved `{{value}}` placeholder in a style mapping.
+ *  Function replacement so `$`-patterns in the value insert literally. */
+const applyValue = (markup: string, value: string | undefined) =>
+  markup.replace(/\{\{value\}\}/g, () => value ?? "");
+
+const sameSegmentStyle = (a: SegmentStyle, b: SegmentStyle) =>
+  a.style === b.style && a.value === b.value;
+
+/**
+ * Emit one line with its spans as format markup. Built on the same
+ * segmentLine sweep the in-app renderer uses, so nesting (STYLE_ORDER) is
+ * identical on both surfaces. Markup opens/closes minimally: consecutive
+ * segments sharing a style keep one open run instead of re-wrapping per
+ * segment. Styles without a mapping emit no markup (text still appears);
+ * unknown-key spans never reach the sweep.
+ */
+function renderLine(line: string, spans: SerializedCaption["spans"], opts: ExecuteOptions): string {
+  const esc = opts.escape === "html" ? escapeHtml : (s: string) => s;
+  const known = (spans ?? []).filter((s) => isKnownSpanStyle(s.style));
+  if (!opts.styles || known.length === 0) return esc(line);
+
+  const styles = opts.styles;
+  let out = "";
+  let openStack: SegmentStyle[] = []; // currently-open mapped styles, outermost first
+  for (const seg of segmentLine(line, known)) {
+    const active = seg.styles.filter((s) => styles[s.style]);
+    // Close down to the common prefix, then open the new tail — segments are
+    // adjacent, so this produces minimal, properly-nested markup.
+    let common = 0;
+    while (
+      common < openStack.length &&
+      common < active.length &&
+      sameSegmentStyle(openStack[common], active[common])
+    ) common++;
+    for (let j = openStack.length - 1; j >= common; j--) {
+      out += applyValue(styles[openStack[j].style]!.close, openStack[j].value);
+    }
+    for (let j = common; j < active.length; j++) {
+      out += applyValue(styles[active[j].style]!.open, active[j].value);
+    }
+    openStack = active;
+    out += esc(seg.text);
+  }
+  for (let j = openStack.length - 1; j >= 0; j--) {
+    out += applyValue(styles[openStack[j].style]!.close, openStack[j].value);
+  }
+  return out;
 }
 
 // ── Time formatting ─────────────────────────────────────────────────────────
@@ -437,6 +542,29 @@ function isValidTimeFormat(fmt: string): boolean {
 
 // ── .cff file parsing and serialization ─────────────────────────────────────
 
+// One indented `styles:` child entry:  emphasis: { open: "<i>", close: "</i>" }
+// String literals support \" and \\ escapes (plus \n, \t, \r via unescape).
+const STYLE_ENTRY_RE =
+  /^(\w+):\s*\{\s*open:\s*"((?:\\.|[^"\\])*)"\s*,\s*close:\s*"((?:\\.|[^"\\])*)"\s*\}$/;
+
+function unescapeCffString(s: string): string {
+  return s.replace(/\\(.)/g, (_, c: string) => {
+    if (c === "n") return "\n";
+    if (c === "t") return "\t";
+    if (c === "r") return "\r";
+    return c;
+  });
+}
+
+function escapeCffString(s: string): string {
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+}
+
 /** Parse a .cff file into a FormatConfig. */
 export function parseCff(source: string): FormatConfig | null {
   const normalized = source.replace(/\r\n/g, "\n");
@@ -447,26 +575,77 @@ export function parseCff(source: string): FormatConfig | null {
   const template = normalized.substring(blankIdx + 2); // skip the blank line
 
   const meta: Record<string, string> = {};
-  for (const line of metaLines) {
+  const styles: StylesMap = {};
+  let i = 0;
+  while (i < metaLines.length) {
+    const line = metaLines[i];
     const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
+    if (colonIdx === -1) { i++; continue; }
     const key = line.substring(0, colonIdx).trim();
     const value = line.substring(colonIdx + 1).trim();
+
+    // `styles:` opens an indented block of per-style mappings. Unknown style
+    // keys are skipped (a newer version's mappings don't break this one) —
+    // note that skip is LOSSY across a re-save: parse→serialize in this
+    // version drops mappings for keys it doesn't know. Sharing a .cff via
+    // Export .cff is safe (raw byte copy). Malformed rows are skipped the
+    // same way. The header must be contiguous: the first blank line ends it
+    // (serializeCff never emits one mid-block, but hand-edits can — entries
+    // after a blank line land in the template and show up in the preview).
+    if (key === "styles" && value === "" && !/^\s/.test(line)) {
+      i++;
+      while (i < metaLines.length && /^\s/.test(metaLines[i])) {
+        const m = metaLines[i].trim().match(STYLE_ENTRY_RE);
+        if (m && isKnownSpanStyle(m[1])) {
+          styles[m[1] as SpanStyleKey] = {
+            open: unescapeCffString(m[2]),
+            close: unescapeCffString(m[3]),
+          };
+        }
+        i++;
+      }
+      continue;
+    }
+
     if (key && value) meta[key] = value;
+    i++;
   }
 
   if (!meta.name || !meta.ext) return null;
 
-  return {
+  const config: FormatConfig = {
     name: meta.name,
     extension: meta.ext,
     template,
   };
+  if (Object.keys(styles).length > 0) {
+    // Canonical key order regardless of file order, so a hand-edited file
+    // doesn't open permanently "dirty" in the Format Manager (its dirty
+    // check is a JSON compare and the editor canonicalizes on every edit).
+    const ordered: StylesMap = {};
+    for (const key of STYLE_ORDER) {
+      if (styles[key] !== undefined) ordered[key] = styles[key];
+    }
+    config.styles = ordered;
+  }
+  if (meta.escape === "html") config.escape = "html";
+  return config;
 }
 
 /** Serialize a FormatConfig to .cff file content. */
 export function serializeCff(config: FormatConfig, source?: "builtin" | "custom"): string {
   let header = `name: ${config.name}\next: ${config.extension}`;
   if (source) header += `\nsource: ${source}`;
+  if (config.escape) header += `\nescape: ${config.escape}`;
+  if (config.styles && Object.keys(config.styles).length > 0) {
+    header += "\nstyles:";
+    // Emit in STYLE_ORDER so the file is deterministic regardless of the
+    // order rows were added in the Format Manager.
+    for (const key of STYLE_ORDER) {
+      const m = config.styles[key];
+      if (!m) continue;
+      header += `\n  ${key}: { open: "${escapeCffString(m.open)}", close: "${escapeCffString(m.close)}" }`;
+    }
+  }
   return header + "\n\n" + config.template;
 }

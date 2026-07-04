@@ -1,6 +1,10 @@
 name: SRT
 ext: srt
 source: builtin
+styles:
+  emphasis: { open: "<i>", close: "</i>" }
+  strong: { open: "<b>", close: "</b>" }
+  underline: { open: "<u>", close: "</u>" }
 
 {{each}}
 {{index:1}}

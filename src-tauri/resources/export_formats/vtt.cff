@@ -1,6 +1,11 @@
 name: WebVTT
 ext: vtt
 source: builtin
+escape: html
+styles:
+  emphasis: { open: "<i>", close: "</i>" }
+  strong: { open: "<b>", close: "</b>" }
+  underline: { open: "<u>", close: "</u>" }
 
 WEBVTT
 

@@ -5,6 +5,7 @@ import {
   uniqueFormatName,
   randomFormatFilename,
 } from "../validation";
+import { parseCff, serializeCff } from "../builder";
 import type { ExportFormat } from "../index";
 
 // ── Test fixtures ────────────────────────────────────────────────────────────
@@ -183,5 +184,24 @@ describe("randomFormatFilename", () => {
     // Just verify it produces a plausibly-unique .cff filename.
     const result = randomFormatFilename([]);
     expect(result).toMatch(/^user-[0-9a-f]{8}\.cff$/);
+  });
+});
+
+describe("normalizeFormatConfig — styles and escape passthrough", () => {
+  it("preserves styles and escape through the FormatManager save path", () => {
+    // The full editor-save round-trip: parse → normalize → serialize → parse.
+    // normalizeFormatConfig whitelists fields, so styles/escape being absent
+    // here would silently strip styling from the .cff on every save.
+    const source =
+      'name: T\next: t\nescape: html\nstyles:\n  emphasis: { open: "<i>", close: "</i>" }\n\n{{text}}';
+    const parsed = parseCff(source)!;
+    const roundTripped = parseCff(serializeCff(normalizeFormatConfig(parsed)))!;
+    expect(roundTripped.styles).toEqual({ emphasis: { open: "<i>", close: "</i>" } });
+    expect(roundTripped.escape).toBe("html");
+  });
+
+  it("drops an empty styles object rather than serializing a bare header", () => {
+    const normalized = normalizeFormatConfig({ name: "T", extension: "t", template: "x", styles: {} });
+    expect(normalized.styles).toBeUndefined();
   });
 });

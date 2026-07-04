@@ -51,7 +51,7 @@ describe("executeTemplate", () => {
     const output = run(SRT_TEMPLATE);
     expect(output).toContain("1\n00:00:01,200 --> 00:00:03,500\nHello world");
     expect(output).toContain("2\n00:00:03,800 --> 00:00:05,100\nFrom the builder");
-    expect(output).toContain("3\n00:00:06,000 --> 00:00:08,750\nLine one\nLine two");
+    expect(output).toContain("3\n00:00:06,000 --> 00:00:08,750\nFish & chips\nfor < $5");
   });
 
   it("VTT format with header", () => {
@@ -64,7 +64,7 @@ describe("executeTemplate", () => {
     const output = run(TXT_TEMPLATE);
     expect(output).toContain("Hello world");
     expect(output).toContain("From the builder");
-    expect(output).toContain("Line one Line two");
+    expect(output).toContain("Fish & chips for < $5");
   });
 
   it("JSON format (no each)", () => {
@@ -132,7 +132,7 @@ describe("token resolution", () => {
 
   it("text and text:space", () => {
     const output = run("{{each}}{{text:space}}|{{/each}}");
-    expect(output).toContain("Line one Line two|");
+    expect(output).toContain("Fish & chips for < $5|");
   });
 
   it("count", () => {
@@ -619,7 +619,7 @@ describe("executeTemplate edge cases", () => {
       "{{each}}[{{text}}]{{/each}}",
       SAMPLE_CAPTIONS,
     );
-    expect(output).toBe("[Hello world][From the builder][Line one\nLine two]");
+    expect(output).toBe("[Hello world][From the builder][Fish & chips\nfor < $5]");
   });
 
   it("preserves body content between each", () => {
@@ -659,14 +659,14 @@ describe("executeTemplate edge cases", () => {
       "Times:\n{{each}}{{start}}\n{{/each}}---\nTexts:\n{{each}}{{text}}\n{{/each}}";
     const output = executeTemplate(template, SAMPLE_CAPTIONS);
     expect(output).toBe(
-      "Times:\n1.2\n3.8\n6\n---\nTexts:\nHello world\nFrom the builder\nLine one\nLine two\n",
+      "Times:\n1.2\n3.8\n6\n---\nTexts:\nHello world\nFrom the builder\nFish & chips\nfor < $5\n",
     );
   });
 
   it("preserves global content between sibling blocks", () => {
     const template = "{{each}}{{text}},{{/each}}|{{count}}|{{each}}{{index}},{{/each}}";
     const output = executeTemplate(template, SAMPLE_CAPTIONS);
-    expect(output).toBe("Hello world,From the builder,Line one\nLine two,|3|0,1,2,");
+    expect(output).toBe("Hello world,From the builder,Fish & chips\nfor < $5,|3|0,1,2,");
   });
 });
 
@@ -720,5 +720,172 @@ describe("findInvalidEachOffsets", () => {
     const t = "{{each}}{{each}}{{/each}}{{/each}}";
     // Outer pair binds to (0, 16); inner each at 8 and trailing /each at 25 are bad.
     expect(findInvalidEachOffsets(t)).toEqual(new Set([8, 25]));
+  });
+});
+
+// ── Styled emission ──────────────────────────────────────────────────────────
+
+const STYLED_TPL = "{{each}}{{text}}\n{{/each}}";
+const HTMLISH = {
+  emphasis: { open: "<i>", close: "</i>" },
+  strong: { open: "<b>", close: "</b>" },
+  underline: { open: "<u>", close: "</u>" },
+} as const;
+
+const cap = (lines: string[], spans?: object[]) =>
+  ({ index: 0, start: 1, end: 2, lines, ...(spans ? { spans } : {}) }) as any;
+
+describe("executeTemplate — styled text", () => {
+  it("emits mapped markup for styled captions", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["Hello world"], [{ line: 0, start: 0, end: 5, style: "emphasis" }]),
+    ], 30, false, { styles: HTMLISH });
+    expect(out).toBe("<i>Hello</i> world\n");
+  });
+
+  it("nests overlapping styles in STYLE_ORDER with minimal markup", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["abcdef"], [
+        { line: 0, start: 0, end: 4, style: "strong" },
+        { line: 0, start: 2, end: 6, style: "emphasis" },
+      ]),
+    ], 30, false, { styles: HTMLISH });
+    expect(out).toBe("<b>ab</b><i><b>cd</b>ef</i>\n");
+  });
+
+  it("emits per-line markup for spans on different lines", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["Hello", "world"], [
+        { line: 0, start: 0, end: 5, style: "emphasis" },
+        { line: 1, start: 0, end: 5, style: "underline" },
+      ]),
+    ], 30, false, { styles: HTMLISH });
+    expect(out).toBe("<i>Hello</i>\n<u>world</u>\n");
+  });
+
+  it("{{text:space}} joins lines with spaces, styles intact", () => {
+    const out = executeTemplate("{{each}}{{text:space}}\n{{/each}}", [
+      cap(["Hello", "world"], [{ line: 0, start: 0, end: 5, style: "strong" }]),
+    ], 30, false, { styles: HTMLISH });
+    expect(out).toBe("<b>Hello</b> world\n");
+  });
+
+  it("styles without a mapping emit no markup (text survives)", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["Hello world"], [
+        { line: 0, start: 0, end: 5, style: "emphasis" },
+        { line: 0, start: 6, end: 11, style: "strong" },
+      ]),
+    ], 30, false, { styles: { emphasis: HTMLISH.emphasis } });
+    expect(out).toBe("<i>Hello</i> world\n");
+  });
+
+  it("unknown-key spans are ignored entirely", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["Hello"], [{ line: 0, start: 0, end: 5, style: "wavy" }]),
+    ], 30, false, { styles: HTMLISH });
+    expect(out).toBe("Hello\n");
+  });
+
+  it("no styles map → plain text even for spanned captions", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["Hello"], [{ line: 0, start: 0, end: 5, style: "emphasis" }]),
+    ]);
+    expect(out).toBe("Hello\n");
+  });
+
+  it("unstyled captions render byte-identically with or without a styles map", () => {
+    const plain = executeTemplate(STYLED_TPL, [cap(["Hello <world> & co"])]);
+    const withStyles = executeTemplate(STYLED_TPL, [cap(["Hello <world> & co"])], 30, false, { styles: HTMLISH });
+    expect(withStyles).toBe(plain);
+    expect(plain).toBe("Hello <world> & co\n");
+  });
+
+  it("substitutes {{value}} in mappings from the span's value", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["Hello world"], [{ line: 0, start: 0, end: 5, style: "emphasis", value: "shout" }]),
+    ], 30, false, { styles: { emphasis: { open: "<c.{{value}}>", close: "</c>" } } });
+    expect(out).toBe("<c.shout>Hello</c> world\n");
+  });
+});
+
+describe("executeTemplate — escape: html", () => {
+  it("escapes text content uniformly, styled or not", () => {
+    const styled = executeTemplate(STYLED_TPL, [
+      cap(["a < b & c"], [{ line: 0, start: 0, end: 1, style: "emphasis" }]),
+    ], 30, false, { styles: HTMLISH, escape: "html" });
+    expect(styled).toBe("<i>a</i> &lt; b &amp; c\n");
+    const plain = executeTemplate(STYLED_TPL, [cap(["a < b & c"])], 30, false, { escape: "html" });
+    expect(plain).toBe("a &lt; b &amp; c\n");
+  });
+
+  it("never escapes the mapping markup itself", () => {
+    const out = executeTemplate(STYLED_TPL, [
+      cap(["a&b"], [{ line: 0, start: 0, end: 3, style: "emphasis" }]),
+    ], 30, false, { styles: HTMLISH, escape: "html" });
+    expect(out).toBe("<i>a&amp;b</i>\n");
+  });
+
+  it("without escape, text passes through raw (pre-0.7.0 behavior)", () => {
+    expect(executeTemplate(STYLED_TPL, [cap(["a < b & c"])])).toBe("a < b & c\n");
+  });
+});
+
+describe("parseCff / serializeCff — styles and escape", () => {
+  it("round-trips a config with styles and escape", () => {
+    const config = {
+      name: "T", extension: "t", template: "{{text}}",
+      styles: { emphasis: { open: "<i>", close: "</i>" }, underline: { open: "<u>", close: "</u>" } },
+      escape: "html" as const,
+    };
+    const parsed = parseCff(serializeCff(config));
+    expect(parsed).toEqual(config);
+  });
+
+  it("round-trips markup containing quotes, backslashes, newlines, and tabs", () => {
+    const backslash = String.fromCharCode(92);
+    const config = {
+      name: "T", extension: "t", template: "x",
+      styles: {
+        emphasis: { open: 'say "hi" ' + backslash + "cmd", close: "line\nbreak\ttab" },
+      },
+    };
+    expect(parseCff(serializeCff(config))).toEqual(config);
+  });
+
+  it("serializes style rows in STYLE_ORDER regardless of insertion order", () => {
+    const cff = serializeCff({
+      name: "T", extension: "t", template: "x",
+      styles: {
+        underline: { open: "u", close: "/u" },
+        emphasis: { open: "i", close: "/i" },
+      },
+    });
+    const uIdx = cff.indexOf("underline:");
+    const iIdx = cff.indexOf("emphasis:");
+    expect(iIdx).toBeGreaterThan(-1);
+    expect(iIdx).toBeLessThan(uIdx);
+  });
+
+  it("omits styles and escape headers when absent", () => {
+    const cff = serializeCff({ name: "T", extension: "t", template: "x" });
+    expect(cff).toBe("name: T\next: t\n\nx");
+  });
+
+  it("ignores malformed and unknown-key style rows", () => {
+    const parsed = parseCff(
+      'name: T\next: t\nstyles:\n  emphasis: { open: "<i>", close: "</i>" }\n  wavy: { open: "<w>", close: "</w>" }\n  broken row\n\nx',
+    );
+    expect(parsed?.styles).toEqual({ emphasis: { open: "<i>", close: "</i>" } });
+  });
+
+  it("ignores unknown escape modes", () => {
+    const parsed = parseCff("name: T\next: t\nescape: rot13\n\nx");
+    expect(parsed?.escape).toBeUndefined();
+  });
+
+  it("parses legacy files (no styles/escape) exactly as before", () => {
+    const parsed = parseCff("name: SRT\next: srt\nsource: builtin\n\n{{text}}");
+    expect(parsed).toEqual({ name: "SRT", extension: "srt", template: "{{text}}" });
   });
 });

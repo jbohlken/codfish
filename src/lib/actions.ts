@@ -13,7 +13,17 @@ import {
   selectionTranscribableIds,
   selectionCaptionedMedia,
 } from "./batch";
-import { exportCaptions, exportCaptionsBulk, type BulkExportItem, type BulkExportResult } from "./export";
+import {
+  exportCaptions,
+  exportCaptionsBulk,
+  isStylingNoticeDismissed,
+  dismissStylingNotice,
+  stylingDroppedMessage,
+  STYLING_NOTICE_CHECKBOX,
+  type BulkExportItem,
+  type BulkExportResult,
+  type ExportFormat,
+} from "./export";
 import { showError } from "../components/ErrorModal";
 import { showNotice } from "../components/NoticeModal";
 import { confirmUnsavedChanges } from "../components/UnsavedChanges";
@@ -85,17 +95,31 @@ export async function regenerateSelection(): Promise<void> {
 
 // ── Export ─────────────────────────────────────────────────────────────────
 
-/** Surface the outcome of a bulk export run. */
-function reportBulkExport(result: BulkExportResult | null, attempted: number): void {
+/** Surface the outcome of a bulk export run. The styling-dropped warning is
+ * COMPOSED into the completion notice rather than shown separately —
+ * noticeModal is a single signal, so two showNotice calls in one tick would
+ * clobber each other and the first would never render. On the failure branch
+ * the warning is intentionally skipped: the error summary matters more, and
+ * the re-export after fixing will surface it. */
+function reportBulkExport(
+  result: BulkExportResult | null,
+  attempted: number,
+  format: ExportFormat,
+): void {
   if (!result) return; // cancelled folder picker
   if (result.failed.length > 0) {
     const lines = result.failed.map((f) => `• ${f.name}: ${f.error}`);
     showError(`Exported ${result.written.length} of ${attempted} file(s).\n\nFailed:\n${lines.join("\n")}`);
+    return;
+  }
+  const base = `Exported ${result.written.length} caption file${result.written.length === 1 ? "" : "s"} to:\n${result.folder}`;
+  if (result.stylingDropped && !isStylingNoticeDismissed(format.name)) {
+    showNotice("Export complete", `${base}\n\n${stylingDroppedMessage(format.name)}`, {
+      checkboxLabel: STYLING_NOTICE_CHECKBOX,
+      onDismiss: (checked) => { if (checked) dismissStylingNotice(format.name); },
+    });
   } else {
-    showNotice(
-      "Export complete",
-      `Exported ${result.written.length} caption file${result.written.length === 1 ? "" : "s"} to:\n${result.folder}`,
-    );
+    showNotice("Export complete", base);
   }
 }
 
@@ -144,7 +168,7 @@ export async function exportAllMedia(): Promise<void> {
   }));
 
   try {
-    reportBulkExport(await exportCaptionsBulk(format, items), items.length);
+    reportBulkExport(await exportCaptionsBulk(format, items), items.length, format);
   } catch (e) {
     showError(String(e));
   }
@@ -170,7 +194,7 @@ export async function exportSelection(): Promise<void> {
   }));
 
   try {
-    reportBulkExport(await exportCaptionsBulk(format, items), items.length);
+    reportBulkExport(await exportCaptionsBulk(format, items), items.length, format);
   } catch (e) {
     showError(String(e));
   }

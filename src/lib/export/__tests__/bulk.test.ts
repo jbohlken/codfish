@@ -94,14 +94,14 @@ describe("exportCaptionsBulk", () => {
 
   it("records a per-item runtime error without throwing; other items still write", async () => {
     openMock.mockResolvedValueOnce("/out");
-    let loadCallCount = 0;
+    let saveCallCount = 0;
     invokeMock.mockImplementation(async (cmd: string) => {
-      if (cmd === "load_project") {
-        loadCallCount++;
-        if (loadCallCount === 2) throw new Error("boom load failed");
-        return CFF_SOURCE;
+      if (cmd === "load_project") return CFF_SOURCE;
+      if (cmd === "save_project") {
+        saveCallCount++;
+        if (saveCallCount === 2) throw new Error("boom write failed");
+        return undefined;
       }
-      if (cmd === "save_project") return undefined;
       throw new Error(`unexpected invoke: ${cmd}`);
     });
 
@@ -113,6 +113,21 @@ describe("exportCaptionsBulk", () => {
     expect(result!.written).toEqual(["a.srt", "c.srt"]);
     expect(result!.failed).toHaveLength(1);
     expect(result!.failed[0].name).toBe("b");
+    expect(result!.failed[0].error).toContain("boom write failed");
+  });
+
+  it("fails every item without throwing when the format file can't load", async () => {
+    openMock.mockResolvedValueOnce("/out");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_project") throw new Error("boom load failed");
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const result = await exportCaptionsBulk(makeFormat(), [makeItem("a"), makeItem("b")]);
+
+    expect(result).not.toBeNull();
+    expect(result!.written).toEqual([]);
+    expect(result!.failed).toHaveLength(2);
     expect(result!.failed[0].error).toContain("boom load failed");
   });
 
@@ -160,6 +175,49 @@ describe("exportCaptionsBulk", () => {
 
     const result = await exportCaptionsBulk(makeFormat(), []);
 
-    expect(result).toEqual({ folder: "/empty", written: [], failed: [] });
+    expect(result).toEqual({ folder: "/empty", written: [], failed: [], stylingDropped: false });
+  });
+
+  // stylingDropped is surfaced by the CALLER (composed into its completion
+  // modal) — two showNotice calls in one tick would clobber each other.
+  it("sets stylingDropped when styled captions export through a mapping-less {{text}} format", async () => {
+    openMock.mockResolvedValueOnce("/out");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_project") return "name: TXT\next: txt\n\n{{each}}{{text}}{{/each}}";
+      if (cmd === "save_project") return undefined;
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const styled: CaptionBlock[] = [{
+      index: 1, start: 0, end: 1, lines: ["hi there"],
+      spans: [{ line: 0, start: 0, end: 2, style: "emphasis" }],
+    }];
+    const result = await exportCaptionsBulk(makeFormat(), [
+      { name: "a", captions: styled, fps: 30, dropFrame: false },
+    ]);
+
+    expect(result!.stylingDropped).toBe(true);
+    expect(result!.written).toEqual(["a.srt"]);
+  });
+
+  it("does not set stylingDropped when the format maps styles or captions are plain", async () => {
+    openMock.mockResolvedValueOnce("/out");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_project") {
+        return 'name: SRT\next: srt\nstyles:\n  emphasis: { open: "<i>", close: "</i>" }\n\n{{each}}{{text}}{{/each}}';
+      }
+      if (cmd === "save_project") return undefined;
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const styled: CaptionBlock[] = [{
+      index: 1, start: 0, end: 1, lines: ["hi there"],
+      spans: [{ line: 0, start: 0, end: 2, style: "emphasis" }],
+    }];
+    const result = await exportCaptionsBulk(makeFormat(), [
+      { name: "a", captions: styled, fps: 30, dropFrame: false },
+    ]);
+
+    expect(result!.stylingDropped).toBe(false);
   });
 });

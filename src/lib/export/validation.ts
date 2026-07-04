@@ -46,13 +46,17 @@ export function validateFormatConfig(
 /**
  * Trim name and extension so the on-disk state matches what the Rust parser
  * will hand back on the next list_user_formats call. Template whitespace is
- * preserved — it's meaningful content.
+ * preserved — it's meaningful content. styles/escape MUST pass through:
+ * every FormatManager save routes here before serializeCff, so dropping
+ * them would silently strip styling from the .cff on each save.
  */
 export function normalizeFormatConfig(config: FormatConfig): FormatConfig {
   return {
     name: config.name.trim(),
     extension: config.extension.trim(),
     template: config.template,
+    ...(config.styles && Object.keys(config.styles).length > 0 ? { styles: config.styles } : {}),
+    ...(config.escape ? { escape: config.escape } : {}),
   };
 }
 

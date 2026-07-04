@@ -11,6 +11,8 @@ import {
 } from "@phosphor-icons/react";
 import {
   type FormatConfig,
+  type StylesMap,
+  type StyleMapping,
   parseCff,
   serializeCff,
   previewTemplate,
@@ -20,6 +22,8 @@ import {
   findEachBlocks,
   findInvalidEachOffsets,
 } from "../lib/export/builder";
+import { STYLE_ORDER } from "../lib/spans";
+import type { SpanStyleKey } from "../types/project";
 import {
   extractTokenPrefix,
   filterAutocomplete,
@@ -35,6 +39,7 @@ import {
   listFormats,
   exportFormatFile,
   importFormatFile,
+  clearStylingNoticeDismissal,
   type ExportFormat,
 } from "../lib/export";
 import {
@@ -46,6 +51,7 @@ import {
 } from "../lib/export/validation";
 import { exportFormats, selectedExportFormat } from "../store/app";
 import { showError } from "./ErrorModal";
+import { ToggleRow } from "./ProfileManager";
 import { showTextTooltip, hideTooltip } from "./Tooltip";
 import { confirmUnsavedChanges } from "./UnsavedChanges";
 
@@ -104,6 +110,7 @@ export function FormatManager() {
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
+  const [activeTab, setActiveTab] = useState<"template" | "styles">("template");
 
   const templateRef = useRef<HTMLTextAreaElement | null>(null);
   const backdropRef = useRef<HTMLDivElement | null>(null);
@@ -122,9 +129,11 @@ export function FormatManager() {
     setSelectedId(null);
   }, [isOpen]);
 
-  // Dismiss autocomplete when the edited format changes.
+  // Dismiss autocomplete and return to the Template tab when the edited
+  // format changes.
   useEffect(() => {
     setAutocomplete(null);
+    setActiveTab("template");
   }, [editor?.formatPath]);
 
   // Keep the keyboard-selected autocomplete item visible when arrow nav scrolls
@@ -199,7 +208,13 @@ export function FormatManager() {
   const performSave = async (): Promise<boolean> => {
     if (!editor) return true;
     const errs = validate(editor.config);
-    if (Object.keys(errs).length > 0) return false;
+    if (Object.keys(errs).length > 0) {
+      // A template error is invisible while the Styles tab is active (the
+      // error span lives inside the Template tab) — switch so the failed
+      // save (button click OR the unsaved-changes dialog's Save) shows why.
+      if (errs.template) setActiveTab("template");
+      return false;
+    }
 
     let filename = editor.editingFilename;
     if (!filename || !filename.endsWith(".cff")) {
@@ -300,6 +315,35 @@ export function FormatManager() {
     setError(null);
   }, []);
 
+  const updateStyles = useCallback((next: StylesMap) => {
+    setEditor((prev) => {
+      if (!prev) return prev;
+      const config = { ...prev.config };
+      // Canonicalize key order (STYLE_ORDER, mirroring serializeCff) so the
+      // JSON.stringify dirty compare is order-stable — a rename-away-and-back
+      // must not leave the editor spuriously dirty.
+      const ordered: StylesMap = {};
+      for (const key of STYLE_ORDER) {
+        if (next[key] !== undefined) ordered[key] = next[key];
+      }
+      if (Object.keys(ordered).length === 0) delete config.styles;
+      else config.styles = ordered;
+      return { ...prev, config };
+    });
+    setError(null);
+  }, []);
+
+  const updateEscape = useCallback((on: boolean) => {
+    setEditor((prev) => {
+      if (!prev) return prev;
+      const config = { ...prev.config };
+      if (on) config.escape = "html";
+      else delete config.escape;
+      return { ...prev, config };
+    });
+    setError(null);
+  }, []);
+
   const validate = (config: FormatConfig): FieldErrors =>
     validateFormatConfig(config, formats, editor?.formatPath ?? null);
 
@@ -330,6 +374,9 @@ export function FormatManager() {
     if (!editor?.editingFilename) return;
     try {
       await deleteFormat(editor.editingFilename);
+      // Forget any "don't remind me" styling-notice dismissal for this name,
+      // so an unrelated future format doesn't inherit the silence.
+      clearStylingNoticeDismissal(editor.savedConfig.name);
       const fmts = await listFormats();
       exportFormats.value = fmts;
       if (selectedExportFormat.value === editor.savedConfig.name) {
@@ -460,6 +507,10 @@ export function FormatManager() {
   const dirty = isDirty();
   const fieldErrors: FieldErrors = editor && !editor.readonly ? validate(editor.config) : {};
   const isValid = Object.keys(fieldErrors).length === 0;
+  // Template warnings/errors are only rendered inside the Template tab; a
+  // dot on the tab button keeps them discoverable from the Styles tab.
+  const templateWarnings = editor && !editor.readonly ? validateTemplate(editor.config.template) : [];
+  const templateDot = !!fieldErrors.template || templateWarnings.length > 0;
 
   const renderListItem = (f: ExportFormat) => (
     <button
@@ -501,7 +552,7 @@ export function FormatManager() {
           <div class="fmt-editor-pane">
             {editor ? (
               <>
-                <div class="fmt-editor-fields scrollable">
+                <div class="fmt-editor-meta">
                   {editor.readonly && (
                     <div class="fmt-editor-readonly-banner">
                       <Lock size={12} />
@@ -536,8 +587,48 @@ export function FormatManager() {
                       {fieldErrors.extension && <span class="fb-field-error">{fieldErrors.extension}</span>}
                     </div>
                   </div>
+                </div>
+
+                <div class="fmt-editor-tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    class={`fmt-editor-tab${activeTab === "template" ? " fmt-editor-tab--active" : ""}`}
+                    aria-selected={activeTab === "template"}
+                    onClick={() => setActiveTab("template")}
+                  >
+                    Template
+                    {templateDot && (
+                      <span
+                        class={`fmt-editor-tab-dot${fieldErrors.template ? " fmt-editor-tab-dot--error" : ""}`}
+                        aria-label={fieldErrors.template ? "Template has an error" : "Template has warnings"}
+                      />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    class={`fmt-editor-tab${activeTab === "styles" ? " fmt-editor-tab--active" : ""}`}
+                    aria-selected={activeTab === "styles"}
+                    onClick={() => setActiveTab("styles")}
+                  >
+                    Styles
+                  </button>
+                </div>
+
+                <div class="fmt-editor-fields scrollable">
+                  {activeTab === "styles" && (
+                    <StylesSection
+                      styles={editor.config.styles}
+                      escape={!!editor.config.escape}
+                      readonly={editor.readonly}
+                      onChange={updateStyles}
+                      onEscapeChange={updateEscape}
+                    />
+                  )}
 
                   {/* Template */}
+                  {activeTab === "template" && (
                   <div class="fb-field fb-field--fill">
                     <div class="fb-label-row">
                       <label class="fb-label">Template</label>
@@ -622,6 +713,7 @@ export function FormatManager() {
                     {fieldErrors.template && <span class="fb-field-error">{fieldErrors.template}</span>}
                     <TokenWarnings value={editor.config.template} />
                   </div>
+                  )}
 
                   {error && <div class="fb-error">{error}</div>}
                 </div>
@@ -804,3 +896,130 @@ function highlightTokens(template: string): string {
   });
 }
 
+
+// ── Styles section ──────────────────────────────────────────────────────────
+
+/** Map semantic style keys to this format's markup. Emission nesting order is
+ * fixed by STYLE_ORDER (matching the in-app renderer), so authors only decide
+ * the markup strings. The reserved {{value}} placeholder substitutes a span's
+ * value (future value-bearing keys, e.g. VTT <c.{{value}}>). */
+function StylesSection({
+  styles,
+  escape,
+  readonly,
+  onChange,
+  onEscapeChange,
+}: {
+  styles: StylesMap | undefined;
+  escape: boolean;
+  readonly: boolean;
+  onChange: (next: StylesMap) => void;
+  onEscapeChange: (on: boolean) => void;
+}) {
+  const entries = STYLE_ORDER
+    .filter((key) => styles?.[key] !== undefined)
+    .map((key) => [key, styles![key]!] as [SpanStyleKey, StyleMapping]);
+  const usedKeys = new Set(entries.map(([k]) => k));
+  const firstUnused = STYLE_ORDER.find((k) => !usedKeys.has(k));
+
+  const setMapping = (key: SpanStyleKey, mapping: StyleMapping) => {
+    onChange({ ...(styles ?? {}), [key]: mapping });
+  };
+  const removeStyle = (key: SpanStyleKey) => {
+    const next: StylesMap = { ...(styles ?? {}) };
+    delete next[key];
+    onChange(next);
+  };
+  const renameStyle = (from: SpanStyleKey, to: SpanStyleKey) => {
+    if (from === to) return;
+    const current = styles?.[from];
+    if (!current) return;
+    const next: StylesMap = { ...(styles ?? {}) };
+    delete next[from];
+    next[to] = current;
+    onChange(next);
+  };
+
+  return (
+    <>
+      <div class="fb-field fb-styles-section">
+        <div class="fb-label-row">
+          <label class="fb-label">Style mappings</label>
+          <span class="fb-label-hint">How {"{{text}}"} renders inline styling</span>
+        </div>
+        {entries.length === 0 ? (
+          <div class="fb-styles-empty">
+            {readonly
+              ? "No styles declared — inline styling exports as plain text."
+              : "No styles — {{text}} emits plain text. Add a mapping to export inline styling."}
+          </div>
+        ) : (
+          <div class="fb-styles-list">
+            {entries.map(([key, mapping]) => (
+              <div class="fb-styles-row" key={key}>
+                <select
+                  class="fb-input fb-styles-key"
+                  value={key}
+                  disabled={readonly}
+                  onChange={(e) => renameStyle(key, (e.currentTarget as HTMLSelectElement).value as SpanStyleKey)}
+                >
+                  {STYLE_ORDER.map((k) => (
+                    <option key={k} value={k} disabled={k !== key && usedKeys.has(k)}>{k}</option>
+                  ))}
+                </select>
+                <input
+                  class="fb-input fb-styles-markup"
+                  type="text"
+                  value={mapping.open}
+                  placeholder="<i>"
+                  aria-label={`${key} opening markup`}
+                  disabled={readonly}
+                  onInput={(e) => setMapping(key, { ...mapping, open: (e.currentTarget as HTMLInputElement).value })}
+                />
+                <input
+                  class="fb-input fb-styles-markup"
+                  type="text"
+                  value={mapping.close}
+                  placeholder="</i>"
+                  aria-label={`${key} closing markup`}
+                  disabled={readonly}
+                  onInput={(e) => setMapping(key, { ...mapping, close: (e.currentTarget as HTMLInputElement).value })}
+                />
+                {!readonly && (
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-icon"
+                    data-tooltip="Remove style"
+                    onClick={() => removeStyle(key)}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {!readonly && firstUnused && (
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm fb-styles-add"
+            onClick={() => setMapping(firstUnused, { open: "", close: "" })}
+          >
+            <Plus size={12} /> Add style
+          </button>
+        )}
+      </div>
+
+      <div class="fb-field">
+        <ToggleRow
+          wide
+          label="Escape &, <, > in caption text"
+          desc={'For formats whose players parse tags (WebVTT requires it): "fish & chips < $5" exports as "fish &amp; chips &lt; $5". Style markup itself is never escaped.'}
+          checked={escape}
+          disabled={readonly}
+          onChange={onEscapeChange}
+        />
+      </div>
+    </>
+  );
+}

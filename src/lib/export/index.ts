@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { join } from "@tauri-apps/api/path";
-import type { CaptionBlock } from "../../types/project";
-import { executeTemplate, parseCff, serializeCff } from "./builder";
+import type { CaptionBlock, StyleSpan } from "../../types/project";
+import { executeTemplate, parseCff, serializeCff, type FormatConfig } from "./builder";
 import { uniqueFormatName, randomFormatFilename } from "./validation";
+import { isKnownSpanStyle } from "../spans";
+import { showNotice } from "../../components/NoticeModal";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,6 +25,9 @@ export interface SerializedCaption {
   start: number;    // seconds
   end: number;      // seconds
   lines: string[];
+  /** Inline styling overlay, present only when the caption carries spans.
+   *  Consumed by {{text}} (via the format's styles mapping) and {{json}}. */
+  spans?: StyleSpan[];
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -51,7 +56,64 @@ function serialize(captions: CaptionBlock[]): SerializedCaption[] {
     start: c.start,
     end: c.end,
     lines: c.lines,
+    ...(c.spans && c.spans.length > 0 ? { spans: c.spans } : {}),
   }));
+}
+
+/** True when captions carry styling this version understands but the format
+ *  maps none of it — the export silently emits plain text, which deserves a
+ *  one-line heads-up (covers pre-0.7.0 duplicated builtins that never gain
+ *  the new styles blocks). */
+function stylingDropped(config: FormatConfig, captions: SerializedCaption[]): boolean {
+  if (config.styles && Object.keys(config.styles).length > 0) return false;
+  if (!config.template.includes("{{text")) return false;
+  return captions.some((c) => (c.spans ?? []).some((s) => isKnownSpanStyle(s.style)));
+}
+
+/** Per-format "don't remind me again" persistence (app preference, never in
+ *  the .cod). The warning accompanies EVERY affected export until the user
+ *  checks the box for that format; keyed by name, so renaming re-arms it. */
+const STYLING_NOTICE_KEY = "codfish:stylingNoticeDismissed";
+
+function stylingNoticeDismissals(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STYLING_NOTICE_KEY) ?? "[]");
+    return new Set(Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function isStylingNoticeDismissed(formatName: string): boolean {
+  return stylingNoticeDismissals().has(formatName);
+}
+
+export function dismissStylingNotice(formatName: string): void {
+  const next = stylingNoticeDismissals();
+  next.add(formatName);
+  try { localStorage.setItem(STYLING_NOTICE_KEY, JSON.stringify([...next])); } catch { /* best-effort */ }
+}
+
+/** Forget a format's dismissal (called when the format is deleted, so an
+ *  unrelated future format with the same name doesn't inherit the silence). */
+export function clearStylingNoticeDismissal(formatName: string): void {
+  const next = stylingNoticeDismissals();
+  if (!next.delete(formatName)) return;
+  try { localStorage.setItem(STYLING_NOTICE_KEY, JSON.stringify([...next])); } catch { /* best-effort */ }
+}
+
+export function stylingDroppedMessage(formatName: string): string {
+  return `"${formatName}" has no style mappings, so inline styling was exported as plain text. Add mappings in Edit → Export Formats.`;
+}
+
+export const STYLING_NOTICE_CHECKBOX = "Don't remind me again for this format";
+
+function noticeStylingDropped(format: ExportFormat) {
+  if (isStylingNoticeDismissed(format.name)) return;
+  showNotice("Styling not exported", stylingDroppedMessage(format.name), {
+    checkboxLabel: STYLING_NOTICE_CHECKBOX,
+    onDismiss: (checked) => { if (checked) dismissStylingNotice(format.name); },
+  });
 }
 
 /** Execute a format's template and prompt the user for a save path. */
@@ -62,7 +124,12 @@ export async function exportCaptions(
   fps: number,
   dropFrame = false,
 ): Promise<void> {
-  const content = await runFormat(format.formatPath, serialize(captions), fps, dropFrame);
+  const config = await loadFormatConfig(format.formatPath);
+  const serialized = serialize(captions);
+  const content = executeTemplate(config.template, serialized, fps, dropFrame, {
+    styles: config.styles,
+    escape: config.escape,
+  });
 
   const savePath = await save({
     title: "Export Captions",
@@ -72,6 +139,8 @@ export async function exportCaptions(
   if (!savePath) return;
 
   await invoke<void>("save_project", { path: savePath, json: content });
+
+  if (stylingDropped(config, serialized)) noticeStylingDropped(format);
 }
 
 export interface BulkExportItem {
@@ -85,6 +154,11 @@ export interface BulkExportResult {
   folder: string;
   written: string[];                       // filenames written
   failed: { name: string; error: string }[];
+  /** True when at least one written item carried styling the format maps
+   *  none of. The CALLER surfaces this (composed into its completion modal)
+   *  — showing a notice here would collide with the caller's own notice on
+   *  the single noticeModal signal and never render. */
+  stylingDropped: boolean;
 }
 
 /** Prompt once for a destination folder, then write one caption file per item
@@ -105,10 +179,30 @@ export async function exportCaptionsBulk(
   const written: string[] = [];
   const failed: { name: string; error: string }[] = [];
   const used = new Set<string>();
+  if (items.length === 0) return { folder, written, failed, stylingDropped: false };
 
+  // One config load for the whole batch. A load failure fails every item —
+  // reported through `failed`, preserving the function's no-throw contract.
+  let config: FormatConfig;
+  try {
+    config = await loadFormatConfig(format.formatPath);
+  } catch (e) {
+    return {
+      folder,
+      written,
+      failed: items.map((i) => ({ name: i.name, error: String(e) })),
+      stylingDropped: false,
+    };
+  }
+  let droppedStyling = false;
   for (const item of items) {
     try {
-      const content = await runFormat(format.formatPath, serialize(item.captions), item.fps, item.dropFrame);
+      const serialized = serialize(item.captions);
+      const content = executeTemplate(config.template, serialized, item.fps, item.dropFrame, {
+        styles: config.styles,
+        escape: config.escape,
+      });
+      droppedStyling ||= stylingDropped(config, serialized);
       let base = item.name;
       let n = 1;
       while (used.has(base.toLowerCase())) base = `${item.name}-${n++}`;
@@ -122,7 +216,7 @@ export async function exportCaptionsBulk(
     }
   }
 
-  return { folder, written, failed };
+  return { folder, written, failed, stylingDropped: droppedStyling };
 }
 
 // ── Format file operations ──────────────────────────────────────────────────
@@ -185,9 +279,9 @@ export async function exportFormatFile(formatPath: string): Promise<void> {
 
 // ── Format execution ────────────────────────────────────────────────────────
 
-async function runFormat(formatPath: string, captions: SerializedCaption[], fps: number, dropFrame: boolean): Promise<string> {
+async function loadFormatConfig(formatPath: string): Promise<FormatConfig> {
   const source = await invoke<string>("load_project", { path: formatPath });
   const config = parseCff(source);
   if (!config) throw new Error(`Invalid .cff format file: "${formatPath}"`);
-  return executeTemplate(config.template, captions, fps, dropFrame);
+  return config;
 }

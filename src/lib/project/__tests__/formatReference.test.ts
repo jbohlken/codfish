@@ -83,7 +83,28 @@ describe("checkFormatCompatibility", () => {
     );
   });
 
-  it("selects format and shows error when hash differs", async () => {
+  it("selects a CUSTOM format and shows error when its hash differs", async () => {
+    listFormatsMock.mockResolvedValue([
+      { name: "My XML", formatPath: "/path/user-1234.cff", source: "custom" },
+    ]);
+    loadFormatSourceMock.mockResolvedValue("name: My XML\next: xml\n\n{{each}}...");
+    hashContentMock.mockResolvedValue("different_hash");
+
+    await checkFormatCompatibility(makeProject({
+      exportFormatName: "My XML",
+      exportFormatHash: "original_hash",
+    }));
+
+    expect(selectedExportFormat.value).toBe("My XML");
+    expect(showErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("differs"),
+    );
+  });
+
+  it("stays silent when a BUILTIN format's hash differs (version-managed)", async () => {
+    // Builtins are overwritten by the app on every launch, so their content
+    // legitimately changes across updates (e.g. 0.7.0 adding styles blocks) —
+    // warning here would toast every existing project after each upgrade.
     listFormatsMock.mockResolvedValue([
       { name: "SRT", formatPath: "/path/srt.cff", source: "builtin" },
     ]);
@@ -96,9 +117,8 @@ describe("checkFormatCompatibility", () => {
     }));
 
     expect(selectedExportFormat.value).toBe("SRT");
-    expect(showErrorMock).toHaveBeenCalledWith(
-      expect.stringContaining("differs"),
-    );
+    expect(showErrorMock).not.toHaveBeenCalled();
+    expect(loadFormatSourceMock).not.toHaveBeenCalled();
   });
 
   it("selects format silently when hash matches", async () => {

@@ -2123,6 +2123,27 @@ body.rows-dragging * {
   margin: 0;
 }
 
+.notice-modal-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-4) var(--space-3);
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.notice-modal-checkbox:hover {
+  color: var(--color-text-primary);
+}
+
 .notice-modal-footer {
   display: flex;
   justify-content: flex-end;
@@ -2333,6 +2354,18 @@ body.rows-dragging * {
   flex-direction: column;
   gap: 2px;
   padding-top: 2px;
+}
+
+/* Wide variant (ToggleRow `wide`): label + description fill the row, the
+   control hugs the right edge — for hosts without the fixed label column. */
+.pe-row--wide .pe-label-wrap {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+.pe-row--wide .pe-controls {
+  flex: 0 0 auto;
 }
 
 .pe-label {
@@ -3149,6 +3182,60 @@ body.rows-dragging * {
   border-right: 1px solid var(--color-border);
 }
 
+.fmt-editor-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) 0;
+  flex-shrink: 0;
+}
+
+.fmt-editor-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.fmt-editor-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.fmt-editor-tab:hover {
+  color: var(--color-text-primary);
+}
+
+.fmt-editor-tab--active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent);
+}
+
+/* Warning/error indicator on the Template tab — template diagnostics render
+   inside that tab only, so the dot keeps them discoverable from Styles. */
+.fmt-editor-tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  margin-left: var(--space-1);
+  vertical-align: 1px;
+}
+
+.fmt-editor-tab-dot--error {
+  background: var(--color-danger);
+}
+
 .fmt-editor-fields {
   padding: var(--space-3) var(--space-4);
   display: flex;
@@ -3157,6 +3244,46 @@ body.rows-dragging * {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+}
+
+.fb-styles-section {
+  gap: var(--space-1);
+}
+
+.fb-styles-empty {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  padding: var(--space-1) 0;
+}
+
+.fb-styles-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fb-styles-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.fb-input.fb-styles-key {
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.fb-input.fb-styles-markup {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.fb-styles-add {
+  align-self: flex-start;
 }
 
 .fmt-editor-footer {
@@ -3384,11 +3511,11 @@ body.rows-dragging * {
 }
 
 .fb-hl-valid {
-  color: #4ade80;
+  color: var(--color-success);
 }
 
 .fb-hl-invalid {
-  color: #fbbf24;
+  color: var(--color-warning);
 }
 
 .fb-token-warnings {
