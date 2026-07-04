@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, activeProfile } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
+import { StyledLines } from "../StyledLines";
 import { findCaptionAt } from "../../lib/pipeline";
 import { getClipView } from "../../lib/clipView";
 import { frameMidpoint } from "../../lib/playhead";
@@ -33,6 +34,9 @@ export function VideoPanel() {
   const overlayLines = isEditingActive
     ? editText.value.split("\n").filter((l) => l.trim())
     : activeCaption?.lines ?? null;
+  // Styling only applies to committed captions; the live-edit preview is
+  // plain text (the editor buffer carries no spans yet).
+  const overlaySpans = isEditingActive ? undefined : activeCaption?.spans;
 
   // On a clip switch, restore that clip's remembered playhead (0 if none) and
   // stop playback. This owns playbackTime across media changes; the caption
@@ -189,9 +193,12 @@ export function VideoPanel() {
             )}
             {overlayLines && overlayLines.length > 0 && (
               <div class="caption-overlay">
-                {overlayLines.map((line, i) => (
-                  <span key={i} class="caption-overlay-line">{line}</span>
-                ))}
+                <StyledLines
+                  lines={overlayLines}
+                  spans={overlaySpans}
+                  lineAs="span"
+                  lineClass="caption-overlay-line"
+                />
               </div>
             )}
           </div>

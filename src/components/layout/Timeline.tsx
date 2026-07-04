@@ -34,6 +34,7 @@ import {
 import { isUpdating } from "../UpdateNotice";
 import { editingIndex, editText, commitActiveEdit } from "./CaptionPanel";
 import type { CaptionBlock } from "../../types/project";
+import { StyledLines } from "../StyledLines";
 import { snapToFrame } from "../../lib/pipeline";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { formatDisplayTime, type DisplayMode } from "../../lib/time";
@@ -1086,7 +1087,7 @@ function ResizableCaptionBlock({
         onMouseDown={(e) => startEdgeDrag(e, "left")}
       />
       <div class="timeline-block-label">
-        {block.lines.map((line, i) => <span key={i}>{line}</span>)}
+        <StyledLines lines={block.lines} spans={block.spans} lineAs="span" />
       </div>
       <div
         class="timeline-block-handle timeline-block-handle--right"

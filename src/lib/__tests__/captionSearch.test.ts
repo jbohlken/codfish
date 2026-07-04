@@ -4,7 +4,7 @@ import {
   captionMatches,
   replaceInText,
   replaceInLines,
-  splitOnMatches,
+  matchRanges,
 } from "../captionSearch";
 
 describe("escapeRegExp", () => {
@@ -76,45 +76,13 @@ describe("replaceInLines", () => {
   });
 });
 
-describe("splitOnMatches", () => {
-  it("splits into matched and unmatched segments", () => {
-    expect(splitOnMatches("the fox ran", "fox", false)).toEqual([
-      { text: "the ", isMatch: false },
-      { text: "fox", isMatch: true },
-      { text: " ran", isMatch: false },
-    ]);
-  });
-  it("handles a match at the very start and end", () => {
-    expect(splitOnMatches("foxfox", "fox", false)).toEqual([
-      { text: "fox", isMatch: true },
-      { text: "fox", isMatch: true },
-    ]);
-  });
-  it("preserves the matched substring's original case", () => {
-    expect(splitOnMatches("a Fox b", "fox", false)).toEqual([
-      { text: "a ", isMatch: false },
-      { text: "Fox", isMatch: true },
-      { text: " b", isMatch: false },
-    ]);
-  });
-  it("returns the whole text as one segment when nothing matches", () => {
-    expect(splitOnMatches("hello", "zzz", false)).toEqual([{ text: "hello", isMatch: false }]);
-  });
-  it("returns the whole text as one unmatched segment for an empty query", () => {
-    expect(splitOnMatches("hello", "", false)).toEqual([{ text: "hello", isMatch: false }]);
-  });
-  it("returns nothing for empty text", () => {
-    expect(splitOnMatches("", "x", false)).toEqual([]);
-  });
-});
-
 describe("edge cases — matcher statefulness & multi-line queries", () => {
   it("is repeatable — a fresh matcher each call means no global-regex lastIndex leak", () => {
     // Guards the module's stated invariant: caching/hoisting the matcher would
     // make the second re.test()/matchAll() resume mid-string and silently miss.
     expect(captionMatches("fox", "fox", false)).toBe(true);
     expect(captionMatches("fox", "fox", false)).toBe(true);
-    expect(splitOnMatches("a fox b", "fox", false)).toEqual(splitOnMatches("a fox b", "fox", false));
+    expect(matchRanges("a fox b", "fox", false)).toEqual(matchRanges("a fox b", "fox", false));
   });
 
   it("matches a query that spans the line join (text is joined with \\n)", () => {
@@ -127,10 +95,9 @@ describe("edge cases — matcher statefulness & multi-line queries", () => {
     expect(replaceInLines(["the fox", "brown"], "fox\nbrown", "cat", false)).toEqual(["the cat"]);
   });
 
-  it("splits a multi-line-query match into a segment spanning the break", () => {
-    expect(splitOnMatches(["the fox", "brown"].join("\n"), "fox\nbrown", false)).toEqual([
-      { text: "the ", isMatch: false },
-      { text: "fox\nbrown", isMatch: true },
+  it("reports a multi-line-query match as one range spanning the break", () => {
+    expect(matchRanges(["the fox", "brown"].join("\n"), "fox\nbrown", false)).toEqual([
+      { start: 4, end: 13 },
     ]);
   });
 });
@@ -151,9 +118,40 @@ describe("whitespace-flexible matching (across line wraps)", () => {
       .toEqual(["the quick red cat jumps"]);
   });
 
-  it("highlights a match that spans the line break", () => {
-    expect(splitOnMatches(["brown", "fox"].join("\n"), "brown fox", false)).toEqual([
-      { text: "brown\nfox", isMatch: true },
+});
+
+describe("matchRanges", () => {
+  it("returns joined-text offsets for each match", () => {
+    expect(matchRanges("the cat and the cat", "cat", false)).toEqual([
+      { start: 4, end: 7 },
+      { start: 16, end: 19 },
     ]);
+  });
+
+  it("returns nothing for an empty query", () => {
+    expect(matchRanges("anything", "", false)).toEqual([]);
+  });
+
+  it("matches across a line break like the rest of the search", () => {
+    expect(matchRanges(["brown", "fox"].join("\n"), "brown fox", false)).toEqual([
+      { start: 0, end: 9 },
+    ]);
+  });
+
+  it("respects case sensitivity", () => {
+    expect(matchRanges("Cat cat", "cat", true)).toEqual([{ start: 4, end: 7 }]);
+    expect(matchRanges("Cat cat", "cat", false)).toHaveLength(2);
+  });
+
+  it("reports adjacent matches as distinct ranges", () => {
+    expect(matchRanges("foxfox", "fox", false)).toEqual([
+      { start: 0, end: 3 },
+      { start: 3, end: 6 },
+    ]);
+  });
+
+  it("returns nothing for empty text or a non-matching query", () => {
+    expect(matchRanges("", "x", false)).toEqual([]);
+    expect(matchRanges("hello", "zzz", false)).toEqual([]);
   });
 });

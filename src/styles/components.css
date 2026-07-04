@@ -1120,6 +1120,18 @@ body.rows-dragging * {
   line-height: 1.4;
 }
 
+/* ── Inline caption styling (StyledLines) ─────────────────────────────────
+   Semantic span keys → display. The export side maps the same keys through
+   each format's styles: block; keep these in STYLE_ORDER (lib/spans).
+   Surface baselines are untouched (no visual change for unstyled captions);
+   strong gets its contrast from a heavier weight instead — 800 inside the
+   overlay, whose 500 baseline would make plain bold read weak. */
+[data-style="emphasis"]  { font-style: italic; }
+[data-style="strong"]    { font-weight: bold; }
+[data-style="underline"] { text-decoration: underline; }
+
+.caption-overlay-line [data-style="strong"] { font-weight: 800; }
+
 /* ── Search drawer (shared: project + caption panels) ─────────────────────── */
 
 /* Search drawer — slides open below a panel header. The grid 0fr→1fr trick
@@ -1835,7 +1847,9 @@ body.rows-dragging * {
   gap: 1px;
 }
 
-.timeline-block-label span {
+/* Direct children only: the line spans are flex items where the ellipsis
+   works; nested [data-style] spans inside a line must stay plain inline. */
+.timeline-block-label > span {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

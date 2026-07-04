@@ -28,7 +28,8 @@ import { computeAddCaption } from "../../lib/playhead";
 import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning, MagnifyingGlassIcon as MagnifyingGlass, SwapIcon as Swap, TextAaIcon as TextAa, RepeatOnceIcon as RepeatOnce, RepeatIcon as Repeat, DotsThreeVerticalIcon as DotsThreeVertical, SquareIcon as Square, CheckSquareIcon as CheckSquare } from "@phosphor-icons/react";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { CaptionNumber } from "../CaptionNumber";
-import { captionMatches, replaceInLines, splitOnMatches } from "../../lib/captionSearch";
+import { captionMatches, replaceInLines, matchRanges } from "../../lib/captionSearch";
+import { StyledLines } from "../StyledLines";
 import { contextMenu, openContextMenu, closeContextMenu } from "../ContextMenu";
 import { TOOLTIP_DIVIDER } from "../Tooltip";
 import { generateSelectedMedia } from "../../lib/actions";
@@ -949,8 +950,8 @@ function CaptionRow({
 
 
   const text = block.lines.join("\n");
-  const segments = query ? splitOnMatches(text, query, caseSensitive) : null;
-  const isMatch = !!segments?.some((s) => s.isMatch);
+  const ranges = query ? matchRanges(text, query, caseSensitive) : null;
+  const isMatch = !!ranges && ranges.length > 0;
   // Dim non-matching rows while a query is active (the list is never filtered);
   // the selected/playing row stays full-strength so the active caption reads.
   const dimmed = query !== "" && !isMatch && !selected && !playing;
@@ -969,10 +970,12 @@ function CaptionRow({
         <CaptionNumber index={block.index} warnings={warnings} /> · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}
       </div>
       <div class="caption-row-text">
-        {segments
-          ? segments.map((seg, i) =>
-              seg.isMatch ? <mark key={i} class="search-match">{seg.text}</mark> : seg.text)
-          : text}
+        <StyledLines
+          lines={block.lines}
+          spans={block.spans}
+          decorations={ranges ?? undefined}
+          separator="br"
+        />
       </div>
       {selected && (
         <div class="caption-row-actions" onClick={(e) => e.stopPropagation()}>

@@ -47,24 +47,21 @@ export function replaceInLines(lines: string[], query: string, replacement: stri
   return out.length ? out : [""];
 }
 
-export interface Segment {
-  text: string;
-  isMatch: boolean;
-}
-
-/** Split `text` into consecutive matched / unmatched segments, for highlighting.
- *  An empty query yields the whole text as one unmatched segment. */
-export function splitOnMatches(text: string, query: string, caseSensitive: boolean): Segment[] {
+/** Match ranges of `query` in `text` (joined-lines offsets), consumed as
+ *  highlight decorations by StyledLines. Empty query → no ranges. */
+export function matchRanges(
+  text: string,
+  query: string,
+  caseSensitive: boolean,
+): { start: number; end: number }[] {
   const re = buildMatcher(query, caseSensitive);
-  if (!re) return text ? [{ text, isMatch: false }] : [];
-  const out: Segment[] = [];
-  let last = 0;
+  if (!re) return [];
+  const out: { start: number; end: number }[] = [];
   for (const m of text.matchAll(re)) {
+    if (m[0].length === 0) continue;
     const i = m.index ?? 0;
-    if (i > last) out.push({ text: text.slice(last, i), isMatch: false });
-    out.push({ text: m[0], isMatch: true });
-    last = i + m[0].length;
+    out.push({ start: i, end: i + m[0].length });
   }
-  if (last < text.length) out.push({ text: text.slice(last), isMatch: false });
   return out;
 }
+
