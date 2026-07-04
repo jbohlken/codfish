@@ -32,7 +32,8 @@ import {
   isBatchRunning,
 } from "../../store/app";
 import { isUpdating } from "../UpdateNotice";
-import { editingIndex, editText, commitActiveEdit } from "./CaptionPanel";
+import { editingIndex, openEditor, commitActiveEdit } from "./CaptionPanel";
+import { isTextEntryTarget } from "../../lib/keyboard";
 import type { CaptionBlock } from "../../types/project";
 import { StyledLines } from "../StyledLines";
 import { snapToFrame } from "../../lib/pipeline";
@@ -592,11 +593,7 @@ export function Timeline() {
   //   +/-          → zoom around playhead ("=" unshifted; "+"/"_" shifted/numpad)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLSelectElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) return;
+      if (isTextEntryTarget(e.target)) return;
       if (isUpdating() || isBatchRunning.value) return;
       if (!selectedMedia.value) return;
       if (editingIndex.value !== null) return;
@@ -825,9 +822,7 @@ export function Timeline() {
                     }}
                     onDblClick={() => {
                       selectedCaptionIndex.value = block.index;
-                      isPlaying.value = false;
-                      editingIndex.value = block.index;
-                      editText.value = block.lines.join("\n");
+                      openEditor(block);
                     }}
                   />
                 ))}

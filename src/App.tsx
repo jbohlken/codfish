@@ -15,7 +15,8 @@ import { TitleBar } from "./components/layout/TitleBar";
 import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { TransportBar } from "./components/layout/TransportBar";
-import { CaptionPanel, commitActiveEdit, cancelActiveEdit } from "./components/layout/CaptionPanel";
+import { CaptionPanel, commitActiveEdit, cancelActiveEdit, editingIndex } from "./components/layout/CaptionPanel";
+import { isTextEntryTarget } from "./lib/keyboard";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory, isBatchRunning, flushOpenClipView } from "./store/app";
 import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, revertProject, openRecent, resetSelectionForLoad } from "./lib/project";
@@ -300,8 +301,16 @@ export function App() {
     set("save_project", ready && hasProject && dirty);
     set("revert_project", ready && hasProject && !!projectPath.value && dirty);
     set("close_project", ready && hasProject);
-    const undoEnabled = ready && hasProject && canUndo.value;
-    const redoEnabled = ready && hasProject && canRedo.value;
+    // While a caption edit is open, the native Undo/Redo items are disabled:
+    // on macOS their CmdOrCtrl+Z accelerators fire BEFORE the webview sees the
+    // key, and the menu dispatcher's cancelActiveEdit would discard the
+    // in-flight edit AND roll back an unrelated prior change on a reflexive
+    // Cmd+Z. Disabled items let the key fall through to the editor's own
+    // native editing undo instead. (Windows already routes through the JS
+    // fallback below, which the contenteditable guard skips.)
+    const editingCaption = editingIndex.value !== null;
+    const undoEnabled = ready && hasProject && canUndo.value && !editingCaption;
+    const redoEnabled = ready && hasProject && canRedo.value && !editingCaption;
     set("undo", undoEnabled);
     set("redo", redoEnabled);
     // Non-project-gated items: enabled whenever the app is fully ready so
@@ -413,12 +422,9 @@ export function App() {
         e.stopPropagation();
         return;
       }
-      // Don't intercept shortcuts while editing text
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement
-      ) return;
+      // Don't intercept shortcuts while editing text (inputs, textareas, and
+      // the contenteditable caption editor)
+      if (isTextEntryTarget(e.target)) return;
 
       if (e.code === "Space") {
         e.preventDefault();

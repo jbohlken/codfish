@@ -1898,7 +1898,56 @@ body.rows-dragging * {
 }
 
 
-.caption-row-editor {
+/* Caption editor: contenteditable region (replaces the old .caption-row-editor
+   textarea; same box geometry so the row height doesn't change when editing
+   starts) + a styling popover anchored to the text selection. */
+.caption-editor-wrapper {
+  position: relative;
+}
+
+.caption-editor-popover {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 2px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  z-index: 30;
+  white-space: nowrap;
+}
+
+.caption-editor-popover--below {
+  transform: translate(-50%, 0);
+}
+
+.btn-caption-toolbar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.btn-caption-toolbar:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.btn-caption-toolbar.is-active {
+  background: var(--color-surface-hover);
+  color: var(--color-accent);
+}
+
+.caption-editor {
   width: 100%;
   font-family: var(--font-sans);
   font-size: var(--text-sm);
@@ -1907,11 +1956,13 @@ body.rows-dragging * {
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
-  resize: none;
   outline: none;
   line-height: var(--line-height-tight);
-  field-sizing: content;
-  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* No min-height: the box hugs its content like the old textarea's
+     field-sizing: content did — a one-line caption edits at one line tall. */
+  cursor: text;
 }
 
 /* ── Confirm Modal ──────────────────────────────────────────────────────── */

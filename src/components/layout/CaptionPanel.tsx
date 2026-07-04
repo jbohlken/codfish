@@ -34,15 +34,26 @@ import { contextMenu, openContextMenu, closeContextMenu } from "../ContextMenu";
 import { TOOLTIP_DIVIDER } from "../Tooltip";
 import { generateSelectedMedia } from "../../lib/actions";
 import { isUpdating } from "../UpdateNotice";
-import type { CaptionBlock, TranscriptionModel } from "../../types/project";
+import type { CaptionBlock, StyleSpan, TranscriptionModel } from "../../types/project";
+import { CaptionEditor } from "../CaptionEditor";
+import { renormalizeLines, spansEqual, hashLines, isKnownSpanStyle } from "../../lib/spans";
+import { isTextEntryTarget } from "../../lib/keyboard";
 
 // ── Panel-local state ─────────────────────────────────────────────────────────
 const editingIndex = signal<number | null>(null);
-const editText = signal("");
-export { editingIndex, editText };
+// Live editor buffer: the serialized model (lines + styling spans) mirrored on
+// every input so the video overlay previews exactly what a commit would write.
+const editLines = signal<string[]>([]);
+const editSpans = signal<StyleSpan[]>([]);
+export { editingIndex, editLines, editSpans };
 
-// Flag to suppress onBlur commit when Escape is pressed in the textarea
-let _editCancelled = false;
+/** Open the caption editor pre-filled with this block's text and styling. */
+export function openEditor(block: CaptionBlock) {
+  isPlaying.value = false;
+  editingIndex.value = block.index;
+  editLines.value = [...block.lines];
+  editSpans.value = block.spans ? block.spans.map((s) => ({ ...s })) : [];
+}
 
 // ── Search / find-and-replace ───────────────────────────────────────────────
 // Module-level. Typing DIMS the non-matching captions (the list is never
@@ -92,7 +103,9 @@ function selectMatch(index: number) {
   const block = selectedMedia.peek()?.captions.find((c) => c.index === index);
   if (!block) return;
   isPlaying.value = false;
-  editingIndex.value = null;
+  // Reachable with an edit still open (Tab out of the editor → Enter in the
+  // find field) — commit it rather than silently discarding the typed text.
+  commitActiveEdit();
   selectedCaptionIndex.value = index;
   playbackTime.value = block.start;
   revealCaptionTick.value++;
@@ -381,10 +394,10 @@ function addCaption() {
     ),
   }, newIndex);
 
-  _editCancelled = false;
   selectedCaptionIndex.value = newIndex;
   editingIndex.value = newIndex;
-  editText.value = "";
+  editLines.value = [""];
+  editSpans.value = [];
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -393,11 +406,7 @@ export function CaptionPanel() {
   // Caption keyboard shortcuts (Edit, Delete, Split, Add)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLSelectElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) return;
+      if (isTextEntryTarget(e.target)) return;
       // Blockers (update / batch generation) inert the app-shell but not
       // document-level listeners; gate explicitly so single-letter shortcuts
       // can't reach through the blocker.
@@ -425,11 +434,7 @@ export function CaptionPanel() {
       } else if (e.key === "e" && !e.ctrlKey && !e.metaKey && idx !== null) {
         e.preventDefault();
         const block = selectedMedia.value?.captions.find((c) => c.index === idx);
-        if (block) {
-          isPlaying.value = false;
-          editingIndex.value = idx;
-          editText.value = block.lines.join("\n");
-        }
+        if (block) openEditor(block);
       }
     };
     document.addEventListener("keydown", handler);
@@ -816,7 +821,7 @@ export function CaptionPanel() {
                 mergeEnabled={block.index < media.captions.length}
                 onMouseDown={() => {
                   if (editingIndex.value !== null && editingIndex.value !== block.index) {
-                    handleEdit(editingIndex.value, editText.value);
+                    handleEdit(editingIndex.value, editLines.value, editSpans.value);
                   }
                 }}
                 onClick={() => {
@@ -827,11 +832,10 @@ export function CaptionPanel() {
                 }}
                 onDblClick={() => {
                   selectedCaptionIndex.value = block.index;
-                  isPlaying.value = false;
-                  editingIndex.value = block.index;
-                  editText.value = block.lines.join("\n");
+                  openEditor(block);
                 }}
-                onEdit={(text) => handleEdit(block.index, text)}
+                onEdit={(lines, spans) => handleEdit(block.index, lines, spans)}
+                onCancel={() => handleCancel(block)}
                 onSplit={() => splitCaption(block.index)}
                 onMerge={() => mergeCaption(block.index)}
                 onDelete={() => deleteCaption(block.index)}
@@ -866,6 +870,7 @@ function CaptionRow({
   onClick,
   onDblClick,
   onEdit,
+  onCancel,
   onSplit,
   onMerge,
   onDelete,
@@ -884,28 +889,24 @@ function CaptionRow({
   onMouseDown: () => void;
   onClick: () => void;
   onDblClick: () => void;
-  onEdit: (text: string) => void;
+  onEdit: (lines: string[], spans: StyleSpan[]) => void;
+  onCancel: () => void;
   onSplit: () => void;
   onMerge: () => void;
   onDelete: () => void;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (editing) textareaRef.current?.focus();
-  }, [editing]);
-
-  // Click-outside commit: native blur only fires when focus moves to another
-  // focusable element. Clicks on non-focusable areas (video panel, timeline
-  // body, empty list space) would otherwise leave the editor open. The row's
-  // own mousedown handler runs first (bubble phase) and may have already
-  // committed for row-to-row clicks, so guard against double-commit.
+  // Click-outside commit: the editor's own blur handles focus moving to
+  // another focusable element, but clicks on non-focusable areas (video
+  // panel, timeline body, empty list space) don't move focus in all engines.
+  // The wrapper ref covers the toolbar too, so styling clicks never commit.
+  const editorWrapperRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!editing) return;
     const handler = (e: MouseEvent) => {
       if (editingIndex.value !== block.index) return;
       const target = e.target as Node | null;
-      if (target && textareaRef.current && !textareaRef.current.contains(target)) {
-        onEdit(editText.value);
+      if (target && editorWrapperRef.current && !editorWrapperRef.current.contains(target)) {
+        onEdit(editLines.value, editSpans.value);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -914,35 +915,17 @@ function CaptionRow({
 
   if (editing) {
     return (
-      <div class="caption-row caption-row--selected" data-caption-index={block.index}>
+      <div class="caption-row caption-row--selected" data-caption-index={block.index} ref={editorWrapperRef}>
         <div class="caption-row-meta"><CaptionNumber index={block.index} warnings={warnings} /> · {formatDisplayTime(block.start, "time", fps, true)} → {formatDisplayTime(block.end, "time", fps, true)}</div>
-        <textarea
-          ref={textareaRef}
-          class="caption-row-editor"
-          value={editText.value}
-          onInput={(e) => { editText.value = e.currentTarget.value; }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              _editCancelled = true;
-              editingIndex.value = null;
-              if (getPendingAddIndex() === block.index) {
-                // A-then-Escape: roll back the tentative add entirely.
-                cancelPendingAdd();
-              } else if (!block.lines.join("").trim()) {
-                onDelete();
-              }
-            }
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              onEdit(editText.value);
-            }
+        <CaptionEditor
+          initialLines={editLines.peek()}
+          initialSpans={editSpans.peek()}
+          onInput={(lines, spans) => {
+            editLines.value = lines;
+            editSpans.value = spans;
           }}
-          onBlur={() => {
-            if (_editCancelled) { _editCancelled = false; return; }
-            onEdit(editText.value);
-          }}
-          rows={2}
-          autoFocus
+          onCommit={(lines, spans) => onEdit(lines, spans)}
+          onCancel={onCancel}
         />
       </div>
     );
@@ -983,11 +966,7 @@ function CaptionRow({
             <button
               class="btn-caption-action"
               data-tooltip="Edit (E)"
-              onClick={() => {
-                isPlaying.value = false;
-                editingIndex.value = block.index;
-                editText.value = block.lines.join("\n");
-              }}
+              onClick={() => openEditor(block)}
             >
               <PencilSimple size={14} />
             </button>
@@ -1060,36 +1039,51 @@ function formatFullTimestamp(iso: string): string {
 
 /** Commit any active caption edit. Called from forward-moving menu actions
  * (save, new, open) so the user's typed text is preserved. Native menu clicks
- * don't produce a DOM mousedown, so they bypass the textarea's click-outside
+ * don't produce a DOM mousedown, so they bypass the editor's click-outside
  * commit. */
 export function commitActiveEdit() {
   const idx = editingIndex.value;
   if (idx === null) return;
-  handleEdit(idx, editText.value);
+  handleEdit(idx, editLines.value, editSpans.value);
 }
 
 /** Discard any active caption edit without committing. Called from backward-
  * moving menu actions (undo, redo) where auto-committing would insert a new
  * history entry that the menu label promised would be undone. Mirrors the
- * Escape-in-textarea behavior. */
+ * Escape-in-editor behavior. */
 export function cancelActiveEdit() {
   if (editingIndex.value === null) return;
-  _editCancelled = true;
   editingIndex.value = null;
   if (getPendingAddIndex() !== null) {
     cancelPendingAdd();
   }
 }
 
-function handleEdit(index: number, text: string) {
-  _editCancelled = true; // prevent re-entry if textarea blur fires after unmount
+/** Escape / cancel from the editor: discard the buffer; a pending add rolls
+ * back entirely, and cancelling on a caption that was already empty deletes
+ * it (there is nothing to revert to). */
+function handleCancel(block: CaptionBlock) {
+  editingIndex.value = null;
+  if (getPendingAddIndex() === block.index) {
+    cancelPendingAdd();
+  } else if (!block.lines.join("").trim()) {
+    deleteCaption(block.index);
+  }
+}
+
+function handleEdit(index: number, rawLines: string[], rawSpans: StyleSpan[]) {
+  // Stale-commit guard: the editor's blur can fire after another path (menu
+  // commit, row-to-row mousedown, Escape) already resolved this session.
+  if (editingIndex.value !== index) return;
   editingIndex.value = null;
   const proj = project.value;
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
   const isPendingAdd = getPendingAddIndex() === index;
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  // Shared commit normalization: trim each line (shifting span offsets),
+  // drop blank lines (remapping span line indices), canonicalize spans.
+  const { lines, spans } = renormalizeLines(rawLines, rawSpans);
 
   if (!lines.length) {
     // Empty commit: cancel a pending add (no history), otherwise delete.
@@ -1101,28 +1095,47 @@ function handleEdit(index: number, text: string) {
     return;
   }
 
-  // Identity commit: user opened the editor but didn't change the text. Skip
-  // pushing a history entry so Undo operates on the prior real change instead
-  // of this no-op. Pending adds never hit this path — an unchanged pending add
-  // means empty text, which is handled above.
+  // Identity commit: user opened the editor but didn't change text OR
+  // styling. Skip pushing a history entry so Undo operates on the prior real
+  // change instead of this no-op. Pending adds never hit this path — an
+  // unchanged pending add means empty text, which is handled above.
+  // The editor can only round-trip KNOWN style keys, so the comparison — and
+  // the survival of unknown-key spans (preserved from newer app versions by
+  // the load sanitizer) — must use the known projection: an open+close of a
+  // caption carrying unknown spans is a true no-op, not a rewrite.
   const existing = media.captions.find((c) => c.index === index);
-  if (
-    !isPendingAdd &&
+  const existingKnown = (existing?.spans ?? []).filter((s) => isKnownSpanStyle(s.style));
+  const existingUnknown = (existing?.spans ?? []).filter((s) => !isKnownSpanStyle(s.style));
+  const sameText =
     existing &&
     existing.lines.length === lines.length &&
-    existing.lines.every((l, i) => l === lines[i])
-  ) {
+    existing.lines.every((l, i) => l === lines[i]);
+  if (!isPendingAdd && sameText && spansEqual(spans, existingKnown)) {
     return;
   }
+  // Unknown spans stay valid only while the text they index is unchanged;
+  // a text rewrite makes their offsets stale, so they drop with the rest.
+  const keptUnknown = sameText ? existingUnknown : [];
+  const nextSpans = [...spans, ...keptUnknown];
 
   const newProject = {
     ...proj,
     media: proj.media.map((m) =>
       m.id !== media.id ? m : {
         ...m,
-        captions: m.captions.map((c) =>
-          c.index !== index ? c : { ...c, lines, edited: true }
-        ),
+        captions: m.captions.map((c) => {
+          if (c.index !== index) return c;
+          // Rebuild the styling overlay wholesale: stale spans/spansHash must
+          // never survive a text rewrite (that is the exact corruption the
+          // hash exists to catch in files from older versions).
+          const { spans: _s, spansHash: _h, ...rest } = c;
+          return {
+            ...rest,
+            lines,
+            edited: true,
+            ...(nextSpans.length > 0 ? { spans: nextSpans, spansHash: hashLines(lines) } : {}),
+          };
+        }),
       }
     ),
   };

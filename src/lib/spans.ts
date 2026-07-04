@@ -14,6 +14,13 @@ export const STYLE_ORDER: readonly SpanStyleKey[] = ["emphasis", "strong", "unde
 
 const STYLE_RANK = new Map(STYLE_ORDER.map((k, i) => [k, i]));
 
+/** Whether this version understands the span's style key. Unknown keys come
+ *  from newer app versions and are preserved-but-inert (never rendered,
+ *  edited, or exported here). */
+export function isKnownSpanStyle(style: string): boolean {
+  return STYLE_RANK.has(style as SpanStyleKey);
+}
+
 // ── Integrity hash ──────────────────────────────────────────────────────────
 
 /** FNV-1a 32-bit over the joined lines, as hex. Written to CaptionBlock

@@ -2,9 +2,10 @@ import { useRef, useEffect } from "preact/hooks";
 import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, activeProfile } from "../../store/app";
-import { editingIndex, editText } from "./CaptionPanel";
+import { editingIndex, editLines, editSpans } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
 import { StyledLines } from "../StyledLines";
+import { renormalizeLines } from "../../lib/spans";
 import { findCaptionAt } from "../../lib/pipeline";
 import { getClipView } from "../../lib/clipView";
 import { frameMidpoint } from "../../lib/playhead";
@@ -31,12 +32,13 @@ export function VideoPanel() {
   const activeCaption = media ? findCaptionAt(media.captions, currentTime) : null;
 
   const isEditingActive = activeCaption !== null && editingIndex.value === activeCaption.index;
-  const overlayLines = isEditingActive
-    ? editText.value.split("\n").filter((l) => l.trim())
-    : activeCaption?.lines ?? null;
-  // Styling only applies to committed captions; the live-edit preview is
-  // plain text (the editor buffer carries no spans yet).
-  const overlaySpans = isEditingActive ? undefined : activeCaption?.spans;
+  // Live preview runs the editor buffer through the SAME normalization a
+  // commit applies (trim, drop blank lines, remap spans) — the overlay shows
+  // exactly what committing right now would produce, and span line indices
+  // can never desync from a filtered lines array.
+  const liveEdit = isEditingActive ? renormalizeLines(editLines.value, editSpans.value) : null;
+  const overlayLines = liveEdit ? liveEdit.lines : activeCaption?.lines ?? null;
+  const overlaySpans = liveEdit ? liveEdit.spans : activeCaption?.spans;
 
   // On a clip switch, restore that clip's remembered playhead (0 if none) and
   // stop playback. This owns playbackTime across media changes; the caption
