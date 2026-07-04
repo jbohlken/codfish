@@ -2,6 +2,7 @@ import { signal } from "@preact/signals";
 import { useState } from "preact/hooks";
 import { XIcon as X, CheckCircleIcon as CheckCircle } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
+import { useEscapeToClose } from "../lib/useEscapeToClose";
 
 export const bugReportOpen = signal(false);
 
@@ -15,8 +16,6 @@ export function BugReportModal() {
   const [result, setResult] = useState<{ url: string; number: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  if (!bugReportOpen.value) return null;
-
   const close = () => {
     bugReportOpen.value = false;
     setKind("bug");
@@ -25,6 +24,11 @@ export function BugReportModal() {
     setResult(null);
     setError(null);
   };
+
+  // Hook must run unconditionally (before the open check).
+  useEscapeToClose(bugReportOpen.value, close);
+
+  if (!bugReportOpen.value) return null;
 
   const submit = async () => {
     if (!title.trim()) return;

@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
+import { useEscapeToClose } from "../lib/useEscapeToClose";
 
 export const aboutOpen = signal(false);
 
@@ -24,6 +25,8 @@ export function AboutModal() {
       })
       .catch(() => {});
   }, [aboutOpen.value]);
+
+  useEscapeToClose(aboutOpen.value, () => { aboutOpen.value = false; });
 
   if (!aboutOpen.value) return null;
 

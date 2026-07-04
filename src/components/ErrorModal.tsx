@@ -1,5 +1,6 @@
 import { signal } from "@preact/signals";
 import { XIcon as X } from "@phosphor-icons/react";
+import { useEscapeToClose } from "../lib/useEscapeToClose";
 
 export const errorModal = signal<string | null>(null);
 
@@ -9,6 +10,7 @@ export function showError(message: string) {
 
 export function ErrorModal() {
   const message = errorModal.value;
+  useEscapeToClose(!!message, () => { errorModal.value = null; });
   if (!message) return null;
 
   const handleCopy = () => {

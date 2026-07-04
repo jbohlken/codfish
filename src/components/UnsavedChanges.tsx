@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { useEscapeToClose } from "../lib/useEscapeToClose";
 
 interface UnsavedChangesState {
   message: string;
@@ -41,6 +42,8 @@ export function confirmUnsavedChanges(
 
 export function UnsavedChanges() {
   const state = unsavedChanges.value;
+  // Escape = Cancel, the safe choice (never discards or saves implicitly).
+  useEscapeToClose(!!state, () => state?.onCancel());
   if (!state) return null;
 
   return (
