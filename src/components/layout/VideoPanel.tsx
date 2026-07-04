@@ -35,7 +35,10 @@ export function VideoPanel() {
   // Live preview runs the editor buffer through the SAME normalization a
   // commit applies (trim, drop blank lines, remap spans) — the overlay shows
   // exactly what committing right now would produce, and span line indices
-  // can never desync from a filtered lines array.
+  // can never desync from a filtered lines array. Known tradeoff: preserved
+  // spans (unknown keys / value-bearing) are outside the edit session, so
+  // their styling vanishes from the overlay while editing and reappears on
+  // commit when the text was left unchanged.
   const liveEdit = isEditingActive ? renormalizeLines(editLines.value, editSpans.value) : null;
   const overlayLines = liveEdit ? liveEdit.lines : activeCaption?.lines ?? null;
   const overlaySpans = liveEdit ? liveEdit.spans : activeCaption?.spans;

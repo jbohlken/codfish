@@ -3,7 +3,7 @@ import {
   escapeRegExp,
   captionMatches,
   replaceInText,
-  replaceInLines,
+  replaceInStyledLines,
   matchRanges,
 } from "../captionSearch";
 
@@ -61,18 +61,95 @@ describe("replaceInText", () => {
   });
 });
 
-describe("replaceInLines", () => {
+const em = (line: number, start: number, end: number) =>
+  ({ line, start, end, style: "emphasis" as const });
+
+describe("replaceInStyledLines", () => {
   it("preserves line breaks and replaces within each line", () => {
-    expect(replaceInLines(["the fox", "fox again"], "fox", "cat", false)).toEqual(["the cat", "cat again"]);
+    expect(replaceInStyledLines(["the fox", "fox again"], [], "fox", "cat", false).lines)
+      .toEqual(["the cat", "cat again"]);
   });
   it("trims each line and drops blanks (matches handleEdit)", () => {
-    expect(replaceInLines(["the  fox  ", "ok"], "fox", "", false)).toEqual(["the", "ok"]);
+    expect(replaceInStyledLines(["the  fox  ", "ok"], [], "fox", "", false).lines)
+      .toEqual(["the", "ok"]);
   });
   it("keeps a single empty line rather than vanishing when emptied", () => {
-    expect(replaceInLines(["fox"], "fox", "", false)).toEqual([""]);
+    expect(replaceInStyledLines(["fox"], [], "fox", "", false).lines).toEqual([""]);
   });
-  it("leaves lines untouched when nothing matches", () => {
-    expect(replaceInLines(["hello", "world"], "zzz", "x", false)).toEqual(["hello", "world"]);
+  it("leaves lines and spans untouched when nothing matches", () => {
+    expect(replaceInStyledLines(["hello", "world"], [em(0, 0, 5)], "zzz", "x", false))
+      .toEqual({ lines: ["hello", "world"], spans: [em(0, 0, 5)] });
+  });
+
+  it("shifts spans after the replacement and keeps spans before it", () => {
+    // "the fox ran" — emphasis on "the" and on "ran"; replace fox → cats
+    const out = replaceInStyledLines(["the fox ran"], [em(0, 0, 3), em(0, 8, 11)], "fox", "cats", false);
+    expect(out.lines).toEqual(["the cats ran"]);
+    expect(out.spans).toEqual([em(0, 0, 3), em(0, 9, 12)]);
+  });
+
+  it("keeps the replacement styled when the match sits inside a styled run", () => {
+    // whole line emphasized; replacing a word inside keeps the run continuous
+    const out = replaceInStyledLines(["the fox ran"], [em(0, 0, 11)], "fox", "cats", false);
+    expect(out.lines).toEqual(["the cats ran"]);
+    expect(out.spans).toEqual([em(0, 0, 12)]);
+  });
+
+  it("clips a partially-overlapped span to its surviving text", () => {
+    // emphasis covers "the fo|"; the match "fox" eats its tail
+    const out = replaceInStyledLines(["the fox ran"], [em(0, 0, 6)], "fox", "cats", false);
+    expect(out.lines).toEqual(["the cats ran"]);
+    expect(out.spans).toEqual([em(0, 0, 4)]);
+  });
+
+  it("remaps spans through a cross-line replacement that merges the lines", () => {
+    // "brown fox" matches across the wrap; styling on "the" and "jumps" survives
+    const out = replaceInStyledLines(
+      ["the quick brown", "fox jumps"],
+      [em(0, 0, 3), em(1, 4, 9)],
+      "brown fox", "red cat", false,
+    );
+    expect(out.lines).toEqual(["the quick red cat jumps"]);
+    expect(out.spans).toEqual([em(0, 0, 3), em(0, 18, 23)]);
+  });
+
+  it("keeps the replacement styled when a fully-styled caption is replaced across the wrap", () => {
+    // The run is stored per line (the model can't span the break); bridging
+    // makes the cross-wrap match sit inside one continuous run, so the
+    // replacement inherits the styling.
+    const out = replaceInStyledLines(
+      ["the quick brown", "fox jumps"],
+      [em(0, 0, 15), em(1, 0, 9)],
+      "brown fox", "red cat", false,
+    );
+    expect(out.lines).toEqual(["the quick red cat jumps"]);
+    expect(out.spans).toEqual([em(0, 0, 23)]);
+  });
+
+  it("handles multiple matches in one caption with cumulative shifts", () => {
+    const out = replaceInStyledLines(["fox and fox"], [em(0, 4, 7)], "fox", "cat", false);
+    expect(out.lines).toEqual(["cat and cat"]);
+    expect(out.spans).toEqual([em(0, 4, 7)]);
+  });
+
+  it("identity matches never clip or delete overlapping spans", () => {
+    // Replacement equals the matched text: a true no-op must leave spans exact.
+    const partial = replaceInStyledLines(["hello world"], [em(0, 3, 8)], "world", "world", false);
+    expect(partial).toEqual({ lines: ["hello world"], spans: [em(0, 3, 8)] });
+    const inside = replaceInStyledLines(["hello world"], [em(0, 6, 9)], "world", "world", false);
+    expect(inside).toEqual({ lines: ["hello world"], spans: [em(0, 6, 9)] });
+  });
+
+  it("case-normalization only splices the matches that actually change", () => {
+    // Line 0 already reads "FOO" (identity match — span untouched); line 1
+    // genuinely changes.
+    const out = replaceInStyledLines(
+      ["FOO here", "foo there"],
+      [em(0, 0, 3)],
+      "foo", "FOO", false,
+    );
+    expect(out.lines).toEqual(["FOO here", "FOO there"]);
+    expect(out.spans).toEqual([em(0, 0, 3)]);
   });
 });
 
@@ -92,7 +169,8 @@ describe("edge cases — matcher statefulness & multi-line queries", () => {
   it("collapses the spanned lines when a multi-line query is replaced", () => {
     // Unreachable from the single-line search input, but pinned so the helper's
     // behaviour is explicit: replacing across the join merges the two lines.
-    expect(replaceInLines(["the fox", "brown"], "fox\nbrown", "cat", false)).toEqual(["the cat"]);
+    expect(replaceInStyledLines(["the fox", "brown"], [], "fox\nbrown", "cat", false).lines)
+      .toEqual(["the cat"]);
   });
 
   it("reports a multi-line-query match as one range spanning the break", () => {
@@ -114,7 +192,7 @@ describe("whitespace-flexible matching (across line wraps)", () => {
   });
 
   it("replacing a wrap-spanning phrase merges the two lines at that point", () => {
-    expect(replaceInLines(["the quick brown", "fox jumps"], "brown fox", "red cat", false))
+    expect(replaceInStyledLines(["the quick brown", "fox jumps"], [], "brown fox", "red cat", false).lines)
       .toEqual(["the quick red cat jumps"]);
   });
 

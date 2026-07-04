@@ -83,4 +83,10 @@ describe("StyledLines", () => {
   it("renders empty lines as empty wrappers", () => {
     expect(html(<StyledLines lines={[""]} />)).toBe("<span></span>");
   });
+
+  it("renders span values as data-value (future <c.class>-style keys)", () => {
+    const valued: StyleSpan = { line: 0, start: 0, end: 3, style: "emphasis", value: "x" };
+    expect(html(<StyledLines lines={["abc"]} spans={[valued]} />))
+      .toBe('<span><span data-style="emphasis" data-value="x">abc</span></span>');
+  });
 });

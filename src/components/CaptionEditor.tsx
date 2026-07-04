@@ -43,7 +43,10 @@ export function renderInitialHtml(lines: string[], spans: StyleSpan[]): string {
         .map((seg) => {
           let out = escapeHtml(seg.text);
           for (let j = seg.styles.length - 1; j >= 0; j--) {
-            const tag = TAGS[seg.styles[j]];
+            // The editor authors key-only styles; value-bearing keys are a
+            // renderer/exporter concern (and currently arrive only as
+            // unknown keys, which never reach the editor DOM).
+            const tag = TAGS[seg.styles[j].style];
             out = `<${tag}>${out}</${tag}>`;
           }
           return out;
@@ -229,6 +232,14 @@ export function CaptionEditor({ initialLines, initialSpans, onInput, onCommit, o
       } catch { /* engine without queryCommandState — states just stay off */ }
 
       if (sel.isCollapsed || sel.rangeCount === 0 || !el.contains(sel.focusNode)) {
+        setPopover(null);
+        return;
+      }
+      // A selection of only line break(s) has no styleable text — the model
+      // can't style the break, and a commit would evaporate any markup the
+      // engine wrapped around it. Don't offer the popover for it. (Spaces
+      // stay styleable: underlining a mid-line space is meaningful.)
+      if (sel.toString().replace(/\n/g, "").length === 0) {
         setPopover(null);
         return;
       }

@@ -1,6 +1,7 @@
 import { makePhrase, type Phrase } from "./types";
 import type { StyleSpan } from "../../types/project";
 import {
+  bridgeSpansAcrossJoins,
   collapseWhitespace,
   globalizeSpans,
   localizeSpans,
@@ -147,12 +148,69 @@ export function breakStyledTextIntoLines(
   const newLines = breakTextIntoLines(normalized, maxCharsPerLine, maxLines);
   if (spans.length === 0) return { lines: newLines, spans: [] };
 
+  // Bridge BEFORE collapse: the edge-touching test is defined on the
+  // original line structure, and bridging first lets a run styled to both
+  // sides of a join stay continuous across the new space.
+  const global = bridgeSpansAcrossJoins(lines, globalizeSpans(lines, spans));
   const mapped: GlobalSpan[] = [];
-  for (const g of globalizeSpans(lines, spans)) {
+  for (const g of global) {
     const r = mapRangeThroughCollapse(charMap, g.start, g.end);
     if (r) mapped.push({ ...g, start: r.start, end: r.end });
   }
   // breakIntoLines splits at word boundaries only, so newLines.join(" ")
   // reproduces `normalized` and collapsed offsets localize directly.
   return { lines: newLines, spans: normalizeSpans(newLines, localizeSpans(newLines, mapped)) };
+}
+
+/** Split styled caption text at a whitespace-token boundary (how split and
+ * merge address text), producing two independently re-flowed halves with
+ * their spans partitioned and re-projected. A span straddling the boundary
+ * clips into both halves. */
+export function splitStyledTextAtToken(
+  lines: string[],
+  spans: StyleSpan[],
+  splitIdx: number,
+  maxCharsPerLine = 42,
+  maxLines = 2,
+): {
+  a: { lines: string[]; spans: StyleSpan[] };
+  b: { lines: string[]; spans: StyleSpan[] };
+} {
+  const joined = lines.join(" ");
+  const { normalized, charMap } = collapseWhitespace(joined);
+  const tokens = normalized.length ? normalized.split(" ") : [];
+  const textA = tokens.slice(0, splitIdx).join(" ");
+  const textB = tokens.slice(splitIdx).join(" ");
+  const offsetB = textA.length + (textA.length && textB.length ? 1 : 0);
+
+  // Bridge BEFORE clipping, while the original line joins still exist —
+  // each half re-flows as a single line, so the bridge inside
+  // breakStyledTextIntoLines can never fire for them. Without this, a
+  // fully-styled two-line caption splits into per-original-line fragments.
+  const globals = bridgeSpansAcrossJoins(lines, globalizeSpans(lines, spans));
+
+  const clip = (from: number, to: number, base: number): StyleSpan[] => {
+    const out: StyleSpan[] = [];
+    for (const g of globals) {
+      const r = mapRangeThroughCollapse(charMap, g.start, g.end);
+      if (!r) continue;
+      const a = Math.max(r.start, from);
+      const b = Math.min(r.end, to);
+      if (a < b) {
+        out.push({
+          line: 0,
+          start: a - base,
+          end: b - base,
+          style: g.style,
+          ...(g.value !== undefined ? { value: g.value } : {}),
+        });
+      }
+    }
+    return out;
+  };
+
+  return {
+    a: breakStyledTextIntoLines([textA], clip(0, textA.length, 0), maxCharsPerLine, maxLines),
+    b: breakStyledTextIntoLines([textB], clip(offsetB, normalized.length, offsetB), maxCharsPerLine, maxLines),
+  };
 }

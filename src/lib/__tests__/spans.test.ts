@@ -127,7 +127,7 @@ describe("segmentLine", () => {
 
   it("splits at span boundaries", () => {
     expect(segmentLine("hello world", [em(0, 0, 5)])).toEqual([
-      { text: "hello", styles: ["emphasis"], match: false },
+      { text: "hello", styles: [{ style: "emphasis" }], match: false },
       { text: " world", styles: [], match: false },
     ]);
   });
@@ -135,17 +135,33 @@ describe("segmentLine", () => {
   it("reports overlap segments with styles in STYLE_ORDER", () => {
     const segs = segmentLine("abcdef", [st(0, 0, 4), em(0, 2, 6)]);
     expect(segs).toEqual([
-      { text: "ab", styles: ["strong"], match: false },
-      { text: "cd", styles: ["emphasis", "strong"], match: false },
-      { text: "ef", styles: ["emphasis"], match: false },
+      { text: "ab", styles: [{ style: "strong" }], match: false },
+      { text: "cd", styles: [{ style: "emphasis" }, { style: "strong" }], match: false },
+      { text: "ef", styles: [{ style: "emphasis" }], match: false },
     ]);
     expect(STYLE_ORDER.indexOf("emphasis")).toBeLessThan(STYLE_ORDER.indexOf("strong"));
+  });
+
+  it("carries span values into segment styles (future <c.class>-style keys)", () => {
+    const segs = segmentLine("abcd", [{ ...em(0, 0, 4), value: "x" }]);
+    expect(segs).toEqual([
+      { text: "abcd", styles: [{ style: "emphasis", value: "x" }], match: false },
+    ]);
+    // Distinct values on the same key each contribute, ordered by value.
+    const overlap = segmentLine("ab", [
+      { ...em(0, 0, 2), value: "b" },
+      { ...em(0, 0, 2), value: "a" },
+    ]);
+    expect(overlap[0].styles).toEqual([
+      { style: "emphasis", value: "a" },
+      { style: "emphasis", value: "b" },
+    ]);
   });
 
   it("composes decorations without entering the style model", () => {
     const segs = segmentLine("hello world", [em(0, 0, 5)], [{ start: 6, end: 11 }]);
     expect(segs).toEqual([
-      { text: "hello", styles: ["emphasis"], match: false },
+      { text: "hello", styles: [{ style: "emphasis" }], match: false },
       { text: " ", styles: [], match: false },
       { text: "world", styles: [], match: true },
     ]);
@@ -154,7 +170,7 @@ describe("segmentLine", () => {
   it("clamps out-of-range span offsets", () => {
     expect(segmentLine("abc", [em(0, 1, 99)])).toEqual([
       { text: "a", styles: [], match: false },
-      { text: "bc", styles: ["emphasis"], match: false },
+      { text: "bc", styles: [{ style: "emphasis" }], match: false },
     ]);
   });
 });

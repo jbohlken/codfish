@@ -24,11 +24,16 @@ export interface StyledLinesProps {
   separator?: "br" | null;
 }
 
-function wrapStyles(seg: { text: string; styles: readonly string[] }): ComponentChildren {
+function wrapStyles(seg: { text: string; styles: readonly { style: string; value?: string }[] }): ComponentChildren {
   let node: ComponentChildren = seg.text;
   // Wrap inner-to-outer so the outermost element is first in STYLE_ORDER.
   for (let j = seg.styles.length - 1; j >= 0; j--) {
-    node = <span data-style={seg.styles[j]}>{node}</span>;
+    const s = seg.styles[j];
+    node = (
+      <span data-style={s.style} {...(s.value !== undefined ? { "data-value": s.value } : {})}>
+        {node}
+      </span>
+    );
   }
   return node;
 }

@@ -20,7 +20,7 @@ import {
   warningsByCaption,
   isBatchRunning,
 } from "../../store/app";
-import { snapToFrame, breakTextIntoLines } from "../../lib/pipeline";
+import { snapToFrame, breakStyledTextIntoLines, splitStyledTextAtToken } from "../../lib/pipeline";
 import { getClipView } from "../../lib/clipView";
 import { framesBetween } from "../../lib/time";
 import { formatDisplayTime } from "../../lib/time";
@@ -28,7 +28,7 @@ import { computeAddCaption } from "../../lib/playhead";
 import { PlusIcon as Plus, PencilSimpleIcon as PencilSimple, ScissorsIcon as Scissors, ArrowsMergeIcon as ArrowsMerge, XIcon as X, InfoIcon as Info, WarningIcon as Warning, MagnifyingGlassIcon as MagnifyingGlass, SwapIcon as Swap, TextAaIcon as TextAa, RepeatOnceIcon as RepeatOnce, RepeatIcon as Repeat, DotsThreeVerticalIcon as DotsThreeVertical, SquareIcon as Square, CheckSquareIcon as CheckSquare } from "@phosphor-icons/react";
 import type { ValidationWarning } from "../../lib/pipeline/types";
 import { CaptionNumber } from "../CaptionNumber";
-import { captionMatches, replaceInLines, matchRanges } from "../../lib/captionSearch";
+import { captionMatches, replaceInStyledLines, matchRanges } from "../../lib/captionSearch";
 import { StyledLines } from "../StyledLines";
 import { contextMenu, openContextMenu, closeContextMenu } from "../ContextMenu";
 import { TOOLTIP_DIVIDER } from "../Tooltip";
@@ -36,7 +36,7 @@ import { generateSelectedMedia } from "../../lib/actions";
 import { isUpdating } from "../UpdateNotice";
 import type { CaptionBlock, StyleSpan, TranscriptionModel } from "../../types/project";
 import { CaptionEditor } from "../CaptionEditor";
-import { renormalizeLines, spansEqual, hashLines, isKnownSpanStyle } from "../../lib/spans";
+import { renormalizeLines, normalizeSpans, spansEqual, hashLines, isKnownSpanStyle, isEditorEditableSpan } from "../../lib/spans";
 import { isTextEntryTarget } from "../../lib/keyboard";
 
 // ── Panel-local state ─────────────────────────────────────────────────────────
@@ -47,12 +47,15 @@ const editLines = signal<string[]>([]);
 const editSpans = signal<StyleSpan[]>([]);
 export { editingIndex, editLines, editSpans };
 
-/** Open the caption editor pre-filled with this block's text and styling. */
+/** Open the caption editor pre-filled with this block's text and styling.
+ *  Only editor-editable spans are seeded — value-bearing or unknown-key
+ *  spans can't survive the render→serialize round-trip, so they stay out of
+ *  the session and handleEdit preserves them while the text is unchanged. */
 export function openEditor(block: CaptionBlock) {
   isPlaying.value = false;
   editingIndex.value = block.index;
   editLines.value = [...block.lines];
-  editSpans.value = block.spans ? block.spans.map((s) => ({ ...s })) : [];
+  editSpans.value = (block.spans ?? []).filter(isEditorEditableSpan).map((s) => ({ ...s }));
 }
 
 // ── Search / find-and-replace ───────────────────────────────────────────────
@@ -140,18 +143,44 @@ function replaceInSelected() {
   const at = matchingIndices().indexOf(idx);
   if (at < 0) return; // selection isn't a match
   const cs = caseSensitive.peek();
-  const block = media.captions.find((c) => c.index === idx)!;
-  const newLines = replaceInLines(block.lines, q, replaceText.peek(), cs);
-  pushHistory({
-    ...proj,
-    media: proj.media.map((m) =>
-      m.id !== media.id ? m : {
-        ...m,
-        captions: m.captions.map((c) => (c.index !== idx ? c : { ...c, lines: newLines, edited: true })),
-      }),
-  }, replaceLabel(q, 1));
+  const target = media.captions.find((c) => c.index === idx)!;
+  const updated = replacedCaption(target, q, replaceText.peek(), cs);
+  if (updated !== target) {
+    pushHistory({
+      ...proj,
+      media: proj.media.map((m) =>
+        m.id !== media.id ? m : {
+          ...m,
+          captions: m.captions.map((c) => (c.index !== idx ? c : updated)),
+        }),
+    }, replaceLabel(q, 1));
+  }
   const after = matchingIndices();
   if (after.length) selectMatch(after[Math.min(at, after.length - 1)]);
+}
+
+/** One caption after a find/replace pass: text replaced, known styling
+ *  (values included) remapped through every match, spansHash rewritten.
+ *  Unknown-key spans from newer versions drop only when the text actually
+ *  changed — an identity replacement (e.g. case-insensitive query matching
+ *  the replacement itself) leaves them intact. */
+function replacedCaption(c: CaptionBlock, query: string, replacement: string, cs: boolean): CaptionBlock {
+  const known = (c.spans ?? []).filter((s) => isKnownSpanStyle(s.style));
+  const unknown = (c.spans ?? []).filter((s) => !isKnownSpanStyle(s.style));
+  const { lines, spans } = replaceInStyledLines(c.lines, known, query, replacement, cs);
+  const sameText =
+    lines.length === c.lines.length && lines.every((l, i) => l === c.lines[i]);
+  // True no-op (every match was an identity replacement): same reference out,
+  // so callers can skip the history entry and the edited flip entirely.
+  if (sameText && spansEqual(spans, known)) return c;
+  const nextSpans = [...spans, ...(sameText ? unknown : [])];
+  const { spans: _s, spansHash: _h, ...rest } = c;
+  return {
+    ...rest,
+    lines,
+    edited: true,
+    ...(nextSpans.length > 0 ? { spans: nextSpans, spansHash: hashLines(lines) } : {}),
+  };
 }
 
 // Replace every occurrence across all matching captions in one undoable step.
@@ -165,8 +194,9 @@ function replaceInAll() {
   let count = 0;
   const captions = media.captions.map((c) => {
     if (!captionMatches(c.lines.join("\n"), q, cs)) return c;
-    count++;
-    return { ...c, lines: replaceInLines(c.lines, q, repl, cs), edited: true };
+    const updated = replacedCaption(c, q, repl, cs);
+    if (updated !== c) count++; // identity replacements don't count as changes
+    return updated;
   });
   if (!count) return;
   pushHistory({
@@ -272,11 +302,29 @@ function splitCaption(index: number) {
   }
   splitIdx = Math.max(1, Math.min(textTokens.length - 1, splitIdx));
 
-  const linesA = breakTextIntoLines(textTokens.slice(0, splitIdx).join(" "), maxCharsPerLine, maxLines);
-  const linesB = breakTextIntoLines(textTokens.slice(splitIdx).join(" "), maxCharsPerLine, maxLines);
+  // Re-flow each half with its slice of the styling overlay re-projected.
+  // Unknown-key spans (from newer app versions) drop here: the text of both
+  // halves is rewritten, so their offsets would be stale — hash semantics.
+  const knownSpans = (block.spans ?? []).filter((s) => isKnownSpanStyle(s.style));
+  const halves = splitStyledTextAtToken(block.lines, knownSpans, splitIdx, maxCharsPerLine, maxLines);
 
-  const blockA: CaptionBlock = { ...block, end: splitPoint, lines: linesA };
-  const blockB: CaptionBlock = { ...block, start: splitPoint, lines: linesB };
+  const { spans: _s, spansHash: _h, ...rest } = block;
+  const blockA: CaptionBlock = {
+    ...rest,
+    end: splitPoint,
+    lines: halves.a.lines,
+    ...(halves.a.spans.length > 0
+      ? { spans: halves.a.spans, spansHash: hashLines(halves.a.lines) }
+      : {}),
+  };
+  const blockB: CaptionBlock = {
+    ...rest,
+    start: splitPoint,
+    lines: halves.b.lines,
+    ...(halves.b.spans.length > 0
+      ? { spans: halves.b.spans, spansHash: hashLines(halves.b.lines) }
+      : {}),
+  };
 
   const newCaptions = [
     ...media.captions.filter((c) => c.index < index),
@@ -315,10 +363,20 @@ function mergeCaption(index: number) {
   // Text is the source of truth — concatenate the displayed lines and wrap.
   // rawWords would produce the same result via a more fragile route and can
   // silently drop or pull in neighbor words when midpoints disagree.
-  const combined = [...blockA.lines, ...blockB.lines].join(" ").trim();
-  const mergedLines = combined.length > 0
-    ? breakTextIntoLines(combined, maxCharsPerLine, maxLines)
-    : [""];
+  // Styling rides along: B's spans shift onto the combined line list, then
+  // reflow re-projects everything (the bridge heuristic keeps a run styled
+  // to both sides of a join continuous across the new space). Unknown-key
+  // spans drop — the merged text is a rewrite.
+  const combinedLines = [...blockA.lines, ...blockB.lines];
+  const combinedSpans = [
+    ...(blockA.spans ?? []).filter((s) => isKnownSpanStyle(s.style)),
+    ...(blockB.spans ?? [])
+      .filter((s) => isKnownSpanStyle(s.style))
+      .map((s) => ({ ...s, line: s.line + blockA.lines.length })),
+  ];
+  const { lines: reflowedLines, spans: mergedSpans } =
+    breakStyledTextIntoLines(combinedLines, combinedSpans, maxCharsPerLine, maxLines);
+  const mergedLines = reflowedLines.join("").trim().length > 0 ? reflowedLines : [""];
 
   const eitherEdited = blockA.edited || blockB.edited;
   const merged: CaptionBlock = {
@@ -328,6 +386,9 @@ function mergeCaption(index: number) {
     lines: mergedLines,
     speaker,
     ...(eitherEdited ? { edited: true } : {}),
+    ...(mergedSpans.length > 0
+      ? { spans: mergedSpans, spansHash: hashLines(mergedLines) }
+      : {}),
   };
 
   const newCaptions = [
@@ -1099,24 +1160,30 @@ function handleEdit(index: number, rawLines: string[], rawSpans: StyleSpan[]) {
   // styling. Skip pushing a history entry so Undo operates on the prior real
   // change instead of this no-op. Pending adds never hit this path — an
   // unchanged pending add means empty text, which is handled above.
-  // The editor can only round-trip KNOWN style keys, so the comparison — and
-  // the survival of unknown-key spans (preserved from newer app versions by
-  // the load sanitizer) — must use the known projection: an open+close of a
-  // caption carrying unknown spans is a true no-op, not a rewrite.
+  // The editor can only round-trip plain known-key spans, so the comparison
+  // — and the survival of everything else (unknown keys from newer versions,
+  // value-bearing spans) — uses the editable projection: an open+close of a
+  // caption carrying such spans is a true no-op, not a rewrite.
   const existing = media.captions.find((c) => c.index === index);
-  const existingKnown = (existing?.spans ?? []).filter((s) => isKnownSpanStyle(s.style));
-  const existingUnknown = (existing?.spans ?? []).filter((s) => !isKnownSpanStyle(s.style));
+  const existingEditable = (existing?.spans ?? []).filter(isEditorEditableSpan);
+  const existingPreserved = (existing?.spans ?? []).filter((s) => !isEditorEditableSpan(s));
   const sameText =
     existing &&
     existing.lines.length === lines.length &&
     existing.lines.every((l, i) => l === lines[i]);
-  if (!isPendingAdd && sameText && spansEqual(spans, existingKnown)) {
+  if (!isPendingAdd && sameText && spansEqual(spans, existingEditable)) {
     return;
   }
-  // Unknown spans stay valid only while the text they index is unchanged;
+  // Preserved spans stay valid only while the text they index is unchanged;
   // a text rewrite makes their offsets stale, so they drop with the rest.
-  const keptUnknown = sameText ? existingUnknown : [];
-  const nextSpans = [...spans, ...keptUnknown];
+  // Stored order matches the sanitizer's construction — canonical known part
+  // first (value-bearing knowns fold in via normalize), unknown keys after —
+  // so the next load and the next open+close both see identity.
+  const preservedValued = existingPreserved.filter((s) => isKnownSpanStyle(s.style));
+  const preservedUnknown = existingPreserved.filter((s) => !isKnownSpanStyle(s.style));
+  const nextSpans = sameText
+    ? [...normalizeSpans(lines, [...spans, ...preservedValued]), ...preservedUnknown]
+    : spans;
 
   const newProject = {
     ...proj,

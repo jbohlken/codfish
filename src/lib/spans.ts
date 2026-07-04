@@ -21,6 +21,16 @@ export function isKnownSpanStyle(style: string): boolean {
   return STYLE_RANK.has(style as SpanStyleKey);
 }
 
+/** Whether the caption EDITOR can round-trip this span. The editor authors
+ *  plain known-key styles only — value-bearing spans (future <c.class>-type
+ *  data) would lose their value through render→serialize, so they are
+ *  preserved outside the edit session exactly like unknown keys: kept while
+ *  the text is unchanged, dropped when it's rewritten. Split/merge/replace
+ *  DO remap value-bearing known spans (values survive those pipelines). */
+export function isEditorEditableSpan(s: StyleSpan): boolean {
+  return isKnownSpanStyle(s.style) && s.value === undefined;
+}
+
 // ── Integrity hash ──────────────────────────────────────────────────────────
 
 /** FNV-1a 32-bit over the joined lines, as hex. Written to CaptionBlock
@@ -122,10 +132,18 @@ export function spansEqual(a: readonly StyleSpan[], b: readonly StyleSpan[]): bo
 
 // ── Segmentation (shared by renderers and the export emitter) ───────────────
 
+/** One active style over a segment. `value` parameterizes value-bearing
+ *  keys (e.g. a future "class" key rendering VTT <c.{{value}}> tags) — it
+ *  must survive the sweep so renderers and the export emitter can honor it. */
+export interface SegmentStyle {
+  style: SpanStyleKey;
+  value?: string;
+}
+
 export interface LineSegment {
   text: string;
-  /** Active styles over this segment, in STYLE_ORDER. */
-  styles: SpanStyleKey[];
+  /** Active styles over this segment, ordered by STYLE_ORDER (then value). */
+  styles: SegmentStyle[];
   /** True when a decoration range (e.g. a search match) covers this segment. */
   match: boolean;
 }
@@ -138,7 +156,7 @@ export interface LineSegment {
  */
 export function segmentLine(
   text: string,
-  spans: readonly Pick<StyleSpan, "start" | "end" | "style">[],
+  spans: readonly Pick<StyleSpan, "start" | "end" | "style" | "value">[],
   decorations: readonly { start: number; end: number }[] = [],
 ): LineSegment[] {
   if (text.length === 0) return [];
@@ -157,9 +175,19 @@ export function segmentLine(
     const a = sorted[i];
     const b = sorted[i + 1];
     if (a >= b) continue;
-    const styles = STYLE_ORDER.filter((key) =>
-      spans.some((s) => s.style === key && s.start <= a && s.end >= b)
-    );
+    const styles: SegmentStyle[] = [];
+    for (const key of STYLE_ORDER) {
+      const covering = spans
+        .filter((s) => s.style === key && s.start <= a && s.end >= b)
+        .map((s) => s.value)
+        // Same-key covers dedupe by value (overlapping same-style same-value
+        // spans are one style; distinct values each contribute).
+        .filter((v, idx, arr) => arr.indexOf(v) === idx)
+        .sort((x, y) => (x ?? "") < (y ?? "") ? -1 : (x ?? "") > (y ?? "") ? 1 : 0);
+      for (const value of covering) {
+        styles.push({ style: key, ...(value !== undefined ? { value } : {}) });
+      }
+    }
     const match = decorations.some((d) => d.start <= a && d.end >= b);
     out.push({ text: text.slice(a, b), styles, match });
   }
@@ -230,6 +258,65 @@ export function localizeSpans(lines: string[], globalSpans: readonly GlobalSpan[
   return out;
 }
 
+/**
+ * Bridge heuristic for reflow joins. The per-line span model can't style the
+ * separator between lines, so joining two fully-styled lines would leave the
+ * new space unstyled (a one-space gap in underline; `<u>a</u> <u>b</u>` in
+ * exports). When a same-style, same-value pair sits edge-to-edge across a
+ * join — the first ending exactly at its line's end, the second starting at
+ * position 0 of the next line — the human intent is a continuous run, so the
+ * pair merges across the separator. Chains across any number of fully-styled
+ * lines. Operates on joined-space spans; `lines` provides the boundaries.
+ *
+ * Deliberately does NOT chain across an empty line (two separators in a
+ * row): a blank line reads as intentional separation, not a wrapped run.
+ * Blank lines only occur in hand-authored .cod files — every in-app commit
+ * path drops them.
+ */
+export function bridgeSpansAcrossJoins(
+  lines: string[],
+  spans: readonly GlobalSpan[],
+): GlobalSpan[] {
+  // Joined-space offset of each line's end (the position of a separator).
+  const lineEnds = new Set<number>();
+  let acc = 0;
+  for (let i = 0; i < lines.length - 1; i++) {
+    acc += lines[i].length;
+    lineEnds.add(acc);
+    acc += 1;
+  }
+
+  // Group per exact (style, value) key — valueless and value:"" are distinct
+  // — then scan each group start-ordered. Robust to unnormalized input:
+  // overlapping/adjacent same-key spans merge here too (normalizeSpans would
+  // do it downstream anyway), so an interposed span can never break a chain.
+  const groups = new Map<string, GlobalSpan[]>();
+  for (const s of spans) {
+    const key = JSON.stringify([s.style, s.value ?? null]);
+    const group = groups.get(key);
+    if (group) group.push(s);
+    else groups.set(key, [s]);
+  }
+
+  const out: GlobalSpan[] = [];
+  for (const group of groups.values()) {
+    const sorted = [...group].sort((a, b) => a.start - b.start || a.end - b.end);
+    let cur = { ...sorted[0] };
+    for (let i = 1; i < sorted.length; i++) {
+      const s = sorted[i];
+      const bridgesJoin = s.start === cur.end + 1 && lineEnds.has(cur.end);
+      if (s.start <= cur.end || bridgesJoin) {
+        cur.end = Math.max(cur.end, s.end);
+      } else {
+        out.push(cur);
+        cur = { ...s };
+      }
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
 // ── Splice remapping (find/replace) ─────────────────────────────────────────
 
 export interface Splice {
@@ -292,7 +379,7 @@ export function remapSpansThroughSplices(
 
 /**
  * The line normalization every text commit applies (mirrors handleEdit and
- * replaceInLines): trim each line — shifting that line's span offsets left by
+ * replaceInStyledLines): trim each line — shifting that line's span offsets left by
  * the removed leading whitespace — and drop blank lines, remapping span line
  * indices onto the kept lines. Returns canonical spans. `lines` may come back
  * empty; callers decide what an empty caption means (delete vs keep [""]).

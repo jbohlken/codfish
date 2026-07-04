@@ -5,6 +5,16 @@
 // never interpreted as a regex) and case-insensitive unless caseSensitive is set —
 // except whitespace in the query is flexible, so a phrase matches across a wrap.
 
+import type { StyleSpan } from "../types/project";
+import {
+  bridgeSpansAcrossJoins,
+  globalizeSpans,
+  localizeSpans,
+  remapSpansThroughSplices,
+  renormalizeLines,
+  type Splice,
+} from "./spans";
+
 /** Escape a user string so it is matched literally inside a RegExp. */
 export function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -37,14 +47,56 @@ export function replaceInText(text: string, query: string, replacement: string, 
   return text.replace(re, literal);
 }
 
-/** Replace within a caption's joined lines, returning rebuilt lines (each trimmed,
- *  blank lines dropped) — the same normalization handleEdit applies. A caption
- *  emptied by the replacement keeps a single empty line rather than vanishing, so
- *  a bulk replace never deletes captions or shifts indices. */
-export function replaceInLines(lines: string[], query: string, replacement: string, caseSensitive: boolean): string[] {
-  const replaced = replaceInText(lines.join("\n"), query, replacement, caseSensitive);
-  const out = replaced.split("\n").map((l) => l.trim()).filter(Boolean);
-  return out.length ? out : [""];
+/** Replace within a caption's joined lines, remapping its styling overlay
+ *  through every replacement: spans before a match are untouched, after it
+ *  shifted, partially overlapping clipped to their surviving text; a span
+ *  covering the whole match keeps covering the replacement. Matches may
+ *  cross the line break (the matcher is whitespace-flexible), collapsing
+ *  lines — the joined-space splice plus re-localization handles that.
+ *  Output is renormalized (lines trimmed, blanks dropped, spans canonical) —
+ *  the same normalization handleEdit applies. A caption emptied by the
+ *  replacement keeps a single empty line rather than vanishing, so a bulk
+ *  replace never deletes captions or shifts indices. */
+export function replaceInStyledLines(
+  lines: string[],
+  spans: readonly StyleSpan[],
+  query: string,
+  replacement: string,
+  caseSensitive: boolean,
+): { lines: string[]; spans: StyleSpan[] } {
+  const re = buildMatcher(query, caseSensitive);
+  if (!re) return { lines: [...lines], spans: [...spans] };
+
+  const joined = lines.join("\n");
+  const splices: Splice[] = [];
+  for (const m of joined.matchAll(re)) {
+    if (m[0].length === 0) continue;
+    // Identity match: the matched text already equals the replacement (e.g.
+    // case-normalizing "foo"→"FOO" over occurrences that are already "FOO").
+    // Nothing changes, so no splice — the remap's clipping rules would
+    // otherwise damage spans overlapping a byte-identical "edit".
+    if (m[0] === replacement) continue;
+    const i = m.index ?? 0;
+    splices.push({ start: i, end: i + m[0].length, insertLen: replacement.length });
+  }
+  // Note: early return skips renormalization by design — with no actual
+  // replacement this is a true no-op, not a rewrite.
+  if (splices.length === 0) return { lines: [...lines], spans: [...spans] };
+
+  const newJoined = replaceInText(joined, query, replacement, caseSensitive);
+  // Bridge edge-touching same-style spans across line joins before splicing:
+  // a fully-styled caption stores one span per line, so a cross-wrap match
+  // would otherwise be covered by two clipped spans and the replacement
+  // would lose its styling. Bridged spans re-split per line on localize, so
+  // same-line replacements are unaffected.
+  const bridged = bridgeSpansAcrossJoins(lines, globalizeSpans(lines, [...spans]));
+  const remapped = remapSpansThroughSplices(bridged, splices);
+  const newLines = newJoined.split("\n");
+  const { lines: outLines, spans: outSpans } = renormalizeLines(
+    newLines,
+    localizeSpans(newLines, remapped),
+  );
+  return { lines: outLines.length ? outLines : [""], spans: outSpans };
 }
 
 /** Match ranges of `query` in `text` (joined-lines offsets), consumed as
