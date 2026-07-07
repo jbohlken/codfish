@@ -33,7 +33,7 @@ import {
 } from "../../store/app";
 import { isUpdating } from "../UpdateNotice";
 import { editingIndex, openEditor, commitActiveEdit } from "./CaptionPanel";
-import { isTextEntryTarget } from "../../lib/keyboard";
+import { isTextEntryTarget, isAppModalOpen } from "../../lib/keyboard";
 import type { CaptionBlock } from "../../types/project";
 import { StyledLines } from "../StyledLines";
 import { snapToFrame } from "../../lib/pipeline";
@@ -595,6 +595,7 @@ export function Timeline() {
     const handler = (e: KeyboardEvent) => {
       if (isTextEntryTarget(e.target)) return;
       if (isUpdating() || isBatchRunning.value) return;
+      if (isAppModalOpen()) return;
       if (!selectedMedia.value) return;
       if (editingIndex.value !== null) return;
       if (e.key === "g" && !e.ctrlKey && !e.metaKey) {

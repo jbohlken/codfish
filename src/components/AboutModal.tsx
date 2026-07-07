@@ -5,6 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { useEscapeToClose } from "../lib/useEscapeToClose";
+import { useBackdropClose } from "../lib/useBackdropClose";
 
 export const aboutOpen = signal(false);
 
@@ -27,13 +28,14 @@ export function AboutModal() {
   }, [aboutOpen.value]);
 
   useEscapeToClose(aboutOpen.value, () => { aboutOpen.value = false; });
+  const backdropProps = useBackdropClose(() => { aboutOpen.value = false; });
 
   if (!aboutOpen.value) return null;
 
   const close = () => { aboutOpen.value = false; };
 
   return (
-    <div class="modal-backdrop" onClick={close}>
+    <div class="modal-backdrop" {...backdropProps}>
       <div class="modal-panel" onClick={(e) => e.stopPropagation()}>
         <div class="modal-panel-header">
           <span class="modal-panel-title">About Codfish</span>

@@ -237,21 +237,31 @@ a:hover {
   overflow-x: hidden;
 }
 
-.scrollable::-webkit-scrollbar {
+/* App-wide default scrollbar — unscoped so every scrollable element (and any
+   future one) gets it without opting in. Surfaces that want a different look
+   override with a scoped rule (the timeline's dark horizontal bar does). */
+::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
-.scrollable::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.scrollable::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
   border-radius: 3px;
 }
 
-.scrollable::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-tertiary);
+}
+
+/* Styling any scrollbar part makes Chromium paint the two-axis corner as a
+   default white block unless this is set. */
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ── Panel Base ────────────────────────────────────────────────────────── */

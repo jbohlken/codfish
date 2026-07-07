@@ -37,7 +37,7 @@ import { isUpdating } from "../UpdateNotice";
 import type { CaptionBlock, StyleSpan, TranscriptionModel } from "../../types/project";
 import { CaptionEditor } from "../CaptionEditor";
 import { renormalizeLines, normalizeSpans, spansEqual, hashLines, isKnownSpanStyle, isEditorEditableSpan } from "../../lib/spans";
-import { isTextEntryTarget } from "../../lib/keyboard";
+import { isTextEntryTarget, isAppModalOpen } from "../../lib/keyboard";
 
 // ── Panel-local state ─────────────────────────────────────────────────────────
 const editingIndex = signal<number | null>(null);
@@ -472,6 +472,7 @@ export function CaptionPanel() {
       // document-level listeners; gate explicitly so single-letter shortcuts
       // can't reach through the blocker.
       if (isBatchRunning.value || isUpdating()) return;
+      if (isAppModalOpen()) return;
       if (!selectedMedia.value) return;
       if (editingIndex.value !== null) return;
 

@@ -1,6 +1,7 @@
 import { signal } from "@preact/signals";
 import { XIcon as X } from "@phosphor-icons/react";
 import { useEscapeToClose } from "../lib/useEscapeToClose";
+import { useBackdropClose } from "../lib/useBackdropClose";
 
 export const errorModal = signal<string | null>(null);
 
@@ -11,6 +12,9 @@ export function showError(message: string) {
 export function ErrorModal() {
   const message = errorModal.value;
   useEscapeToClose(!!message, () => { errorModal.value = null; });
+  // Drag-safe: selecting the error text to copy it and releasing past the
+  // panel edge must not dismiss the (unrecoverable) message.
+  const backdropProps = useBackdropClose(() => { errorModal.value = null; });
   if (!message) return null;
 
   const handleCopy = () => {
@@ -18,7 +22,7 @@ export function ErrorModal() {
   };
 
   return (
-    <div class="error-modal-backdrop" onClick={() => { errorModal.value = null; }}>
+    <div class="error-modal-backdrop" {...backdropProps}>
       <div class="error-modal" onClick={(e) => e.stopPropagation()}>
         <div class="error-modal-header">
           <span class="error-modal-title">Error</span>

@@ -3,6 +3,7 @@ import { useState } from "preact/hooks";
 import { XIcon as X, CheckCircleIcon as CheckCircle } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEscapeToClose } from "../lib/useEscapeToClose";
+import { useBackdropClose } from "../lib/useBackdropClose";
 
 export const bugReportOpen = signal(false);
 
@@ -25,8 +26,11 @@ export function BugReportModal() {
     setError(null);
   };
 
-  // Hook must run unconditionally (before the open check).
+  // Hooks must run unconditionally (before the open check). Drag-safe
+  // backdrop: releasing a text selection from the description over the
+  // backdrop must not wipe the typed report.
   useEscapeToClose(bugReportOpen.value, close);
+  const backdropProps = useBackdropClose(close);
 
   if (!bugReportOpen.value) return null;
 
@@ -49,7 +53,7 @@ export function BugReportModal() {
   const isBug = kind === "bug";
 
   return (
-    <div class="modal-backdrop" onClick={close}>
+    <div class="modal-backdrop" {...backdropProps}>
       <div class="modal-panel" onClick={(e) => e.stopPropagation()}>
         <div class="modal-panel-header">
           <span class="modal-panel-title">Submit Feedback</span>

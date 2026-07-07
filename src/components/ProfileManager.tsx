@@ -22,6 +22,8 @@ import {
 } from "../lib/profiles";
 import { showError } from "./ErrorModal";
 import { confirmUnsavedChanges } from "./UnsavedChanges";
+import { useEscapeToClose } from "../lib/useEscapeToClose";
+import { useBackdropClose } from "../lib/useBackdropClose";
 import { validateNameChars } from "../lib/naming";
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -203,6 +205,16 @@ export function ProfileManager() {
     setEditor(null);
   };
 
+  // Escape routes through the same guarded close as the X button; while the
+  // unsaved-changes dialog is up, the escape stack gives IT the key, not us.
+  useEscapeToClose(isOpen, close);
+  // The delete-confirm popover owns Escape while showing (registers above
+  // the manager's entry) — otherwise ESC mid-confirmation closes the whole
+  // manager. isOpen-gated so a programmatic close can't leave a phantom
+  // entry behind.
+  useEscapeToClose(isOpen && confirmingDelete, () => setConfirmingDelete(false));
+  const backdropProps = useBackdropClose(close);
+
   const startNew = async () => {
     if (!(await guardLeave())) return;
     const defaultProfile = allProfiles.find((p) => p.id === "default") ?? allProfiles[0];
@@ -374,7 +386,7 @@ export function ProfileManager() {
   }
 
   return (
-    <div class="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div class="modal-backdrop" {...backdropProps}>
       <div class="fmt-manager prof-manager">
         {/* Header */}
         <div class="fmt-manager-header">

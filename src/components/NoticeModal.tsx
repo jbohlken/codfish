@@ -1,6 +1,7 @@
 import { signal } from "@preact/signals";
 import { XIcon as X, CheckSquareIcon as CheckSquare, SquareIcon as Square } from "@phosphor-icons/react";
 import { useEscapeToClose } from "../lib/useEscapeToClose";
+import { useBackdropClose } from "../lib/useBackdropClose";
 
 interface NoticeState {
   title: string;
@@ -29,19 +30,24 @@ export function showNotice(
   noticeModal.value = { title, message, ...opts };
 }
 
-function dismiss() {
+/** Close the notice through the normal path (onDismiss fires, honoring the
+ *  "every close path" contract). Exported for the exit gate: informational
+ *  popups step aside when the user quits. No-op when nothing is showing. */
+export function dismissNotice() {
   const state = noticeModal.value;
   noticeModal.value = null;
   state?.onDismiss?.(noticeChecked.value);
 }
+const dismiss = dismissNotice;
 
 export function NoticeModal() {
   const state = noticeModal.value;
   useEscapeToClose(!!state, dismiss);
+  const backdropProps = useBackdropClose(dismiss);
   if (!state) return null;
 
   return (
-    <div class="notice-modal-backdrop" onClick={dismiss}>
+    <div class="notice-modal-backdrop" {...backdropProps}>
       <div class="notice-modal" onClick={(e) => e.stopPropagation()}>
         <div class="notice-modal-header">
           <span class="notice-modal-title">{state.title}</span>

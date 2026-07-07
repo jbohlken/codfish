@@ -9,3 +9,14 @@ export function isTextEntryTarget(target: EventTarget | null): boolean {
     (target instanceof HTMLElement && target.isContentEditable)
   );
 }
+
+/** True while any modal is open (every modal renders one of these
+ *  backdrops). Document-level shortcut handlers must go inert then — a bare
+ *  Ctrl+Z / zoom / trim with focus on a modal button would otherwise mutate
+ *  the project invisibly behind the modal. DOM check rather than a
+ *  hand-enumerated signal list so new modals are covered automatically; for
+ *  reactive contexts (the menu-enable effect) use openPopupCount from
+ *  useEscapeToClose instead. */
+export function isAppModalOpen(): boolean {
+  return document.querySelector(".modal-backdrop, .notice-modal-backdrop, .error-modal-backdrop") !== null;
+}

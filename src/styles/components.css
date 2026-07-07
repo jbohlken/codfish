@@ -818,23 +818,6 @@ body.rows-dragging * {
   min-width: 0;
 }
 
-.context-menu::-webkit-scrollbar {
-  width: 6px;
-}
-
-.context-menu::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.context-menu::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border-radius: 3px;
-}
-
-.context-menu::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
-}
-
 .context-menu-item {
   display: flex;
   align-items: center;
@@ -1033,11 +1016,21 @@ body.rows-dragging * {
 }
 
 .video-container {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
   padding: var(--space-4);
+}
+
+/* Caption-preview-style shortcut — sits in the panel's padding gutter above
+   the letterboxed video. */
+.video-style-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
 }
 
 .video-wrapper {
@@ -1109,28 +1102,148 @@ body.rows-dragging * {
   pointer-events: none;
 }
 
-.caption-overlay-line {
-  display: inline-block;
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
-  font-size: clamp(12px, 2.5vw, 18px);
-  font-weight: var(--font-weight-medium);
-  padding: 2px 8px;
-  border-radius: 3px;
-  line-height: 1.4;
-}
+/* .caption-overlay-line LOOK rules live in src/lib/captionPreviewCss.ts
+   (DEFAULT_CAPTION_PREVIEW_CSS), injected as an adopted stylesheet so the
+   user's custom caption-preview CSS replaces them wholesale — the editor
+   shows exactly the sheet that styles the overlay, with no hidden baseline
+   underneath. Only the container LAYOUT above stays here. */
 
 /* ── Inline caption styling (StyledLines) ─────────────────────────────────
    Semantic span keys → display. The export side maps the same keys through
    each format's styles: block; keep these in STYLE_ORDER (lib/spans).
-   Surface baselines are untouched (no visual change for unstyled captions);
-   strong gets its contrast from a heavier weight instead — 800 inside the
-   overlay, whose 500 baseline would make plain bold read weak. */
+   Surface baselines are untouched (no visual change for unstyled captions).
+   The overlay's heavier strong (800 against its 500 baseline) moved to
+   DEFAULT_CAPTION_PREVIEW_CSS with the rest of the overlay look. */
 [data-style="emphasis"]  { font-style: italic; }
 [data-style="strong"]    { font-weight: bold; }
 [data-style="underline"] { text-decoration: underline; }
 
-.caption-overlay-line [data-style="strong"] { font-weight: 800; }
+/* ── Caption preview style editor ─────────────────────────────────────────
+   Same chrome and footprint as the Format/Profile managers (960×600,
+   fmt-manager-header). Editor left, 16:9 sample preview right; live-apply
+   drives the sample and the real overlay through the same adopted sheet. */
+.caption-style-panel {
+  width: 960px;
+  max-width: calc(100vw - 48px);
+  height: 600px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+.caption-style-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+.caption-style-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.caption-style-side {
+  width: 360px;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.caption-style-editor {
+  flex: 1;
+  min-height: 120px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  tab-size: 2;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+}
+
+.caption-style-editor:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Bounded so a paste full of typos can't push the layout past the footer. */
+.caption-style-messages {
+  flex: none;
+  max-height: 110px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.caption-style-error {
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+  margin: 0;
+}
+
+.caption-style-warning {
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+  margin: 0;
+}
+
+/* Sample caption on a dark 16:9 video-shaped box. The overlay inside is
+   pinned with !important + contain:paint so user position/fixed experiments
+   show on the REAL overlay but can't escape this box. */
+.caption-style-preview {
+  position: relative;
+  flex: none;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: linear-gradient(160deg, #2c3844 0%, #141a20 70%);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  contain: paint;
+}
+
+.caption-style-preview .caption-overlay {
+  position: absolute !important;
+  top: auto !important;
+  bottom: 14px !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+
+.caption-style-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.caption-style-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.caption-style-footer-spacer {
+  flex: 1;
+}
 
 /* ── Search drawer (shared: project + caption panels) ─────────────────────── */
 
@@ -2228,23 +2341,6 @@ body.rows-dragging * {
   padding: var(--space-2) 0;
 }
 
-.profile-editor-body::-webkit-scrollbar {
-  width: 6px;
-}
-
-.profile-editor-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.profile-editor-body::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border-radius: 3px;
-}
-
-.profile-editor-body::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
-}
-
 .profile-editor-footer {
   display: flex;
   align-items: center;
@@ -2589,23 +2685,6 @@ body.rows-dragging * {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-}
-
-.modal-panel-body::-webkit-scrollbar {
-  width: 6px;
-}
-
-.modal-panel-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.modal-panel-body::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border-radius: 3px;
-}
-
-.modal-panel-body::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
 }
 
 .about-section {
@@ -3493,23 +3572,6 @@ body.rows-dragging * {
   caret-color: var(--color-text-primary);
 }
 
-.fb-editor-textarea::-webkit-scrollbar {
-  width: 6px;
-}
-
-.fb-editor-textarea::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.fb-editor-textarea::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border-radius: 3px;
-}
-
-.fb-editor-textarea::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-tertiary);
-}
-
 .fb-hl-valid {
   color: var(--color-success);
 }
@@ -3549,19 +3611,6 @@ body.rows-dragging * {
   overflow-y: auto;
   min-width: 260px;
   padding: var(--space-1) 0;
-}
-
-.fb-autocomplete::-webkit-scrollbar {
-  width: 6px;
-}
-
-.fb-autocomplete::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.fb-autocomplete::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border-radius: 3px;
 }
 
 .fb-autocomplete-item {

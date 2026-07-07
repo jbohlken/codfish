@@ -1,8 +1,10 @@
 import { useRef, useEffect } from "preact/hooks";
-import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
+import { MusicNoteIcon as MusicNote, PaletteIcon as Palette } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, activeProfile } from "../../store/app";
 import { editingIndex, editLines, editSpans } from "./CaptionPanel";
+import { captionStyleOpen } from "../CaptionStyleModal";
+import { isAppModalOpen } from "../../lib/keyboard";
 import { AUDIO_EXTS } from "../../lib/project";
 import { StyledLines } from "../StyledLines";
 import { renormalizeLines } from "../../lib/spans";
@@ -168,6 +170,19 @@ export function VideoPanel() {
         </div>
       ) : (
         <div class="video-container">
+          <button
+            class="btn btn-ghost btn-icon video-style-btn"
+            data-tooltip="Caption preview style"
+            onClick={() => {
+              // The button can hold keyboard focus while a modal is up
+              // (modals don't trap focus) — same gate as the shortcut
+              // handlers so Enter/Space can't open the editor underneath.
+              if (isAppModalOpen()) return;
+              captionStyleOpen.value = true;
+            }}
+          >
+            <Palette size={14} />
+          </button>
           <div class="video-wrapper">
             <video
               ref={videoRef}

@@ -1,20 +1,29 @@
 import { signal } from "@preact/signals";
+import { useEffect } from "preact/hooks";
 import { XIcon as X, FolderOpenIcon as FolderOpen } from "@phosphor-icons/react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { project, pushHistory } from "../store/app";
 import { isDropFrameRate } from "../lib/time";
 import { useEscapeToClose } from "../lib/useEscapeToClose";
+import { useBackdropClose } from "../lib/useBackdropClose";
 
 export const mediaSettingsId = signal<string | null>(null);
 
 export function MediaSettings() {
   const id = mediaSettingsId.value;
   const proj = project.value;
-  useEscapeToClose(!!id, () => { mediaSettingsId.value = null; });
-  if (!id || !proj) return null;
-
-  const item = proj.media.find((m) => m.id === id);
-  if (!item) return null;
+  const item = id && proj ? proj.media.find((m) => m.id === id) : undefined;
+  // Keyed on the RESOLVED item, not the id: the id outlives the project
+  // (closing the project with this dialog open never cleared it), and a
+  // phantom stack entry would swallow the next Escape and keep undo/redo
+  // grayed in the next project.
+  useEscapeToClose(!!item, () => { mediaSettingsId.value = null; });
+  const backdropProps = useBackdropClose(() => { mediaSettingsId.value = null; });
+  // Drop a stale id once it stops resolving so it can't ghost-reopen.
+  useEffect(() => {
+    if (id && !item) mediaSettingsId.value = null;
+  }, [id, item]);
+  if (!id || !proj || !item) return null;
 
   const canDropFrame = item.fps != null && isDropFrameRate(item.fps);
 
@@ -30,7 +39,7 @@ export function MediaSettings() {
   };
 
   return (
-    <div class="modal-backdrop" onClick={close}>
+    <div class="modal-backdrop" {...backdropProps}>
       <div class="media-settings" onClick={(e) => e.stopPropagation()}>
         <div class="media-settings-header">
           <span class="media-settings-title">{item.name}</span>

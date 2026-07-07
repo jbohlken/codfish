@@ -54,6 +54,8 @@ import { showError } from "./ErrorModal";
 import { ToggleRow } from "./ProfileManager";
 import { showTextTooltip, hideTooltip } from "./Tooltip";
 import { confirmUnsavedChanges } from "./UnsavedChanges";
+import { useEscapeToClose } from "../lib/useEscapeToClose";
+import { useBackdropClose } from "../lib/useBackdropClose";
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -259,6 +261,20 @@ export function FormatManager() {
     setSelectedId(null);
     setEditor(null);
   };
+
+  // Escape routes through the same guarded close as the X button; while the
+  // unsaved-changes dialog is up, the escape stack gives IT the key, not us.
+  useEscapeToClose(isOpen, close);
+  // Sub-popups own Escape while open: their entries register when they open,
+  // landing ABOVE the manager's on the stack — the stack's document-level
+  // capture listener preempts element-level Escape handlers, so this is the
+  // only way "Escape dismisses just the popup" can work.
+  // isOpen-gated: a programmatic close (requestCloseFormatManager from a
+  // menu switch) doesn't reset these states, and a popup entry that outlives
+  // the manager would swallow Escapes and keep undo/redo grayed.
+  useEscapeToClose(isOpen && !!autocomplete, () => setAutocomplete(null));
+  useEscapeToClose(isOpen && confirmingDelete, () => setConfirmingDelete(false));
+  const backdropProps = useBackdropClose(close);
 
   const handleListClick = async (fmt: ExportFormat) => {
     if (fmt.id === selectedId) return;
@@ -476,11 +492,8 @@ export function FormatManager() {
 
   const handleTemplateKeyDown = (e: KeyboardEvent) => {
     if (!autocomplete) return;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      setAutocomplete(null);
-      return;
-    }
+    // Escape is handled by the popup's useEscapeToClose entry — the escape
+    // stack's document capture listener preempts this handler entirely.
     const n = autocomplete.matches.length;
     if (n === 0) return; // grammar-only popup: nothing to navigate or insert
     if (e.key === "ArrowDown") {
@@ -524,7 +537,7 @@ export function FormatManager() {
   );
 
   return (
-    <div class="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div class="modal-backdrop" {...backdropProps}>
       <div class="fmt-manager">
         {/* Header */}
         <div class="fmt-manager-header">

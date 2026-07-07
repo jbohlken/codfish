@@ -16,7 +16,8 @@ import { ProjectPanel } from "./components/layout/ProjectPanel";
 import { VideoPanel } from "./components/layout/VideoPanel";
 import { TransportBar } from "./components/layout/TransportBar";
 import { CaptionPanel, commitActiveEdit, cancelActiveEdit, editingIndex } from "./components/layout/CaptionPanel";
-import { isTextEntryTarget } from "./lib/keyboard";
+import { isTextEntryTarget, isAppModalOpen } from "./lib/keyboard";
+import { openPopupCount } from "./lib/useEscapeToClose";
 import { Timeline } from "./components/layout/Timeline";
 import { isPlaying, undo, redo, canUndo, canRedo, undoDescription, redoDescription, isDirty, profiles, sidecarStatus, daemonStatus, project, projectPath, resetHistory, isBatchRunning, flushOpenClipView } from "./store/app";
 import { saveCurrentProject, saveCurrentProjectAs, newProjectGuarded, openProjectGuarded, closeProjectGuarded, revertProject, openRecent, resetSelectionForLoad } from "./lib/project";
@@ -25,9 +26,9 @@ import { recentProjects, loadRecent, clearRecent } from "./lib/recent";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { confirmUnsavedChanges } from "./components/UnsavedChanges";
-import { ErrorModal } from "./components/ErrorModal";
-import { NoticeModal } from "./components/NoticeModal";
+import { confirmUnsavedChanges, unsavedChanges } from "./components/UnsavedChanges";
+import { ErrorModal, errorModal } from "./components/ErrorModal";
+import { NoticeModal, noticeModal, dismissNotice } from "./components/NoticeModal";
 import { ProfileManager, openProfileManager, requestCloseProfileManager } from "./components/ProfileManager";
 import { ContextMenu } from "./components/ContextMenu";
 import { MediaSettings } from "./components/MediaSettings";
@@ -40,6 +41,7 @@ import { daemonError } from "./store/app";
 import { useUpdateChecker, sidecarUpdate, UpdateBlocker, isUpdating } from "./components/UpdateNotice";
 import { BatchBlocker } from "./components/BatchBlocker";
 import { BugReportModal, bugReportOpen } from "./components/BugReportModal";
+import { CaptionStyleModal, captionStyleOpen, requestCloseCaptionStyle } from "./components/CaptionStyleModal";
 import { useAutosaveRecovery, loadRecovery, clearRecovery } from "./lib/recovery";
 import type { CodProject } from "./types/project";
 import { sanitizeCaptionSpans } from "./lib/spans";
@@ -110,6 +112,17 @@ export function App() {
     // tearing down (window destroy or app exit), false to abort.
     const runExitGate = async (): Promise<boolean> => {
       if (isUpdating()) return false;
+      // Informational popups step aside: the user asked to leave, and an
+      // error/notice sits ABOVE the save question (z-2100 vs 1000) — left
+      // up, it would hand Escape to an invisible dialog.
+      errorModal.value = null;
+      dismissNotice();
+      // Open editors first, most-specific typed work leading: each walks its
+      // own unsaved guard (clean editors close silently), and a Cancel
+      // anywhere aborts the quit.
+      if (!(await requestCloseProfileManager())) return false;
+      if (!(await requestCloseFormatManager())) return false;
+      if (!(await requestCloseCaptionStyle())) return false;
       if (isDirty.value) {
         const choice = await confirmUnsavedChanges();
         if (choice === "cancel") return false;
@@ -294,13 +307,17 @@ export function App() {
     void sidecarUpdate.value?.downloading;
     const set = (id: string, enabled: boolean) =>
       invoke("set_menu_enabled", { id, enabled }).catch(() => {});
-    set("new_project", ready);
-    set("open_project", ready);
-    set("open_recent", ready);
+    // Guarded project actions gray while an error/notice modal is up — the
+    // unsaved dialog they can raise would mount beneath it (see the
+    // dispatcher's errorOrNoticeUp note). Plain saves stay available.
+    const errNoticeUp = errorModal.value !== null || noticeModal.value !== null;
+    set("new_project", ready && !errNoticeUp);
+    set("open_project", ready && !errNoticeUp);
+    set("open_recent", ready && !errNoticeUp);
     set("save_project_as", ready && hasProject);
     set("save_project", ready && hasProject && dirty);
-    set("revert_project", ready && hasProject && !!projectPath.value && dirty);
-    set("close_project", ready && hasProject);
+    set("revert_project", ready && hasProject && !!projectPath.value && dirty && !errNoticeUp);
+    set("close_project", ready && hasProject && !errNoticeUp);
     // While a caption edit is open, the native Undo/Redo items are disabled:
     // on macOS their CmdOrCtrl+Z accelerators fire BEFORE the webview sees the
     // key, and the menu dispatcher's cancelActiveEdit would discard the
@@ -309,18 +326,28 @@ export function App() {
     // native editing undo instead. (Windows already routes through the JS
     // fallback below, which the contenteditable guard skips.)
     const editingCaption = editingIndex.value !== null;
-    const undoEnabled = ready && hasProject && canUndo.value && !editingCaption;
-    const redoEnabled = ready && hasProject && canRedo.value && !editingCaption;
+    // Also disabled while any popup is open (openPopupCount tracks the
+    // escape stack): Edit ▸ Undo — or Cmd+Z hitting the native accelerator
+    // on macOS — would otherwise mutate project history invisibly behind
+    // the modal. The dispatcher has a matching belt-and-suspenders gate.
+    const popupOpen = openPopupCount.value > 0;
+    const undoEnabled = ready && hasProject && canUndo.value && !editingCaption && !popupOpen;
+    const redoEnabled = ready && hasProject && canRedo.value && !editingCaption && !popupOpen;
     set("undo", undoEnabled);
     set("redo", redoEnabled);
     // Non-project-gated items: enabled whenever the app is fully ready so
     // the menu is uniformly inert during pre-splash and splash (Exit is the
-    // only live escape hatch).
-    set("export_formats", ready);
-    set("profiles", ready);
+    // only live escape hatch). Modal-opening items also gray while a
+    // dialog-class popup (unsaved-changes / error / notice) is pending —
+    // see the dispatcher's dialogPending note.
+    const dialogUp =
+      unsavedChanges.value !== null || errorModal.value !== null || noticeModal.value !== null;
+    set("export_formats", ready && !dialogUp);
+    set("profiles", ready && !dialogUp);
     set("theme", ready);
-    set("about", ready);
-    set("feedback", ready);
+    set("caption_style", ready && !dialogUp);
+    set("about", ready && !dialogUp);
+    set("feedback", ready && !dialogUp);
     const setText = (id: string, text: string) =>
       invoke("set_menu_text", { id, text }).catch(() => {});
     setText("undo", undoDescription.value ? `Undo ${undoDescription.value}` : "Undo");
@@ -357,26 +384,94 @@ export function App() {
         commitActiveEdit();
       }
       const hasProject = !!project.value;
+      // Dialog-class popups (unsaved-changes, error, notice) demand
+      // resolution and always render on top; opening a modal from the
+      // still-live native menu while one is pending would mount it
+      // VISUALLY BENEATH the dialog but ON TOP of the escape stack —
+      // Escape would then close something invisible. The modal-opening
+      // cases below no-op while one is up (their menu items are also
+      // grayed reactively). Editor→editor switching stays allowed: those
+      // route through each other's request-close guards.
+      const dialogPending = () =>
+        unsavedChanges.value !== null || errorModal.value !== null || noticeModal.value !== null;
+      // The guarded project actions can raise an unsaved-changes dialog. An
+      // error/notice modal sits ABOVE it (z-2100 vs 1000, deliberately), so
+      // raising one underneath would hand Escape to an invisible dialog —
+      // no-op these while an error/notice is up. A PENDING unsaved dialog is
+      // fine to run into: displacement resolves it as cancel by design.
+      const errorOrNoticeUp = () =>
+        errorModal.value !== null || noticeModal.value !== null;
       switch (e.payload) {
-        case "new_project": newProjectGuarded(); break;
-        case "open_project": openProjectGuarded(); break;
+        case "new_project": if (!errorOrNoticeUp()) newProjectGuarded(); break;
+        case "open_project": if (!errorOrNoticeUp()) openProjectGuarded(); break;
         case "save_project": if (hasProject && isDirty.value) saveCurrentProject(); break;
         case "save_project_as": if (hasProject) saveCurrentProjectAs(); break;
-        case "revert_project": if (hasProject && projectPath.value && isDirty.value) revertProject(); break;
-        case "close_project": if (hasProject) closeProjectGuarded(); break;
-        case "undo": if (hasProject) undo(); break;
-        case "redo": if (hasProject) redo(); break;
+        case "revert_project": if (hasProject && projectPath.value && isDirty.value && !errorOrNoticeUp()) revertProject(); break;
+        case "close_project": if (hasProject && !errorOrNoticeUp()) closeProjectGuarded(); break;
+        case "undo": if (hasProject && !isAppModalOpen()) undo(); break;
+        case "redo": if (hasProject && !isAppModalOpen()) redo(); break;
         case "clear_recent": clearRecent(); break;
-        case "export_formats": requestCloseProfileManager().then((ok) => { if (ok) openFormatManager(); }); break;
-        case "profiles": requestCloseFormatManager().then((ok) => { if (ok) openProfileManager(); }); break;
+        // The three editors (formats, profiles, caption style) are mutually
+        // exclusive: each open request first closes the others through their
+        // guards, so none can open invisibly under another's backdrop. The
+        // dismissal modals (About/feedback) are closed on success for the
+        // same reason — they render later in the tree and would sit on top.
+        case "export_formats":
+          if (dialogPending()) break;
+          requestCloseProfileManager()
+            .then((ok) => ok && requestCloseCaptionStyle())
+            .then((ok) => {
+              if (ok) {
+                bugReportOpen.value = false;
+                aboutOpen.value = false;
+                openFormatManager();
+              }
+            });
+          break;
+        case "profiles":
+          if (dialogPending()) break;
+          requestCloseFormatManager()
+            .then((ok) => ok && requestCloseCaptionStyle())
+            .then((ok) => {
+              if (ok) {
+                bugReportOpen.value = false;
+                aboutOpen.value = false;
+                openProfileManager();
+              }
+            });
+          break;
         // Re-assert the radio after each click: a same-mode re-click is a signal
         // no-op (sync effect won't fire), but the native item just toggled its own
         // check off — applyThemeMenuChecks puts the group back.
         case "theme_light": setThemeMode("light"); applyThemeMenuChecks(); break;
         case "theme_dark": setThemeMode("dark"); applyThemeMenuChecks(); break;
         case "theme_auto": setThemeMode("auto"); applyThemeMenuChecks(); break;
-        case "about": bugReportOpen.value = false; aboutOpen.value = true; break;
-        case "feedback": aboutOpen.value = false; bugReportOpen.value = true; break;
+        case "caption_style":
+          if (dialogPending()) break;
+          requestCloseProfileManager()
+            .then((ok) => ok && requestCloseFormatManager())
+            .then((ok) => {
+              // Other modals close only once the switch is actually happening
+              // — cancelling a manager's guard must leave everything as-was.
+              if (ok) {
+                bugReportOpen.value = false;
+                aboutOpen.value = false;
+                captionStyleOpen.value = true;
+              }
+            });
+          break;
+        case "about":
+          if (dialogPending()) break;
+          requestCloseCaptionStyle().then((ok) => {
+            if (ok) { bugReportOpen.value = false; aboutOpen.value = true; }
+          });
+          break;
+        case "feedback":
+          if (dialogPending()) break;
+          requestCloseCaptionStyle().then((ok) => {
+            if (ok) { aboutOpen.value = false; bugReportOpen.value = true; }
+          });
+          break;
       }
     });
     return () => { unlisten.then((f) => f()); };
@@ -390,6 +485,9 @@ export function App() {
       if (isUpdating() || isBatchRunning.value) return;
       const sidecarReady = sidecarStatus.value === "ready" || sidecarStatus.value === "update_available";
       if (!sidecarReady || daemonStatus.value !== "ready") return;
+      // Same error/notice gate as the guarded project menu actions — the
+      // unsaved dialog this can raise would mount beneath them (z-2100).
+      if (errorModal.value !== null || noticeModal.value !== null) return;
       openRecent(e.payload);
     });
     return () => { unlisten.then((f) => f()); };
@@ -425,6 +523,13 @@ export function App() {
       // Don't intercept shortcuts while editing text (inputs, textareas, and
       // the contenteditable caption editor)
       if (isTextEntryTarget(e.target)) return;
+
+      // Inert while any modal is up: a bare Ctrl+Z with focus on a modal
+      // button would otherwise undo PROJECT history invisibly behind it, and
+      // Space would toggle playback instead of pressing the focused button.
+      // Timeline and CaptionPanel's document-level handlers carry the same
+      // gate (zoom/trim/split/delete are just as invisible behind a modal).
+      if (isAppModalOpen()) return;
 
       if (e.code === "Space") {
         e.preventDefault();
@@ -484,13 +589,22 @@ export function App() {
         <Timeline />
         <ErrorModal />
         <NoticeModal />
+        {/* MediaSettings before the editors: it is always the FIRST-opened
+            popup in any reachable combination, so anything opened over it
+            must also paint over it. */}
+        <MediaSettings />
         <ProfileManager />
         <ContextMenu />
-        <MediaSettings />
         <FormatManager />
-        <UnsavedChanges />
+        <CaptionStyleModal />
         <AboutModal />
         <BugReportModal />
+        {/* UnsavedChanges must render AFTER every modal it can appear over —
+            not just the editors that call confirmUnsavedChanges themselves:
+            the exit gate and the guarded project actions can raise it while
+            About/Feedback are open. Sibling backdrops share z-index 1000, so
+            DOM order is paint order and the guard dialog has to be last. */}
+        <UnsavedChanges />
         <RecoveryPrompt />
         <Tooltip />
       </div>

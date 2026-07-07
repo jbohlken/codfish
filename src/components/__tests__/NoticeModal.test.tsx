@@ -35,13 +35,26 @@ describe("NoticeModal", () => {
     expect(container.querySelector(".notice-modal")).toBeNull();
   });
 
-  it("backdrop click dismisses the modal", () => {
+  it("backdrop press-and-click dismisses the modal", () => {
     showNotice("T", "B");
     const { container } = render(<NoticeModal />);
     const backdrop = container.querySelector(".notice-modal-backdrop") as HTMLElement;
     expect(backdrop).toBeTruthy();
+    fireEvent.mouseDown(backdrop);
     fireEvent.click(backdrop);
     expect(noticeModal.value).toBeNull();
+  });
+
+  it("a click whose press started INSIDE the panel does not dismiss (drag-safe backdrop)", () => {
+    showNotice("T", "B");
+    const { container } = render(<NoticeModal />);
+    const backdrop = container.querySelector(".notice-modal-backdrop") as HTMLElement;
+    const card = container.querySelector(".notice-modal") as HTMLElement;
+    // Text-selection drag: mousedown on the card, released over the backdrop
+    // — the click fires on the backdrop (common ancestor) but must not close.
+    fireEvent.mouseDown(card);
+    fireEvent.click(backdrop);
+    expect(noticeModal.value).not.toBeNull();
   });
 
   it("clicking the inner card does NOT dismiss the modal (stopPropagation)", () => {

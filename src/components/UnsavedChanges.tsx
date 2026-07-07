@@ -28,15 +28,28 @@ export function confirmUnsavedChanges(
   options: ConfirmOptions = {},
 ): Promise<"save" | "discard" | "cancel"> {
   return new Promise((resolve) => {
-    unsavedChanges.value = {
+    // Each handler clears the slot only if THIS dialog still owns it — a
+    // stale handler (held by a displaced dialog's render or listener) must
+    // never destroy a successor dialog's state, which would leave the
+    // successor's promise unresolvable.
+    const clear = () => {
+      if (unsavedChanges.value === state) unsavedChanges.value = null;
+    };
+    const state: UnsavedChangesState = {
       message,
       title: options.title ?? "Unsaved changes",
       hideDiscard: options.hideDiscard ?? false,
       confirmLabel: options.confirmLabel ?? "Save",
-      onSave:    () => { unsavedChanges.value = null; resolve("save"); },
-      onDiscard: () => { unsavedChanges.value = null; resolve("discard"); },
-      onCancel:  () => { unsavedChanges.value = null; resolve("cancel"); },
+      onSave:    () => { clear(); resolve("save"); },
+      onDiscard: () => { clear(); resolve("discard"); },
+      onCancel:  () => { clear(); resolve("cancel"); },
     };
+    // Single slot: a second caller (e.g. a native menu action while a guard
+    // is already up) displaces the pending dialog. Resolve the displaced
+    // promise as "cancel" so its caller's guard flow unwinds instead of
+    // awaiting forever.
+    unsavedChanges.value?.onCancel();
+    unsavedChanges.value = state;
   });
 }
 

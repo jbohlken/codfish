@@ -31,6 +31,7 @@ struct MenuItems {
     theme_auto: CheckMenuItem<Wry>,
     export_formats: MenuItem<Wry>,
     profiles: MenuItem<Wry>,
+    caption_style: MenuItem<Wry>,
     about: MenuItem<Wry>,
     feedback: MenuItem<Wry>,
     /// "Open Recent" submenu — its items are rebuilt whenever the recent
@@ -103,6 +104,7 @@ fn set_menu_enabled(items: State<MenuItems>, id: String, enabled: bool) -> Resul
         "redo" => &items.redo,
         "export_formats" => &items.export_formats,
         "profiles" => &items.profiles,
+        "caption_style" => &items.caption_style,
         "about" => &items.about,
         "feedback" => &items.feedback,
         other => return Err(format!("unknown menu id: {other}")),
@@ -1469,6 +1471,10 @@ pub fn run() {
                 .item(&theme_dark)
                 .item(&theme_auto)
                 .build()?;
+            let caption_style = MenuItemBuilder::new("Caption Preview Style…")
+                .id("menu_caption_style")
+                .enabled(false)
+                .build(handle)?;
 
             menu_builder = menu_builder.item(&file_menu);
 
@@ -1488,6 +1494,7 @@ pub fn run() {
                     .build()?;
                 let view_menu = SubmenuBuilder::new(handle, "View")
                     .item(&theme_submenu)
+                    .item(&caption_style)
                     .build()?;
                 // Note: deliberately omitting .close_window() so Close Project
                 // (File menu, Cmd+W) owns the Cmd+W binding — matches Adobe and
@@ -1518,6 +1525,7 @@ pub fn run() {
                     .build()?;
                 let view_menu = SubmenuBuilder::new(handle, "View")
                     .item(&theme_submenu)
+                    .item(&caption_style)
                     .build()?;
                 let help_menu = SubmenuBuilder::new(handle, "Help")
                     .item(&feedback_item)
@@ -1544,6 +1552,7 @@ pub fn run() {
                 theme_auto: theme_auto.clone(),
                 export_formats: export_formats.clone(),
                 profiles: profiles_item.clone(),
+                caption_style: caption_style.clone(),
                 about: about_item.clone(),
                 feedback: feedback_item.clone(),
                 recent_submenu: recent_submenu.clone(),
