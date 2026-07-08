@@ -1,6 +1,6 @@
 [package]
 name = "codfish"
-version = "0.6.9"
+version = "0.6.10"
 description = "Caption generation and editing for media producers"
 authors = ["Jared Bohlken"]
 edition = "2021"
@@ -29,6 +29,8 @@ futures-util = "0.3"
 chrono = "0.4"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+os_info = "3"
+url = "2"
 
 # Desktop-only: prevent a second Codfish launch from spawning a duplicate
 # process. A second `.cod` double-click instead forwards its argv to the

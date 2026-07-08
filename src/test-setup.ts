@@ -44,10 +44,6 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(async () => {}),
 }));
 
-vi.mock("@tauri-apps/plugin-updater", () => ({
-  check: vi.fn(async () => null),
-}));
-
 vi.mock("@tauri-apps/plugin-process", () => ({
   relaunch: vi.fn(async () => {}),
 }));

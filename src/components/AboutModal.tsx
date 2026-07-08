@@ -4,6 +4,8 @@ import { useEffect, useState } from "preact/hooks";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
+import { updateChannel, setUpdateChannel } from "../lib/updates";
+import { ToggleRow } from "./ProfileManager";
 
 export const aboutOpen = signal(false);
 
@@ -53,6 +55,19 @@ export function AboutModal() {
               <p class="about-desc">{sidecarVersion}</p>
             </section>
           )}
+
+          <section class="about-section">
+            <h3 class="about-section-title">Updates</h3>
+            <ToggleRow
+              wide
+              label="Beta updates"
+              desc={updateChannel.value === "beta"
+                ? "Turning this off keeps your current version until a stable release reaches it."
+                : "Get upcoming releases early. Betas may be less stable."}
+              checked={updateChannel.value === "beta"}
+              onChange={(v) => setUpdateChannel(v ? "beta" : "stable")}
+            />
+          </section>
 
           <section class="about-section">
             <h3 class="about-section-title">Diagnostics</h3>

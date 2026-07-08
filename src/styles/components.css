@@ -2282,6 +2282,18 @@ body.rows-dragging * {
   line-height: 1.4;
 }
 
+/* Wide variant (ToggleRow `wide`): label + description fill the row, the
+   control hugs the right edge — for hosts without the fixed label column. */
+.pe-row--wide .pe-label-wrap {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+.pe-row--wide .pe-controls {
+  flex: 0 0 auto;
+}
+
 .pe-advanced {
   border-top: 1px solid var(--color-border);
 }
@@ -2842,6 +2854,22 @@ body.rows-dragging * {
 .update-popover-link:hover {
   color: var(--color-accent);
   text-decoration: underline;
+}
+
+/* Shown instead of the Update button when a release exists but the running
+   OS is below its declared floor. */
+.update-popover-blocked {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.update-popover-note {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  text-align: right;
+  max-width: 140px;
 }
 
 .update-popover-progress {

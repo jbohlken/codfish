@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { updateChannel, isOsSupported, isBlockedUpdateDismissed, dismissBlockedUpdate, type AppUpdateMeta, type OsInfo } from "../lib/updates";
 import {
   sidecarStatus,
   isDirty,
@@ -31,6 +31,18 @@ interface AppUpdateState {
   version: string;
   installing: boolean;
   progress: number | null;
+  /** The channel this offer came from. Install uses THIS, not the live
+   *  preference — so opting out of beta while an offer is shown can't fire a
+   *  stable install that finds nothing. */
+  beta: boolean;
+  /** The release exists but the running OS is below its declared floor.
+   *  We surface it as a note rather than an Update button; install is
+   *  never reached. */
+  blocked?: boolean;
+  requiredOs?: string | null;
+  /** Display name of the running OS ("macOS" / "Windows") for the blocked
+   *  note — the floor is per-platform, so don't hardcode the label. */
+  osLabel?: string;
 }
 
 interface SidecarUpdateState {
@@ -45,6 +57,20 @@ interface SidecarUpdateState {
 export const appUpdate = signal<AppUpdateState | null>(null);
 export const sidecarUpdate = signal<SidecarUpdateState | null>(null);
 const popoverOpen = signal(false);
+
+// Monotonic token bumped whenever a check is (re)scheduled. A check involves
+// two awaits (check_app_update, then get_os_version) so two can be in flight
+// at once; each captures the token at entry and discards its result if a newer
+// schedule superseded it — otherwise a slow check for a just-abandoned channel
+// could resolve last and clobber the current offer (a persistent wrong-track
+// offer). This is what actually enforces the "no wrong-track window" invariant.
+let checkToken = 0;
+
+function osDisplayName(os: string): string {
+  if (os === "macos") return "macOS";
+  if (os === "windows") return "Windows";
+  return "your operating system";
+}
 
 /** Returns true if any update is available or in progress */
 export function hasUpdate(): boolean {
@@ -98,24 +124,55 @@ export async function gateForUpdate(kind: "app" | "engine"): Promise<boolean> {
   return true;
 }
 
+// Check the selected channel's endpoint and apply the OS-version gate: a
+// release whose declared floor exceeds this machine's OS is shown as a note,
+// never as an installable update. Sets appUpdate to null when up to date, so
+// switching channels clears a stale offer. Never clobbers an in-flight install.
+async function checkAppUpdate() {
+  if (appUpdate.value?.installing) return;
+  const token = checkToken;
+  try {
+    const beta = updateChannel.value === "beta";
+    const meta = await invoke<AppUpdateMeta | null>("check_app_update", { beta });
+    if (token !== checkToken) return; // superseded by a newer schedule (channel changed)
+    if (!meta) { appUpdate.value = null; return; }
+    const os = await invoke<OsInfo>("get_os_version");
+    if (token !== checkToken) return;
+    const supported = isOsSupported(os.version, meta.minimum_system_version);
+    if (!supported) {
+      // Below the floor: offer nothing installable. Show the note unless the
+      // user already dismissed it for THIS version.
+      appUpdate.value = isBlockedUpdateDismissed(meta.version)
+        ? null
+        : { version: meta.version, installing: false, progress: null, beta, blocked: true, requiredOs: meta.minimum_system_version, osLabel: osDisplayName(os.os) };
+      return;
+    }
+    appUpdate.value = { version: meta.version, installing: false, progress: null, beta };
+  } catch {}
+}
+
 /** Hook that sets up update checking — call once at app root */
 export function useUpdateChecker() {
-  // Check for app updates after 5s
+  // ONE pending-check timer, rescheduled by every trigger so they can never
+  // race. The launch check (5s startup-settle) and each channel toggle share
+  // it: flip the toggle partway through the 5s window and the launch timer is
+  // cancelled and replaced by the toggle's shorter debounce — never both fire.
+  // On a toggle we also drop any current offer immediately, so a just-
+  // abandoned channel can't leave a wrong-track offer clickable during the
+  // re-check. Rapid flips collapse to a single network call.
+  const checkTimer = useRef<number | undefined>(undefined);
+  const launched = useRef(false);
   useEffect(() => {
-    const timer = setTimeout(async () => {
-      try {
-        const available = await check();
-        if (available) {
-          appUpdate.value = {
-            version: available.version,
-            installing: false,
-            progress: null,
-          };
-        }
-      } catch {}
-    }, 5000);
-    return () => clearTimeout(timer);
-  }, []);
+    const isLaunch = !launched.current;
+    launched.current = true;
+    // Bump the token so any check already in flight for the previous channel
+    // discards its result instead of clobbering the offer we're about to set.
+    checkToken++;
+    if (!isLaunch && !appUpdate.value?.installing) appUpdate.value = null;
+    window.clearTimeout(checkTimer.current);
+    checkTimer.current = window.setTimeout(() => { void checkAppUpdate(); }, isLaunch ? 5000 : 600);
+    return () => window.clearTimeout(checkTimer.current);
+  }, [updateChannel.value]);
 
   // Watch for sidecar update_available status
   useEffect(() => {
@@ -164,42 +221,35 @@ export function useUpdateChecker() {
 
 const handleAppInstall = async () => {
   const state = appUpdate.value;
-  if (!state) return;
+  if (!state || state.blocked) return;
   if (!(await gateForUpdate("app"))) return;
   popoverOpen.value = false;
   appUpdate.value = { ...state, installing: true, progress: 0 };
 
+  // Use the channel the offer came from, not the live preference.
+  const beta = state.beta;
+  // Rust drives download+install (endpoint chosen by channel) and emits
+  // progress; percent is null when the manifest gives no content length.
+  const unlisten = await listen<{ downloaded: number; total: number | null }>(
+    "app-update://progress",
+    (e) => {
+      const { downloaded, total } = e.payload;
+      const percent = total && total > 0 ? Math.round((downloaded / total) * 100) : null;
+      const s = appUpdate.value;
+      if (s?.installing) appUpdate.value = { ...s, progress: percent };
+    },
+  );
+
   try {
-    const available = await check();
-    if (!available) {
-      // Rare: something flipped between the initial check and now.
-      appUpdate.value = null;
-      return;
-    }
-
-    let totalBytes = 0;
-    let downloadedBytes = 0;
-
-    await available.downloadAndInstall((event) => {
-      if (event.event === "Started" && event.data.contentLength) {
-        totalBytes = event.data.contentLength;
-      } else if (event.event === "Progress") {
-        downloadedBytes += event.data.chunkLength;
-        const percent = totalBytes > 0
-          ? Math.round((downloadedBytes / totalBytes) * 100)
-          : 0;
-        appUpdate.value = { ...state, installing: true, progress: percent };
-      } else if (event.event === "Finished") {
-        appUpdate.value = { ...state, installing: true, progress: 100 };
-      }
-    });
-
+    await invoke("install_app_update", { beta });
     await clearRecovery();
     await relaunch();
   } catch (e) {
     const msg = typeof e === "string" ? e : (e as any)?.message ?? String(e);
     appUpdate.value = { ...state, installing: false, progress: null };
     showError(`App update failed: ${msg}`);
+  } finally {
+    unlisten();
   }
 };
 
@@ -317,7 +367,21 @@ export function UpdatePopover() {
               }}
             >See what's new</a>
           </div>
-          <button class="btn btn-primary btn-sm" onClick={handleAppInstall}>Update</button>
+          {app.blocked ? (
+            <div class="update-popover-blocked">
+              <span class="update-popover-note">Requires {app.osLabel ?? "macOS"} {app.requiredOs}</span>
+              <button
+                class="btn btn-ghost btn-sm"
+                onClick={() => {
+                  dismissBlockedUpdate(app.version);
+                  appUpdate.value = null;
+                  popoverOpen.value = false;
+                }}
+              >Dismiss</button>
+            </div>
+          ) : (
+            <button class="btn btn-primary btn-sm" onClick={handleAppInstall}>Update</button>
+          )}
         </div>
       )}
       {sc && (
