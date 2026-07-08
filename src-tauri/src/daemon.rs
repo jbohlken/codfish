@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
@@ -42,6 +43,10 @@ pub struct SidecarDaemon {
     streaming: Streaming,
     status_rx: watch::Receiver<DaemonStatus>,
     child: Mutex<Child>,
+    /// Set by `shutdown()` before killing the child so the stdout reader can
+    /// tell an intentional stop (quit / sidecar update) from a real crash —
+    /// EOF on stdout looks identical either way.
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl SidecarDaemon {
@@ -83,6 +88,7 @@ impl SidecarDaemon {
         let (status_tx, status_rx) = watch::channel(DaemonStatus::Booting);
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let streaming: Streaming = Arc::new(Mutex::new(HashMap::new()));
+        let shutting_down = Arc::new(AtomicBool::new(false));
 
         // stdout reader — protocol channel. EOF on this stream is the
         // authoritative "child is gone" signal. We deliberately do NOT poll
@@ -95,6 +101,7 @@ impl SidecarDaemon {
             let streaming = streaming.clone();
             let status_tx = status_tx.clone();
             let app = app.clone();
+            let shutting_down = shutting_down.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 let reason: String = loop {
@@ -106,9 +113,17 @@ impl SidecarDaemon {
                         Err(e) => break format!("sidecar stdout read error: {e}"),
                     }
                 };
-                eprintln!("[daemon] {reason}");
-                crate::log(&app, &format!("daemon: CRASHED — {reason}"));
-                let _ = status_tx.send(DaemonStatus::Crashed { reason: reason.clone() });
+                if shutting_down.load(Ordering::SeqCst) {
+                    // Intentional stop (quit / sidecar update): stdout EOF is
+                    // expected, not a crash. Don't broadcast Crashed — that
+                    // would flash the crash blocker during quit — and log it
+                    // as the stop it is.
+                    crate::log(&app, &format!("daemon: stopped — {reason}"));
+                } else {
+                    eprintln!("[daemon] {reason}");
+                    crate::log(&app, &format!("daemon: CRASHED — {reason}"));
+                    let _ = status_tx.send(DaemonStatus::Crashed { reason: reason.clone() });
+                }
                 // Drain pending callers so they don't hang forever.
                 let mut p = pending.lock().await;
                 for (_, tx) in p.drain() {
@@ -138,6 +153,7 @@ impl SidecarDaemon {
             streaming,
             status_rx,
             child: Mutex::new(child),
+            shutting_down,
         });
 
         Ok(daemon)
@@ -146,6 +162,9 @@ impl SidecarDaemon {
     /// Synchronously kill the child and wait for it to fully exit. Used
     /// before sidecar updates so Windows releases its lock on the executable.
     pub async fn shutdown(&self) {
+        // Mark intentional BEFORE the kill so the stdout reader sees the flag
+        // when EOF arrives and doesn't report a crash.
+        self.shutting_down.store(true, Ordering::SeqCst);
         let mut child = self.child.lock().await;
         let _ = child.start_kill();
         let _ = child.wait().await;

@@ -92,9 +92,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ github.ref_name }}"
+          # A semver prerelease tag (v0.7.0-beta.1) marks a beta: GitHub keeps
+          # it out of "latest", so stable clients never see it.
+          # Match our prerelease channels explicitly rather than any hyphen,
+          # so an odd-but-valid stable tag can't be misread as a prerelease.
+          # Lowercase the tag so this agrees with the case-insensitive GHA
+          # `contains()` check the macOS build uses (a "-Beta" tag must not
+          # classify differently between the two jobs).
+          pre=""; [[ "${tag,,}" =~ -(beta|rc|alpha) ]] && pre="--prerelease"
           # Create draft release if it doesn't exist yet
           gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
-            gh release create "$tag" --repo "${{ github.repository }}" --title "Codfish $tag" --draft
+            gh release create "$tag" --repo "${{ github.repository }}" --title "Codfish $tag" --draft $pre
           # Upload NSIS installer + updater sig
           for f in src-tauri/target/release/bundle/nsis/*.exe src-tauri/target/release/bundle/nsis/*.sig; do
             [ -f "$f" ] && gh release upload "$tag" "$f" --repo "${{ github.repository }}" --clobber
@@ -150,7 +158,9 @@ jobs:
           releaseName: "Codfish ${{ github.ref_name }}"
           releaseBody: ""
           releaseDraft: true
-          prerelease: false
+          # A semver prerelease tag (…-beta.N) → GitHub prerelease, kept out
+          # of "latest" so only beta-channel clients receive it.
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') || contains(github.ref_name, '-alpha') }}
           # latest.json is assembled in the dedicated assemble-updater job
           # below, after both platform builds finish. tauri-action would
           # otherwise upload a partial manifest with only this runner's
@@ -200,6 +210,12 @@ jobs:
           mac_sig=$(cat "$mac_sig_path")
           base_url="https://github.com/${repo}/releases/download/${tag}"
 
+          # Per-platform minimum OS floor for THIS release, read by the update
+          # gate in clients >= 0.6.10 (older/fieldless clients ignore it).
+          # 0.6.10 declares none — it runs everywhere 0.6.9 does. The 0.7.0
+          # branch sets this to '{"darwin":"13.4"}'.
+          min_os='{}'
+
           jq -n \
             --arg version "$version" \
             --arg pub_date "$pub_date" \
@@ -207,10 +223,12 @@ jobs:
             --arg win_url "${base_url}/${win_asset}" \
             --arg mac_sig "$mac_sig" \
             --arg mac_url "${base_url}/${mac_asset}" \
+            --argjson min_os "$min_os" \
             '{
               version: $version,
               notes: "",
               pub_date: $pub_date,
+              minimumSystemVersion: $min_os,
               platforms: {
                 "darwin-aarch64": { signature: $mac_sig, url: $mac_url },
                 "darwin-aarch64-app": { signature: $mac_sig, url: $mac_url },
@@ -223,5 +241,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Always attach latest.json to this release (stable and prerelease
+          # alike). For a stable release it becomes live via GitHub's "latest"
+          # pointer the moment the draft is published — manifest and assets go
+          # live together, no gap. For a prerelease it just rides along; the
+          # beta channel is routed to it AFTER publish (see promote-beta.yml),
+          # so beta.json never points at not-yet-downloadable draft assets.
           gh release upload "${{ github.ref_name }}" latest.json \
             --repo "${{ github.repository }}" --clobber

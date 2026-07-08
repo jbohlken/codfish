@@ -1,0 +1,59 @@
+name: Promote beta manifest
+
+# Route a published release's updater manifest to the beta channel. Fires on
+# BOTH prerelease and full-release publishes, because the beta channel is a
+# SUPERSET of stable: a beta user must receive promoted stable releases too,
+# or they'd stall on the last prerelease forever (beta.json would keep
+# pointing at, say, 0.7.0-beta.3 even after 0.7.0 shipped). So beta.json always
+# tracks the newest published release of either kind; stable users are
+# unaffected (they read the release's own latest.json via GitHub's "latest"
+# pointer, which excludes prereleases). Doing this on PUBLISH — not at build
+# time — guarantees the release's installer assets are already downloadable,
+# so beta.json never points at draft URLs that 404 for end users.
+on:
+  release:
+    types: [released, prereleased]
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Route this release's manifest to the beta channel
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          repo="${{ github.repository }}"
+          new_ver="${tag#v}"
+
+          # beta.json must reflect the SEMVER-MAX of {latest prerelease, latest
+          # stable}, not merely the most recently published release. Without
+          # this, a lower-versioned stable hotfix published during a beta
+          # rollout (e.g. 0.6.11 while 0.7.0-beta.1 is out) would regress the
+          # beta channel below the in-flight beta line. So only advance when
+          # the just-published version is strictly greater than what beta.json
+          # already points at. --include-prerelease so 0.7.0-beta.1 > 0.6.11
+          # compares correctly.
+          cur_ver=""
+          if gh release view beta --repo "$repo" >/dev/null 2>&1; then
+            gh release download beta --repo "$repo" --pattern beta.json --dir cur --clobber 2>/dev/null || true
+            [ -f cur/beta.json ] && cur_ver=$(jq -r '.version // ""' cur/beta.json)
+          fi
+          if [ -n "$cur_ver" ] && [ -z "$(npx --yes semver -p -r ">$cur_ver" "$new_ver" 2>/dev/null)" ]; then
+            echo "beta.json is at $cur_ver, which is >= $new_ver — leaving it unchanged."
+            exit 0
+          fi
+
+          # The release is now published, so releases/download/<tag>/… URLs
+          # (which latest.json already contains) resolve for the public.
+          gh release download "$tag" --repo "$repo" --pattern latest.json --dir . --clobber
+          mv latest.json beta.json
+          # The standing `beta` release hosts the rolling beta manifest at a
+          # fixed URL (releases/download/beta/beta.json). Create it once.
+          gh release view beta --repo "$repo" >/dev/null 2>&1 || \
+            gh release create beta --repo "$repo" --title "Beta channel" --prerelease \
+              --notes "Rolling manifest for the in-app beta updater. Do not delete."
+          gh release upload beta beta.json --repo "$repo" --clobber
