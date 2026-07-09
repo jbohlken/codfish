@@ -4,6 +4,11 @@
 
 A desktop caption editor built with Tauri v2 + Preact. Transcribes audio/video using WhisperX and lets you edit, time, and export captions.
 
+## System requirements
+
+- **Windows** — Windows 10 version 1803 or newer (WebView2, installed automatically if missing).
+- **macOS** — Apple Silicon. macOS 13.4 (Ventura) or newer is required for 0.7.0 and later; 0.6.x runs on older macOS. The in-app updater will not offer an update your macOS can't run.
+
 ## Architecture
 
 - **App** (Tauri/Rust + Preact) — the editor UI and file management

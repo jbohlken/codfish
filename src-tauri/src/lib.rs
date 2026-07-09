@@ -2,6 +2,7 @@ mod bug_report;
 mod daemon;
 mod sidecar;
 mod transcription;
+mod updater;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1674,6 +1675,9 @@ pub fn run() {
             sidecar::check_sidecar_update,
             sidecar::download_sidecar,
             bug_report::submit_bug_report,
+            updater::get_os_version,
+            updater::check_app_update,
+            updater::install_app_update,
             force_quit,
         ])
         .build(tauri::generate_context!())
