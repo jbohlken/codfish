@@ -212,9 +212,10 @@ jobs:
 
           # Per-platform minimum OS floor for THIS release, read by the update
           # gate in clients >= 0.6.10 (older/fieldless clients ignore it).
-          # 0.6.10 declares none — it runs everywhere 0.6.9 does. The 0.7.0
-          # branch sets this to '{"darwin":"13.4"}'.
-          min_os='{}'
+          # 0.7.0 requires macOS 13.4 (Ventura): tauri.conf minimum_system_version
+          # / whisper.cpp toolchain floor. No Windows floor beyond the app's
+          # baseline (Win 10 1803).
+          min_os='{"darwin":"13.4"}'
 
           jq -n \
             --arg version "$version" \
