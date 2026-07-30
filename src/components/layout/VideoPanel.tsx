@@ -193,6 +193,7 @@ export function VideoPanel() {
                 bumpRescue();
               }}
             />
+            {import.meta.env.DEV && <span class="player-badge">mediabunny</span>}
             {isAudioOnly(media.path) && (
               <div class="audio-placeholder">
                 <span class="audio-placeholder-icon"><MusicNote size={32} /></span>
@@ -232,6 +233,11 @@ export function VideoPanel() {
               onPause={() => { isPlaying.value = false; }}
               onEnded={() => { isPlaying.value = false; }}
             />
+            {import.meta.env.DEV && (
+              <span class="player-badge">
+                element{FORCE_ELEMENT ? " · forced" : rescuedPaths.has(media.path) ? ` · ${rescuedPaths.get(media.path)}` : ""}
+              </span>
+            )}
             {isAudioOnly(media.path) && (
               <div class="audio-placeholder">
                 <span class="audio-placeholder-icon"><MusicNote size={32} /></span>
