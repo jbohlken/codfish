@@ -1,7 +1,7 @@
 import { useRef, useEffect, useReducer } from "preact/hooks";
 import { MusicNoteIcon as MusicNote, WarningIcon as Warning } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps } from "../../store/app";
+import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps, effectiveVolume } from "../../store/app";
 import { EnginePlayer } from "./EnginePlayer";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
@@ -175,6 +175,15 @@ export function VideoPanel() {
   // warmup would only land on the next rAF tick (or be lost if the user
   // pauses again first). During active playback rAF owns sync; running
   // this effect there would micro-seek every tick.
+  // Volume/mute → the element (rescue path). Same effectiveVolume both
+  // players consume, so switching engines never changes loudness. The
+  // media?.path dep re-applies it to a freshly mounted element.
+  const vol = effectiveVolume.value;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.volume = vol;
+  }, [vol, media?.path]);
+
   const fps = timelineFps.value;
   useEffect(() => {
     const video = videoRef.current;
@@ -211,7 +220,6 @@ export function VideoPanel() {
                 bumpRescue();
               }}
             />
-            {import.meta.env.DEV && <span class="player-badge">mediabunny</span>}
             {isAudioOnly(media.path) && (
               <div class="audio-placeholder">
                 <span class="audio-placeholder-icon"><MusicNote size={32} /></span>

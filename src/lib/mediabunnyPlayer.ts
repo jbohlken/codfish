@@ -55,6 +55,10 @@ export interface MediabunnyPlayer {
   /** Seek to a zero-based position (clamped). Restarts iterators; safe to
    *  call rapidly — stale async work is cancelled by the id counter. */
   seek(seconds: number): void;
+  /** Master volume as linear gain 0..1 (callers apply their own taper).
+   *  Affects playback and scrub grains alike — everything routes through the
+   *  engine's master gain node. */
+  setVolume(value: number): void;
   /** Play one short, click-free grain of audio at a zero-based position —
    *  the frame-step blip primitive. `durationSec` defaults to ~60 ms and is
    *  clamped to [30, 120] ms; pass 1/fps to blip exactly the stepped frame.
@@ -395,6 +399,9 @@ export async function createMediabunnyPlayer(opts: {
         void startFrameIterator().then(() => {
           if (!disposed && wasPlaying && nativeAtStart < nativeEnd) void this.play();
         });
+      },
+      setVolume(value) {
+        gain.gain.value = Math.max(0, Math.min(1, value));
       },
       playGrain(seconds, durationSec) {
         void playGrainAt(seconds, durationSec);

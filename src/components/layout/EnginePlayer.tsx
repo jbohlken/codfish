@@ -5,7 +5,7 @@
 // write-through drift check), follows isPlaying, and applies external seeks
 // while paused. Downstream code can't tell which engine is underneath.
 import { useEffect, useRef } from "preact/hooks";
-import { playbackTime, isPlaying, timelineFps, frameStepTick, scrubbing, scrubAudio } from "../../store/app";
+import { playbackTime, isPlaying, timelineFps, frameStepTick, scrubbing, scrubAudio, effectiveVolume } from "../../store/app";
 import { createMediabunnyPlayer, isRescue, type MediabunnyPlayer, type EngineRescue } from "../../lib/mediabunnyPlayer";
 import { isAudioPath } from "../../lib/mediaExts";
 import type { MediaItem } from "../../types/project";
@@ -46,6 +46,7 @@ export function EnginePlayer({ media, onRescue }: {
         return;
       }
       playerRef.current = player;
+      player.setVolume(effectiveVolume.peek()); // creation is async — apply current volume
       // Restore the clip-view playhead, then honor play state (mirrors the
       // element path's onLoadedMetadata restore).
       const t = playbackTime.peek();
@@ -133,6 +134,12 @@ export function EnginePlayer({ media, onRescue }: {
       if (scrubbing.peek() && scrubAudio.peek()) player.playGrain(currentTime);
     }
   }, [currentTime, fps, playing]);
+
+  // Volume/mute → engine master gain (playback and grains alike).
+  const vol = effectiveVolume.value;
+  useEffect(() => {
+    playerRef.current?.setVolume(vol);
+  }, [vol, media.path]);
 
   // Frame-step audio blips: on every deliberate frame step (arrow keys /
   // transport prev-next buttons) play exactly that frame's worth of audio at

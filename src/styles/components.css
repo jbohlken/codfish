@@ -1021,6 +1021,7 @@ body.rows-dragging * {
 /* Playback-only strip under the video: go to start, frame-step, play/pause.
    Timeline-view tools live in the timeline toolbar, not here. */
 .transport-bar {
+  position: relative; /* anchors the right-aligned volume cluster */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1030,6 +1031,43 @@ body.rows-dragging * {
   padding: 0 var(--space-3);
   border-top: 1px solid var(--color-border);
   background: var(--color-surface);
+}
+
+/* Volume cluster: mute toggle + slider, pinned right so the transport
+   buttons stay centered. The slider's fill is painted by an inline
+   linear-gradient (Chromium ranges have no native track-fill). */
+.transport-volume {
+  position: absolute;
+  right: var(--space-3);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.transport-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 72px;
+  height: 3px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.transport-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: none;
+}
+
+.transport-volume-slider--muted {
+  opacity: 0.45;
 }
 
 .video-container {
@@ -1076,11 +1114,12 @@ body.rows-dragging * {
   display: none;
 }
 
-/* Chip over the video surface naming the playback engine. The engine-path
-   variant ("mediabunny") is dev-only; the warning variant is USER-FACING —
-   with engine-default routing, the <video> element only ever renders as a
-   compatibility fallback, and its limits (no step/scrub audio, less precise
-   stepping) are worth telling the user about via the tooltip. Fixed dark
+/* Compatibility-playback chip over the video surface. USER-FACING and shown
+   only on the <video> rescue path — with engine-default routing that path
+   only renders as a fallback, and its limits (no step/scrub audio, less
+   precise stepping) are worth telling the user about via the tooltip. The
+   default engine shows no badge at all. Preview: set localStorage
+   codfish:playerEngine = "element" to force the rescue path. Fixed dark
    styling: it always sits over video, so it's theme-proof. */
 .player-badge {
   position: absolute;
