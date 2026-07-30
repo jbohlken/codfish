@@ -82,6 +82,7 @@ const probe = (over: Partial<MediaProbe> = {}): MediaProbe => ({
   hasAudio: true,
   fps: null,
   vfr: false,
+  videoCodec: "avc",
   canDecodeVideo: true,
   canDecodeAudio: true,
   aspect: 16 / 9,

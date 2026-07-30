@@ -2,6 +2,8 @@ import { useRef, useEffect } from "preact/hooks";
 import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps } from "../../store/app";
+import { needsEngine } from "../../lib/mediabunnyPlayer";
+import { EnginePlayer } from "./EnginePlayer";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
 import { findCaptionAt } from "../../lib/pipeline";
@@ -162,6 +164,29 @@ export function VideoPanel() {
         <div class="empty-state">
           <span class="empty-state-title">No media selected</span>
           <span class="empty-state-body">Select a media item from the project panel.</span>
+        </div>
+      ) : needsEngine(media.path, probedInfo.value) ? (
+        // Formats the <video> element can't play (ProRes .mov, .mkv, .m4a) go
+        // to the mediabunny engine; it speaks the same signal protocol, so the
+        // overlay/placeholder below and every downstream consumer are shared.
+        // The element stays the default for everything else (phase-2 routing).
+        <div class="video-container">
+          <div class="video-wrapper">
+            <EnginePlayer media={media} />
+            {isAudioOnly(media.path) && (
+              <div class="audio-placeholder">
+                <span class="audio-placeholder-icon"><MusicNote size={32} /></span>
+                <span class="audio-placeholder-name">{media.name}</span>
+              </div>
+            )}
+            {overlayLines && overlayLines.length > 0 && (
+              <div class="caption-overlay">
+                {overlayLines.map((line, i) => (
+                  <span key={i} class="caption-overlay-line">{line}</span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div class="video-container">

@@ -24,6 +24,10 @@ export interface MediaProbe {
   /** True when sampled frame spacing varies — fps is then an average and
    *  frame-snapping is approximate. Mirrors the sidecar probe's vfr flag. */
   vfr: boolean;
+  /** Mediabunny codec id of the video track ('avc', 'prores', …) or null.
+   *  Drives the player routing: codecs the <video> element can never decode
+   *  (ProRes) go to the mediabunny engine. */
+  videoCodec: string | null;
   canDecodeVideo: boolean;
   canDecodeAudio: boolean;
   /** Display aspect ratio (after rotation), for filmstrip thumb sizing. */
@@ -144,7 +148,9 @@ async function doProbe(path: string): Promise<MediaProbe | null> {
       let vfr = false;
       let aspect: number | null = null;
       let canDecodeVideo = false;
+      let videoCodec: string | null = null;
       if (video) {
+        videoCodec = await video.getCodec();
         // ~120 packets ≈ 4–5 s of video: enough to average out B-frame jitter
         // without reading a long file end-to-end.
         const stats = await video.computePacketStats(120);
@@ -170,6 +176,7 @@ async function doProbe(path: string): Promise<MediaProbe | null> {
         hasAudio: audio !== null,
         fps,
         vfr,
+        videoCodec,
         canDecodeVideo,
         canDecodeAudio,
         aspect,

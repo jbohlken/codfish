@@ -24,6 +24,7 @@ import {
 } from "mediabunny";
 import { generatePeaksViaMediabunny } from "../lib/peaksMediabunny";
 import { probeMedia } from "../lib/mediaProbe";
+import { createMediabunnyPlayer } from "../lib/mediabunnyPlayer";
 import { loadMediabunny } from "../lib/mediabunnyRuntime";
 import { daemonStatus } from "../store/app";
 
@@ -473,7 +474,32 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
     return rec;
   };
 
-  const buildReport = (all: FileResult[], sanity: string[] = [], parity: string[] = []): string => {
+  /** Play/seek a real engine instance against a fixture; returns a report line. */
+  const engineSmoke = async (path: string): Promise<string> => {
+    const name = basename(path);
+    const canvas = document.createElement("canvas");
+    const player = await createMediabunnyPlayer({ path, canvas });
+    if (!player) return `${name}: FAIL — createMediabunnyPlayer returned null`;
+    try {
+      await player.play();
+      await new Promise((r) => setTimeout(r, 1200));
+      const clockT = player.currentTime();
+      player.pause();
+      const target = Math.min(3, player.duration - 0.5);
+      player.seek(target);
+      await new Promise((r) => setTimeout(r, 300));
+      const seekT = player.currentTime();
+      const clockOk = clockT > 0.8 && clockT < 1.6;
+      const seekOk = Math.abs(seekT - target) < 0.05;
+      return `${name}: dur=${player.duration.toFixed(2)}s clock@1.2s=${clockT.toFixed(2)}`
+        + `${clockOk ? "" : " ←CLOCK"} seek(${target.toFixed(2)})→${seekT.toFixed(2)}${seekOk ? "" : " ←SEEK"}`
+        + `${clockOk && seekOk ? " PASS" : " FAIL"}`;
+    } finally {
+      player.dispose();
+    }
+  };
+
+  const buildReport = (all: FileResult[], sanity: string[] = [], parity: string[] = [], engine: string[] = []): string => {
     const row = (r: FileResult, m: SourceMetrics) => {
       const v = m.video;
       const a = m.audio;
@@ -512,6 +538,10 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       "## Probe parity (mediabunny vs sidecar probe_fps — import-swap gate)",
       "",
       ...(parity.length ? parity.map((s) => `- ${s}`) : ["- (not run)"]),
+      "",
+      "## Engine smoke (lib/mediabunnyPlayer)",
+      "",
+      ...(engine.length ? engine.map((s) => `- ${s}`) : ["- (not run)"]),
       "",
       "## Raw data",
       "",
@@ -627,8 +657,25 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
         }
       }
 
+      // Engine smoke — runtime proof for lib/mediabunnyPlayer on the formats
+      // it exists to unlock: create a real player, verify the clock advances
+      // during ~1.2 s of playback, verify a seek lands. Also surfaces whether
+      // the autoplay policy blocks AudioContext.resume() without a gesture
+      // (real usage always has a click; auto mode does not).
+      push("head", "━━ engine smoke (lib/mediabunnyPlayer) ━━");
+      const engine: string[] = [];
+      for (const path of files) {
+        const name = basename(path);
+        if (!/prores-hq|h264-aac\.mkv|^aac\.m4a$/.test(name)) continue;
+        if (isStale()) return;
+        const line = await withTimeout(engineSmoke(path), 30_000, `engine smoke ${name}`)
+          .catch((e) => `${name}: FAIL — ${errText(e)}`);
+        engine.push(line);
+        push(line.includes("FAIL") ? "err" : "ok", `  ${line}`);
+      }
+
       if (isStale()) return;
-      const saved = await invoke<string>("save_spike_report", { content: buildReport(all, sanity, parity) });
+      const saved = await invoke<string>("save_spike_report", { content: buildReport(all, sanity, parity, engine) });
       push("head", `━━ report saved → ${saved} ━━`);
     } catch (e) {
       push("err", `run all — FAILED: ${errText(e)}`);
