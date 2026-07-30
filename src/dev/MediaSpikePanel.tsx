@@ -388,6 +388,16 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       const tracks = await input.getTracks();
       m.trackTypes = tracks.map((t) => t.type);
       push("info", `  tracks: ${m.trackTypes.join(", ") || "(none)"}`);
+      // Standing canary for the mediabunny upgrade path: MP3 cannot carry real
+      // video, so a video track here means embedded cover art surfaced as a
+      // phantom track. In production that would feed a one-packet track's
+      // nonsense packet rate into the shared timelineFps chain (the filmstrip
+      // itself is safe behind canDecode). The sidecar's ffprobe path guards
+      // the same case via its attached_pic skip. Covers every MP3 fixture,
+      // including coverart-vbr.mp3, on every battery run.
+      if (m.format === "MP3" && m.trackTypes.includes("video")) {
+        push("err", "  phantom video track in MP3 — cover art surfaced as a track", m);
+      }
 
       if (isStale()) return;
       const video = await input.getPrimaryVideoTrack();
