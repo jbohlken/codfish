@@ -768,6 +768,85 @@ fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia 
     DroppedMedia { files, folders, skipped }
 }
 
+/// Dev-only helpers for the mediabunny spike battery. Debug builds resolve the
+/// fixture dir from the build machine's checkout (CARGO_MANIFEST_DIR); release
+/// builds compile the path out entirely and refuse the commands — the spike UI
+/// that calls them is itself compiled out of production bundles.
+#[tauri::command]
+fn spike_fixture_dir() -> Result<String, String> {
+    #[cfg(debug_assertions)]
+    {
+        Ok(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|repo| repo.join("test-media").join("mediabunny-spike"))
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        Err("spike_fixture_dir is dev-only".into())
+    }
+}
+
+#[tauri::command]
+fn save_spike_report(content: String) -> Result<String, String> {
+    #[cfg(debug_assertions)]
+    {
+        let dir = std::path::PathBuf::from(spike_fixture_dir()?);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+        let path = dir.join("RESULTS.md");
+        std::fs::write(&path, content).map_err(|e| format!("write: {e}"))?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = content;
+        Err("save_spike_report is dev-only".into())
+    }
+}
+
+#[tauri::command]
+fn file_size(path: String) -> Result<u64, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| format!("stat: {e}"))?;
+    Ok(meta.len())
+}
+
+/// Byte-range read for the mediabunny CustomSource path. Returns raw bytes
+/// (an ArrayBuffer on the JS side), not JSON, so large reads stay cheap.
+/// Dev-only until a production path needs CustomSource (the shipping probe/
+/// peaks/filmstrip pipelines all read via the asset protocol instead); the
+/// span cap bounds a single call's allocation — mediabunny's prefetch
+/// profiles never come close to it.
+#[tauri::command]
+fn read_file_range(path: String, start: u64, end: u64) -> Result<tauri::ipc::Response, String> {
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (path, start, end);
+        Err("read_file_range is dev-only".into())
+    }
+    #[cfg(debug_assertions)]
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        const MAX_SPAN: u64 = 64 * 1024 * 1024;
+        if end < start {
+            return Err(format!("bad range: {start}..{end}"));
+        }
+        if end - start > MAX_SPAN {
+            return Err(format!("range too large: {} bytes (max {MAX_SPAN})", end - start));
+        }
+        let mut file = std::fs::File::open(&path).map_err(|e| format!("open: {e}"))?;
+        let len = file.metadata().map_err(|e| format!("stat: {e}"))?.len();
+        let start = start.min(len);
+        let end = end.min(len);
+        let mut buf = vec![0u8; (end - start) as usize];
+        file.seek(SeekFrom::Start(start))
+            .map_err(|e| format!("seek: {e}"))?;
+        file.read_exact(&mut buf).map_err(|e| format!("read: {e}"))?;
+        Ok(tauri::ipc::Response::new(buf))
+    }
+}
+
 /// Modification time in unix seconds. Used by the peaks cache to invalidate
 /// entries when a file is edited or replaced (rename alone changes the path
 /// key, but an in-place edit keeps the path and needs the mtime to differ).
@@ -1632,6 +1711,10 @@ pub fn run() {
             file_exists,
             collect_dropped_media,
             file_mtime,
+            file_size,
+            read_file_range,
+            spike_fixture_dir,
+            save_spike_report,
             compute_relative_path,
             resolve_relative_path,
             generate_peaks,
