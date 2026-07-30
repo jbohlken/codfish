@@ -1076,10 +1076,12 @@ body.rows-dragging * {
   display: none;
 }
 
-/* Dev-only chip naming the playback engine that owns the current clip
-   ("mediabunny", or "element · <rescue reason>"). Rendered only under
-   import.meta.env.DEV; sits over the video surface, so fixed dark styling
-   works in both themes. */
+/* Chip over the video surface naming the playback engine. The engine-path
+   variant ("mediabunny") is dev-only; the warning variant is USER-FACING —
+   with engine-default routing, the <video> element only ever renders as a
+   compatibility fallback, and its limits (no step/scrub audio, less precise
+   stepping) are worth telling the user about via the tooltip. Fixed dark
+   styling: it always sits over video, so it's theme-proof. */
 .player-badge {
   position: absolute;
   top: 8px;
@@ -1094,6 +1096,17 @@ body.rows-dragging * {
   line-height: 1.4;
   pointer-events: none;
   user-select: none;
+}
+
+/* Compatibility-playback warning: amber, hoverable (the tooltip carries the
+   reason and the feature limits), icon inline with the label. */
+.player-badge--warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning);
+  pointer-events: auto;
+  cursor: default;
 }
 
 .audio-placeholder {

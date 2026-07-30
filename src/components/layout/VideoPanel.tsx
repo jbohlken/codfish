@@ -1,5 +1,5 @@
 import { useRef, useEffect, useReducer } from "preact/hooks";
-import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
+import { MusicNoteIcon as MusicNote, WarningIcon as Warning } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps } from "../../store/app";
 import { EnginePlayer } from "./EnginePlayer";
@@ -24,6 +24,24 @@ const rescuedPaths = new Map<string, string>();
 // element for every clip (read once at load; restart to change).
 const FORCE_ELEMENT = typeof localStorage !== "undefined"
   && localStorage.getItem("codfish:playerEngine") === "element";
+
+// User-facing explanation for the compatibility-playback badge. With phase-3
+// routing the element branch only ever renders as a fallback, so reaching it
+// is always worth telling the user about: engine features (frame-step audio,
+// Ctrl/Cmd scrub audio, deterministic stepping) don't apply here.
+const LIMITS = "Frame stepping may be less precise, and step/scrub audio is unavailable.";
+function rescueTooltip(reason: string | undefined): string {
+  switch (reason) {
+    case "hdr":
+      return `HDR video — using the system player for correct color. ${LIMITS}`;
+    case "undecodable":
+      return `This file's codec isn't supported by the built-in engine. Using the system player. ${LIMITS}`;
+    case "forced":
+      return "System player forced via the codfish:playerEngine setting.";
+    default:
+      return `The built-in engine couldn't read this file. Using the system player. ${LIMITS}`;
+  }
+}
 
 export function VideoPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -233,11 +251,12 @@ export function VideoPanel() {
               onPause={() => { isPlaying.value = false; }}
               onEnded={() => { isPlaying.value = false; }}
             />
-            {import.meta.env.DEV && (
-              <span class="player-badge">
-                element{FORCE_ELEMENT ? " · forced" : rescuedPaths.has(media.path) ? ` · ${rescuedPaths.get(media.path)}` : ""}
-              </span>
-            )}
+            <span
+              class="player-badge player-badge--warning"
+              data-tooltip={rescueTooltip(FORCE_ELEMENT ? "forced" : rescuedPaths.get(media.path))}
+            >
+              <Warning size={11} /> compatibility playback
+            </span>
             {isAudioOnly(media.path) && (
               <div class="audio-placeholder">
                 <span class="audio-placeholder-icon"><MusicNote size={32} /></span>
