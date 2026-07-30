@@ -10,6 +10,7 @@ import type { ValidationWarning } from "../lib/pipeline/types";
 import { SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../lib/mediaSort";
 import { isAudioPath } from "../lib/mediaExts";
 import { getClipView, rememberClipView, rememberActiveClip } from "../lib/clipView";
+import { probeMedia, type MediaProbe } from "../lib/mediaProbe";
 
 // ── Project ────────────────────────────────────────────────────────────────
 export const project = signal<CodProject | null>(null);
@@ -80,6 +81,13 @@ export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 // clock): the element duration is a demuxer estimate that can be wrong for VBR
 // MP3, and video files can legitimately have audio shorter than the picture.
 export const waveformAudioDuration = signal(0);
+// Packet-exact facts about the open clip from the mediabunny probe (null until
+// it resolves; reset synchronously on clip switch). Its duration beats both
+// element and decoded-audio numbers: available in ~100 ms without waiting for
+// metadata events or a full peaks decode, exact for VBR MP3, and immune to the
+// Infinity/provisional durations non-faststart MP4s feed the <video> element.
+// RUNTIME ONLY — never persisted into the project (.cod stays untouched).
+export const probedInfo = signal<MediaProbe | null>(null);
 // True only while the user is dragging the waveform to scrub. Lets the view-state
 // persist effect below skip the continuous drag and fire once on release — when
 // the playhead has "landed somewhere" — instead of writing on every pointermove.
@@ -476,11 +484,60 @@ export const selectedMedia = computed((): MediaItem | null => {
 export const timelineDuration = computed((): number => {
   const m = selectedMedia.value;
   const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
+  // The mediabunny probe wins outright: packet-exact for every container we
+  // accept (including VBR MP3, where it equals the decoded length the old
+  // audio-only rule waited on) and available before the element clock settles.
+  const probed = probedInfo.value?.duration ?? 0;
+  if (m && probed > 0) return probed;
   if (m && isAudioPath(m.path) && waveformAudioDuration.value > 0) {
     return waveformAudioDuration.value;
   }
   return mediaDuration.value || waveformAudioDuration.value || capDur;
 });
+
+// The probe effect must key on the PATH PRIMITIVE, not on selectedMedia: every
+// project write rebuilds the MediaItem object (…media.map(m => ({...m}))), so
+// an effect subscribed to selectedMedia refires on every caption edit — during
+// an edge-trim drag that meant a probedInfo null→restore flap per pointermove,
+// unmounting the filmstrip and flapping timelineDuration mid-drag. A computed
+// only notifies when its VALUE changes, so same-path writes don't refire this.
+const selectedMediaPath = computed((): string | null => selectedMedia.value?.path ?? null);
+
+// Probe the open clip off the critical path. Reset synchronously on switch so
+// a stale probe can't leak across clips; the token guards the async landing.
+// Debounced so arrowing through a bin only probes the clip the user lands on
+// (a probe can be expensive: index-less containers cost a header walk).
+// Skipped under vitest: the store loads in every suite and the probe would
+// pull mediabunny into each of them for a fetch that can only fail.
+let _probeToken = 0;
+effect(() => {
+  const path = selectedMediaPath.value;
+  probedInfo.value = null;
+  if (!path || import.meta.env.MODE === "test") return;
+  const token = ++_probeToken;
+  const timer = setTimeout(() => {
+    void probeMedia(path).then((info) => {
+      if (info && token === _probeToken) probedInfo.value = info;
+    });
+  }, 200);
+  return () => clearTimeout(timer);
+});
+
+/** Detected frame rate of the open clip: import-time sidecar probe (persisted)
+ *  → mediabunny runtime probe → null when neither knows. The nullable variant
+ *  exists for consumers that treat "unknown" differently from a default (e.g.
+ *  validation). */
+export const detectedFps = computed((): number | null =>
+  selectedMedia.value?.fps ?? probedInfo.value?.fps ?? null);
+
+/** THE frame rate every selected-clip surface must share (player seeks, frame
+ *  step, trim/roll snapping, add-caption, timecode display, badge) — detected
+ *  rate with the profile default as last resort. Split sources here caused
+ *  real bugs: a probed 23.976 grid for drag-snapping while keyboard trims used
+ *  the 30fps profile default. Batch/export paths deliberately stay on each
+ *  item's persisted media.fps — probed data only exists for the OPEN clip. */
+export const timelineFps = computed((): number =>
+  detectedFps.value ?? activeProfile.value.timing.defaultFps);
 
 /** Index of the caption the playhead is currently inside, or null. Computed
  * from playbackTime + selectedMedia. Only emits change notifications when the
@@ -516,8 +573,7 @@ effect(() => {
  *  the shared action behind the Left/Right keys and the transport's frame-step
  *  buttons. No-op without a usable fps and duration. */
 export function stepPlayhead(dir: 1 | -1): void {
-  const m = selectedMedia.peek();
-  const f = m?.fps ?? activeProfile.peek().timing.defaultFps;
+  const f = timelineFps.peek();
   const dur = timelineDuration.peek();
   if (!f || !dur) return;
   isPlaying.value = false; // stepping is a paused review action
@@ -535,7 +591,7 @@ export const warningsByCaption = computed((): Map<number, ValidationWarning[]> =
   const profile = activeProfile.value;
   const map = new Map<number, ValidationWarning[]>();
   if (!media || !media.captions.length) return map;
-  const report = validate(media.captions, profile, media.fps ?? undefined);
+  const report = validate(media.captions, profile, detectedFps.value ?? undefined);
   for (const w of report.warnings) {
     const arr = map.get(w.blockIndex) ?? [];
     arr.push(w);

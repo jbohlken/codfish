@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "preact/hooks";
 import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, activeProfile } from "../../store/app";
+import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps } from "../../store/app";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
 import { findCaptionAt } from "../../lib/pipeline";
@@ -61,12 +61,19 @@ export function VideoPanel() {
 
     if (playing) {
       let cancelled = false;
-      // For audio-only media the decoded waveform length (once known) is the real
-      // end — the element clock is a demuxer estimate that can run long for VBR
-      // MP3. Video keeps the element clock: its extent fallbacks (decoded audio /
-      // caption end) are NOT playback bounds, so clamping against them would
-      // freeze the playhead while the picture plays.
+      // The playhead must never slide past the shared timeline extent. Two
+      // trustworthy bounds, both peeked per-tick since they can land mid-play:
+      // the mediabunny probe's packet-exact duration (any media), and — for
+      // audio-only — the decoded waveform length. The element clock's OTHER
+      // extent fallbacks (caption end) are NOT playback bounds; when neither
+      // real bound is known yet, the element clock stays unclamped.
       const audioOnly = media != null && isAudioOnly(media.path);
+      const playbackBound = () => {
+        const probed = probedInfo.peek()?.duration ?? 0;
+        const decoded = audioOnly ? waveformAudioDuration.peek() : 0;
+        if (probed > 0 && decoded > 0) return Math.min(probed, decoded);
+        return probed > 0 ? probed : decoded;
+      };
 
       const tick = () => {
         // If playbackTime has drifted from what rAF last wrote, an external
@@ -77,12 +84,11 @@ export function VideoPanel() {
           video.currentTime = pt;
           rafLastWrittenRef.current = pt;
         } else {
-          // Audio-only: clamp to the decoded end so the playhead can't slide
-          // past the ruler on the estimate's phantom tail. rafLastWrittenRef
-          // gets the same clamped value so the drift check above stays stable.
-          // Peeked per-tick — peaks can finish loading mid-play.
-          const decodedEnd = audioOnly ? waveformAudioDuration.peek() : 0;
-          const vt = decodedEnd > 0 ? Math.min(video.currentTime, decodedEnd) : video.currentTime;
+          // Clamp so the playhead can't slide past the ruler on the element
+          // estimate's phantom tail. rafLastWrittenRef gets the same clamped
+          // value so the drift check above stays stable.
+          const bound = playbackBound();
+          const vt = bound > 0 ? Math.min(video.currentTime, bound) : video.currentTime;
           playbackTime.value = vt;
           rafLastWrittenRef.current = vt;
         }
@@ -91,12 +97,12 @@ export function VideoPanel() {
 
       // Play pressed at the end → restart from the top (standard player behavior);
       // otherwise play() sits at the end and does nothing. "The end" is the shared
-      // timeline end: for audio-only media the playhead parks at the decoded end,
-      // which can sit more than a frame short of the element's estimated duration —
+      // timeline end: the playhead parks at the probed/decoded bound, which can
+      // sit more than a frame short of the element's estimated duration —
       // checking only the element clock would make the restart unreachable there.
-      const decodedEnd = audioOnly ? waveformAudioDuration.peek() : 0;
-      const endOfMedia = decodedEnd > 0
-        ? Math.min(video.duration > 0 ? video.duration : Infinity, decodedEnd)
+      const bound = playbackBound();
+      const endOfMedia = bound > 0
+        ? Math.min(video.duration > 0 ? video.duration : Infinity, bound)
         : video.duration;
       if (endOfMedia > 0 && Number.isFinite(endOfMedia) && video.currentTime >= endOfMedia - 1 / fps) {
         video.currentTime = 0;
@@ -136,7 +142,7 @@ export function VideoPanel() {
   // warmup would only land on the next rAF tick (or be lost if the user
   // pauses again first). During active playback rAF owns sync; running
   // this effect there would micro-seek every tick.
-  const fps = media?.fps ?? activeProfile.value.timing.defaultFps;
+  const fps = timelineFps.value;
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
