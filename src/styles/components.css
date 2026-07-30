@@ -1447,8 +1447,13 @@ body.rows-dragging * {
   transition: background 0.1s;
 }
 
-.timeline-btn:hover {
+.timeline-btn:hover:not(:disabled) {
   background: var(--tl-scrubber);
+}
+
+.timeline-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .timeline-btn--active {
@@ -1608,6 +1613,27 @@ body.rows-dragging * {
    it via inline style. Pointer-inert: it's purely visual, the row owns
    seek/scrub events. */
 .timeline-waveform-canvas {
+  position: sticky;
+  left: 0;
+  display: block;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Filmstrip lane: fixed-height row of video thumbnails above the waveform.
+   Same viewport-canvas pattern as the waveform (sticky canvas, overflow-x clip
+   so the row doesn't become a scroll container and break the sticky). */
+.timeline-filmstrip-row {
+  height: 44px;
+  flex-shrink: 0;
+  position: relative;
+  background: var(--tl-surface);
+  border-bottom: 1px solid var(--tl-border);
+  overflow-x: clip;
+}
+
+.timeline-filmstrip-canvas {
   position: sticky;
   left: 0;
   display: block;
