@@ -1,8 +1,7 @@
-import { useRef, useEffect } from "preact/hooks";
+import { useRef, useEffect, useReducer } from "preact/hooks";
 import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps } from "../../store/app";
-import { needsEngine } from "../../lib/mediabunnyPlayer";
 import { EnginePlayer } from "./EnginePlayer";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
@@ -15,8 +14,22 @@ function isAudioOnly(path: string): boolean {
   return AUDIO_EXTS.includes(ext);
 }
 
+// Phase-3 routing: the mediabunny engine is the DEFAULT player; the <video>
+// element is the rescue path. The engine attempt itself is the probe — when
+// it declines a file (undecodable by WebCodecs, HDR the SDR canvas shouldn't
+// flatten, unreadable) the path is remembered for the session so re-opening
+// the clip goes straight to the element instead of retrying a doomed engine.
+const rescuedPaths = new Map<string, string>();
+// Debug escape hatch: localStorage codfish:playerEngine = "element" forces the
+// element for every clip (read once at load; restart to change).
+const FORCE_ELEMENT = typeof localStorage !== "undefined"
+  && localStorage.getItem("codfish:playerEngine") === "element";
+
 export function VideoPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Bumped when the engine rescues the current clip so the render below
+  // re-evaluates rescuedPaths and swaps to the element.
+  const [, bumpRescue] = useReducer((c: number) => c + 1, 0);
   const rafRef = useRef<number>(0);
   const rafLastWrittenRef = useRef<number>(0);
   // True only while the rAF tick loop is actively syncing currentTime ↔
@@ -165,14 +178,21 @@ export function VideoPanel() {
           <span class="empty-state-title">No media selected</span>
           <span class="empty-state-body">Select a media item from the project panel.</span>
         </div>
-      ) : needsEngine(media.path, probedInfo.value) ? (
-        // Formats the <video> element can't play (ProRes .mov, .mkv, .m4a) go
-        // to the mediabunny engine; it speaks the same signal protocol, so the
-        // overlay/placeholder below and every downstream consumer are shared.
-        // The element stays the default for everything else (phase-2 routing).
+      ) : !(FORCE_ELEMENT || rescuedPaths.has(media.path)) ? (
+        // Phase 3: the mediabunny engine is the default player — one clock,
+        // deterministic seeks, every accepted format. It speaks the element
+        // path's signal protocol, so the overlay/placeholder and downstream
+        // consumers are shared. When the engine declines (rescue), this
+        // clip re-renders on the <video> element branch below.
         <div class="video-container">
           <div class="video-wrapper">
-            <EnginePlayer media={media} />
+            <EnginePlayer
+              media={media}
+              onRescue={(reason) => {
+                rescuedPaths.set(media.path, reason);
+                bumpRescue();
+              }}
+            />
             {isAudioOnly(media.path) && (
               <div class="audio-placeholder">
                 <span class="audio-placeholder-icon"><MusicNote size={32} /></span>

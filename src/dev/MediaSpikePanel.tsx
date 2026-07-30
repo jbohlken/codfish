@@ -24,7 +24,7 @@ import {
 } from "mediabunny";
 import { generatePeaksViaMediabunny } from "../lib/peaksMediabunny";
 import { probeMedia } from "../lib/mediaProbe";
-import { createMediabunnyPlayer } from "../lib/mediabunnyPlayer";
+import { createMediabunnyPlayer, isRescue } from "../lib/mediabunnyPlayer";
 import { loadMediabunny } from "../lib/mediabunnyRuntime";
 import { daemonStatus } from "../store/app";
 
@@ -497,7 +497,10 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
     const name = basename(path);
     const canvas = document.createElement("canvas");
     const player = await createMediabunnyPlayer({ path, canvas });
-    if (!player) return `${name}: FAIL — createMediabunnyPlayer returned null`;
+    // Every smoke fixture is decodable SDR content — a rescue verdict here
+    // means the engine wrongly declined a file it should own (phase 3: the
+    // engine is the default player).
+    if (isRescue(player)) return `${name}: FAIL — engine rescued (${player.rescue})`;
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
     try {
       // Plain playback: clock advances AND (for video) frames advance.
@@ -716,7 +719,9 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       const engine: string[] = [];
       for (const path of files) {
         const name = basename(path);
-        if (!/prores-hq|h264-aac\.mkv|^aac\.m4a$/.test(name)) continue;
+        // Engine-default (phase 3) means the everyday formats ride the engine
+        // too — smoke the controls alongside the formats the engine unlocked.
+        if (!/prores-hq|h264-aac\.mkv|^aac\.m4a$|^control-|^vbr\.mp3$/.test(name)) continue;
         if (isStale()) return;
         const line = await withTimeout(engineSmoke(path), 30_000, `engine smoke ${name}`)
           .catch((e) => `${name}: FAIL — ${errText(e)}`);

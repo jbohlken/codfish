@@ -6,11 +6,16 @@
 // while paused. Downstream code can't tell which engine is underneath.
 import { useEffect, useRef } from "preact/hooks";
 import { playbackTime, isPlaying, timelineFps } from "../../store/app";
-import { createMediabunnyPlayer, type MediabunnyPlayer } from "../../lib/mediabunnyPlayer";
+import { createMediabunnyPlayer, isRescue, type MediabunnyPlayer, type EngineRescue } from "../../lib/mediabunnyPlayer";
 import { isAudioPath } from "../../lib/mediaExts";
 import type { MediaItem } from "../../types/project";
 
-export function EnginePlayer({ media }: { media: MediaItem }) {
+export function EnginePlayer({ media, onRescue }: {
+  media: MediaItem;
+  /** The engine declined this file (undecodable / HDR / unreadable) — the
+   *  parent swaps to the <video> element rescue path. */
+  onRescue: (reason: EngineRescue["rescue"]) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<MediabunnyPlayer | null>(null);
   const rafLastWrittenRef = useRef(0);
@@ -32,7 +37,10 @@ export function EnginePlayer({ media }: { media: MediaItem }) {
         isPlaying.value = false;
       },
     }).then((player) => {
-      if (!player) return; // undecodable — canvas stays blank (element wouldn't have played it either)
+      if (isRescue(player)) {
+        if (!stale) onRescue(player.rescue);
+        return;
+      }
       if (stale) {
         player.dispose();
         return;

@@ -21,33 +21,25 @@
  */
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { loadMediabunny } from "./mediabunnyRuntime";
-import type { MediaProbe } from "./mediaProbe";
 import type { WrappedCanvas } from "mediabunny";
 
-/** Video codecs no browser <video> element decodes — always engine material
- *  when WebCodecs (plus our registered extensions) can. */
-const ELEMENT_UNSUPPORTED_VIDEO = new Set(["prores"]);
-/** Containers WebView2 rejects outright (MEDIA_ERR_SRC_NOT_SUPPORTED). */
-const ELEMENT_UNSUPPORTED_EXT = new Set(["mkv", "m4a"]);
+/**
+ * Phase-3 routing: mediabunny is the DEFAULT engine and the engine attempt
+ * itself is the routing probe — creation opens the file and checks
+ * decodability anyway, so instead of a bare failure it returns a typed
+ * rescue verdict and the caller falls back to the <video> element:
+ * - 'undecodable': no track WebCodecs (+ our extensions) can decode — the
+ *   platform media stack may still manage it.
+ * - 'hdr': decodable, but the 2D canvas is SDR; the element tone-maps HDR
+ *   properly, so it gives the better picture.
+ * - 'error': the file couldn't be read/parsed at all.
+ */
+export interface EngineRescue {
+  rescue: "undecodable" | "hdr" | "error";
+}
 
-/** Phase-2 routing: the <video> element stays the default engine; mediabunny
- *  takes a clip only when the element demonstrably can't play it. Containers
- *  the element rejects route unconditionally (the element shows nothing at
- *  all); element-playable containers with an element-undecodable video codec
- *  (ProRes .mov) route only when WebCodecs can actually decode — otherwise
- *  the element's audio-with-black-frame is still the better experience. */
-export function needsEngine(path: string, probe: MediaProbe | null): boolean {
-  const ext = path.replace(/\\/g, "/").split(".").pop()?.toLowerCase() ?? "";
-  if (ELEMENT_UNSUPPORTED_EXT.has(ext)) return true;
-  if (
-    probe?.hasVideo
-    && probe.videoCodec !== null
-    && ELEMENT_UNSUPPORTED_VIDEO.has(probe.videoCodec)
-    && probe.canDecodeVideo
-  ) {
-    return true;
-  }
-  return false;
+export function isRescue(result: MediabunnyPlayer | EngineRescue): result is EngineRescue {
+  return "rescue" in result;
 }
 
 export interface MediabunnyPlayer {
@@ -71,7 +63,7 @@ export async function createMediabunnyPlayer(opts: {
   canvas: HTMLCanvasElement;
   /** Called once when playback reaches the end (engine has already paused). */
   onEnded?: () => void;
-}): Promise<MediabunnyPlayer | null> {
+}): Promise<MediabunnyPlayer | EngineRescue> {
   const { canvas, onEnded } = opts;
   try {
     const { Input, ALL_FORMATS, UrlSource, CanvasSink, AudioBufferSink } = await loadMediabunny();
@@ -86,7 +78,11 @@ export async function createMediabunnyPlayer(opts: {
     if (audioTrack && !(await audioTrack.canDecode())) audioTrack = null;
     if (!videoTrack && !audioTrack) {
       input.dispose();
-      return null;
+      return { rescue: "undecodable" };
+    }
+    if (videoTrack && (await videoTrack.hasHighDynamicRange())) {
+      input.dispose();
+      return { rescue: "hdr" };
     }
 
     const startTs = Math.max(await input.getFirstTimestamp(), 0);
@@ -301,6 +297,6 @@ export async function createMediabunnyPlayer(opts: {
     };
     return player;
   } catch {
-    return null;
+    return { rescue: "error" };
   }
 }
