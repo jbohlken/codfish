@@ -81,8 +81,25 @@ export function EnginePlayer({ media }: { media: MediaItem }) {
     void (async () => {
       const player = playerRef.current;
       if (player) {
+        // Play pressed at the end → restart from the top, writing BOTH clocks
+        // like the element path does. Resetting only the engine would leave
+        // playbackTime parked at the end, and the drift check above would
+        // read that as an external seek and slam the restarted engine
+        // straight back to the end — spacebar would look dead.
+        if (player.currentTime() >= player.duration - 1 / fps) {
+          player.seek(0);
+          playbackTime.value = 0;
+          rafLastWrittenRef.current = 0;
+        }
         await player.play();
         if (!alive) return;
+        if (!player.isPlaying()) {
+          // Engine declined (suspended AudioContext that never resumed) —
+          // mirror the element path's play().catch: don't leave the UI
+          // claiming playback that isn't happening.
+          isPlaying.value = false;
+          return;
+        }
         rafLastWrittenRef.current = player.currentTime();
       }
       raf = requestAnimationFrame(tick);

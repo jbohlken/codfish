@@ -247,8 +247,17 @@ export async function createMediabunnyPlayer(opts: {
       isPlaying: () => playing,
       async play() {
         if (disposed || playing) return;
-        if (audioContext.state === "suspended") await audioContext.resume();
-        if (disposed) return;
+        if (audioContext.state === "suspended") {
+          // resume() can stay pending forever under a strict autoplay policy
+          // (no user gesture). Bounded wait; if the context still isn't
+          // running we decline to play — the caller checks isPlaying() and
+          // resets the UI state, mirroring the element's play() rejection.
+          await Promise.race([
+            audioContext.resume(),
+            new Promise<void>((r) => setTimeout(r, 1000)),
+          ]);
+        }
+        if (disposed || audioContext.state !== "running") return;
         if (nativeClock() >= nativeEnd) {
           nativeAtStart = startTs;
           await startFrameIterator();
@@ -257,7 +266,11 @@ export async function createMediabunnyPlayer(opts: {
         ctxAtStart = audioContext.currentTime;
         playing = true;
         if (audioSink) {
-          asyncId++;
+          // Deliberately NO asyncId bump here: every path into play() already
+          // went through pause()/seek()/dispose(), which bump it. Bumping
+          // again would cancel a seek's still-in-flight frame-iterator
+          // restart (seek() is fire-and-forget), freezing video while audio
+          // plays — the seek-then-immediately-play race.
           audioIterator = audioSink.buffers(nativeClock());
           void runAudioIterator();
         }

@@ -474,26 +474,71 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
     return rec;
   };
 
+  /** Cheap fingerprint of the canvas's top-left 32×32 — enough to tell
+   *  whether frames are ADVANCING (the frozen-video bug class: audio and
+   *  clock run while the frame iterator died mid-restart). */
+  const canvasHash = (canvas: HTMLCanvasElement): number => {
+    if (canvas.width === 0 || canvas.height === 0) return 0;
+    const data = canvas
+      .getContext("2d")!
+      .getImageData(0, 0, Math.min(32, canvas.width), Math.min(32, canvas.height)).data;
+    let h = 0;
+    for (let i = 0; i < data.length; i += 16) h = (h * 31 + data[i]) >>> 0;
+    return h;
+  };
+
   /** Play/seek a real engine instance against a fixture; returns a report line. */
   const engineSmoke = async (path: string): Promise<string> => {
     const name = basename(path);
     const canvas = document.createElement("canvas");
     const player = await createMediabunnyPlayer({ path, canvas });
     if (!player) return `${name}: FAIL — createMediabunnyPlayer returned null`;
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
     try {
+      // Plain playback: clock advances AND (for video) frames advance.
       await player.play();
-      await new Promise((r) => setTimeout(r, 1200));
+      await wait(600);
+      const h1 = canvasHash(canvas);
+      await wait(600);
       const clockT = player.currentTime();
+      const framesOk = !player.hasVideo || canvasHash(canvas) !== h1;
       player.pause();
-      const target = Math.min(3, player.duration - 0.5);
+
+      // Seek then IMMEDIATELY play — the race that froze video while audio
+      // played (a stray asyncId bump cancelling the in-flight frame restart).
+      const target = Math.min(3, player.duration - 1);
       player.seek(target);
-      await new Promise((r) => setTimeout(r, 300));
+      await player.play();
+      await wait(400);
+      const rh = canvasHash(canvas);
+      await wait(400);
+      const raceOk = player.currentTime() > target + 0.5
+        && (!player.hasVideo || canvasHash(canvas) !== rh);
+      player.pause();
+
+      // Paused seek accuracy.
+      player.seek(target);
+      await wait(300);
       const seekT = player.currentTime();
-      const clockOk = clockT > 0.8 && clockT < 1.6;
       const seekOk = Math.abs(seekT - target) < 0.05;
-      return `${name}: dur=${player.duration.toFixed(2)}s clock@1.2s=${clockT.toFixed(2)}`
-        + `${clockOk ? "" : " ←CLOCK"} seek(${target.toFixed(2)})→${seekT.toFixed(2)}${seekOk ? "" : " ←SEEK"}`
-        + `${clockOk && seekOk ? " PASS" : " FAIL"}`;
+
+      // Play-at-end must restart from the top (the engine-level half of the
+      // spacebar-restart contract; EnginePlayer owns the signal half).
+      player.seek(player.duration);
+      await wait(200);
+      await player.play();
+      await wait(500);
+      const restartT = player.currentTime();
+      const restartOk = restartT > 0.2 && restartT < 1.5;
+
+      const clockOk = clockT > 0.8 && clockT < 1.6;
+      const pass = clockOk && framesOk && raceOk && seekOk && restartOk;
+      return `${name}: dur=${player.duration.toFixed(2)}s clock@1.2s=${clockT.toFixed(2)}${clockOk ? "" : " ←CLOCK"}`
+        + ` frames=${framesOk ? "advance" : "FROZEN"}`
+        + ` seek+play=${raceOk ? "ok" : "FROZEN/STALLED"}`
+        + ` seek(${target.toFixed(2)})→${seekT.toFixed(2)}${seekOk ? "" : " ←SEEK"}`
+        + ` restart@end→${restartT.toFixed(2)}${restartOk ? "" : " ←RESTART"}`
+        + `${pass ? " PASS" : " FAIL"}`;
     } finally {
       player.dispose();
     }

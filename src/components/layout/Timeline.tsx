@@ -234,7 +234,13 @@ export function Timeline() {
       generateInProcess: generatePeaksViaMediabunny,
       generateSidecar: (path, binsPerSec) =>
         invoke<{ peaks: number[]; duration: number }>("generate_peaks", { path, binsPerSec }),
-      waitForElementDuration: () => waitForMediaDuration(5000),
+      // Engine-played clips never feed the element clock; the probed duration
+      // is exact and already in hand — don't stall 5 s waiting for metadata
+      // that will never arrive.
+      waitForElementDuration: async () => {
+        const probed = probedInfo.peek()?.duration ?? 0;
+        return probed > 0 ? probed : waitForMediaDuration(5000);
+      },
       log: flog,
     }).then((result) => {
       if (!result || cancelled) return;
