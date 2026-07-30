@@ -421,13 +421,25 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       push("err", `file_size failed: ${errText(e)}`);
     }
 
+    // Each source gets its own abort flag layered on the run token: a promise
+    // can't be killed from outside, so when withTimeout gives up on a source,
+    // the flag makes the orphaned battery stop at its next checkpoint instead
+    // of running on beneath the next source (interleaved logs, two live
+    // Inputs on the same file).
     if (!isStale()) {
+      let aborted = false;
+      const sourceStale = () => aborted || isStale();
       const m: SourceMetrics = { source: "UrlSource", errors: [] };
       rec.sources.push(m);
-      await withTimeout(runSource("UrlSource (asset protocol)", new UrlSource(convertFileSrc(path)), m, isStale), 90_000, "UrlSource battery")
-        .catch((e) => push("err", `UrlSource battery — ${errText(e)}`, m));
+      await withTimeout(runSource("UrlSource (asset protocol)", new UrlSource(convertFileSrc(path)), m, sourceStale), 90_000, "UrlSource battery")
+        .catch((e) => {
+          aborted = true;
+          push("err", `UrlSource battery — ${errText(e)}`, m);
+        });
     }
     if (!isStale()) {
+      let aborted = false;
+      const sourceStale = () => aborted || isStale();
       const m: SourceMetrics = { source: "Rust IPC", errors: [], ipc: { calls: 0, bytes: 0 } };
       rec.sources.push(m);
       const source = new CustomSource({
@@ -440,8 +452,11 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
         },
         prefetchProfile: "fileSystem",
       });
-      await withTimeout(runSource("CustomSource (Rust read_file_range)", source, m, isStale), 90_000, "CustomSource battery")
-        .catch((e) => push("err", `CustomSource battery — ${errText(e)}`, m));
+      await withTimeout(runSource("CustomSource (Rust read_file_range)", source, m, sourceStale), 90_000, "CustomSource battery")
+        .catch((e) => {
+          aborted = true;
+          push("err", `CustomSource battery — ${errText(e)}`, m);
+        });
     }
     return rec;
   };
