@@ -530,6 +530,11 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       const seekT = player.currentTime();
       const seekOk = Math.abs(seekT - target) < 0.05;
 
+      // Scrub grains: rapid-fire like a drag; must coalesce without throwing
+      // (audibility is a manual check).
+      for (let i = 0; i < 5; i++) player.playGrain(target + i * 0.05);
+      await wait(150);
+
       // Play-at-end must restart from the top (the engine-level half of the
       // spacebar-restart contract; EnginePlayer owns the signal half).
       player.seek(player.duration);

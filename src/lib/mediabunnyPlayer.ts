@@ -55,6 +55,11 @@ export interface MediabunnyPlayer {
   /** Seek to a zero-based position (clamped). Restarts iterators; safe to
    *  call rapidly — stale async work is cancelled by the id counter. */
   seek(seconds: number): void;
+  /** Tape-style scrub audio: play one short, click-free grain of audio at a
+   *  zero-based position. Paused-state only; a newer grain supersedes an
+   *  in-flight one, so calling at pointer-move rate is safe. No-op while
+   *  playing or for clips without decodable audio. */
+  playGrain(seconds: number): void;
   dispose(): void;
 }
 
@@ -201,6 +206,108 @@ export async function createMediabunnyPlayer(opts: {
       queuedNodes.clear();
     };
 
+    // ── Scrub grains ───────────────────────────────────────────────────────
+    // A grain is a ~60 ms window of decoded audio played through its own gain
+    // node with fast attack/release ramps (no clicks). One grain at a time:
+    // a new one fades the old out; requests arriving while a fetch is in
+    // flight coalesce to the latest (trailing edge), so pointer-move-rate
+    // calls produce the classic NLE zipper, not a backlog.
+    const GRAIN_SEC = 0.06;
+    const GRAIN_FADE = 0.008;
+    let grainSeq = 0;
+    let grainBusy = false;
+    let grainPending: number | null = null;
+    let grainGain: GainNode | null = null;
+    let grainNodes: AudioBufferSourceNode[] = [];
+    let grainNativeStart = -1;
+    let grainStartedAt = -1;
+
+    const stopGrain = () => {
+      const g = grainGain;
+      if (!g) return;
+      grainGain = null;
+      const nodes = grainNodes;
+      grainNodes = [];
+      const now = audioContext.currentTime;
+      g.gain.cancelScheduledValues(now);
+      g.gain.setValueAtTime(g.gain.value, now);
+      g.gain.linearRampToValueAtTime(0, now + GRAIN_FADE);
+      for (const node of nodes) {
+        try {
+          node.stop(now + GRAIN_FADE + 0.002);
+        } catch {
+          // already stopped
+        }
+      }
+      setTimeout(() => g.disconnect(), 60);
+    };
+
+    const playGrainAt = async (publicT: number) => {
+      if (!audioSink || disposed || playing) return;
+      if (grainBusy) {
+        grainPending = publicT;
+        return;
+      }
+      grainBusy = true;
+      try {
+        const seq = ++grainSeq;
+        const nativeStart = startTs + Math.max(0, Math.min(publicT, Math.max(0, duration - 0.01)));
+        // Pointer wiggling in place while the current grain still sounds:
+        // don't re-trigger, it would stutter.
+        if (
+          Math.abs(nativeStart - grainNativeStart) < 0.012
+          && audioContext.currentTime - grainStartedAt < GRAIN_SEC
+        ) {
+          return;
+        }
+        if (audioContext.state === "suspended") {
+          // Scrubbing follows a pointerdown, so resume() has its gesture.
+          await Promise.race([
+            audioContext.resume(),
+            new Promise<void>((r) => setTimeout(r, 250)),
+          ]);
+        }
+        if (disposed || playing || audioContext.state !== "running" || seq !== grainSeq) return;
+        const grainEnd = Math.min(nativeStart + GRAIN_SEC, nativeEnd);
+        const collected: { buffer: AudioBuffer; timestamp: number }[] = [];
+        for await (const wb of audioSink.buffers(nativeStart, grainEnd)) {
+          collected.push(wb);
+          if (disposed || seq !== grainSeq) return;
+        }
+        if (disposed || playing || seq !== grainSeq || collected.length === 0) return;
+        stopGrain();
+        const g = audioContext.createGain();
+        g.connect(gain);
+        const now = audioContext.currentTime;
+        g.gain.setValueAtTime(0, now);
+        g.gain.linearRampToValueAtTime(1, now + GRAIN_FADE);
+        g.gain.setValueAtTime(1, now + GRAIN_SEC - GRAIN_FADE);
+        g.gain.linearRampToValueAtTime(0, now + GRAIN_SEC);
+        const nodes: AudioBufferSourceNode[] = [];
+        for (const { buffer, timestamp } of collected) {
+          const rel = timestamp - nativeStart;
+          const remaining = grainEnd - Math.max(timestamp, nativeStart);
+          if (remaining <= 0) continue;
+          const node = audioContext.createBufferSource();
+          node.buffer = buffer;
+          node.connect(g);
+          node.start(now + Math.max(rel, 0), rel < 0 ? -rel : 0, remaining);
+          nodes.push(node);
+        }
+        grainGain = g;
+        grainNodes = nodes;
+        grainNativeStart = nativeStart;
+        grainStartedAt = now;
+      } finally {
+        grainBusy = false;
+        if (grainPending !== null && !disposed && !playing) {
+          const next = grainPending;
+          grainPending = null;
+          void playGrainAt(next);
+        }
+      }
+    };
+
     const pause = () => {
       if (!playing) return;
       nativeAtStart = nativeClock();
@@ -254,6 +361,7 @@ export async function createMediabunnyPlayer(opts: {
           ]);
         }
         if (disposed || audioContext.state !== "running") return;
+        stopGrain(); // a lingering scrub grain must not bleed into playback
         if (nativeClock() >= nativeEnd) {
           nativeAtStart = startTs;
           await startFrameIterator();
@@ -281,12 +389,17 @@ export async function createMediabunnyPlayer(opts: {
           if (!disposed && wasPlaying && nativeAtStart < nativeEnd) void this.play();
         });
       },
+      playGrain(seconds) {
+        void playGrainAt(seconds);
+      },
       dispose() {
         if (disposed) return;
         disposed = true;
         asyncId++;
+        grainSeq++;
         cancelAnimationFrame(raf);
         clearInterval(hiddenTick);
+        stopGrain();
         stopAudio();
         void frameIterator?.return();
         frameIterator = null;

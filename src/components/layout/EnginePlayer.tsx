@@ -5,7 +5,7 @@
 // write-through drift check), follows isPlaying, and applies external seeks
 // while paused. Downstream code can't tell which engine is underneath.
 import { useEffect, useRef } from "preact/hooks";
-import { playbackTime, isPlaying, timelineFps } from "../../store/app";
+import { playbackTime, isPlaying, timelineFps, scrubbing } from "../../store/app";
 import { createMediabunnyPlayer, isRescue, type MediabunnyPlayer, type EngineRescue } from "../../lib/mediabunnyPlayer";
 import { isAudioPath } from "../../lib/mediaExts";
 import type { MediaItem } from "../../types/project";
@@ -127,6 +127,11 @@ export function EnginePlayer({ media, onRescue }: {
     if (!player) return;
     if (Math.abs(player.currentTime() - currentTime) > 1 / (2 * fps)) {
       player.seek(currentTime);
+      // Tape-style scrub audio: a short grain at each drag position while the
+      // user is scrubbing the waveform. Gated on the same deadband as the
+      // seek, so sub-frame pointer wiggle stays silent. (peek: firing is
+      // keyed to seeks, not to the scrubbing signal itself.)
+      if (scrubbing.peek()) player.playGrain(currentTime);
     }
   }, [currentTime, fps, playing]);
 
