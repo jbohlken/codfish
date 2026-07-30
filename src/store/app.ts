@@ -92,6 +92,12 @@ export const probedInfo = signal<MediaProbe | null>(null);
 // persist effect below skip the continuous drag and fire once on release — when
 // the playhead has "landed somewhere" — instead of writing on every pointermove.
 export const scrubbing = signal(false);
+// True while a scrub drag should be AUDIBLE: the user is holding Ctrl/Cmd
+// during the drag (updated per pointermove, so the modifier can engage or
+// release mid-drag). Read by the engine player, which plays a short audio
+// grain per scrub position while this is up. Deliberate frame steps blip
+// unconditionally via frameStepTick — this signal only governs drags.
+export const scrubAudio = signal(false);
 // Bumped when a caption is clicked in the captions panel, to ask the timeline to
 // scroll that caption into view — even when it's already the active one (its start
 // already the playhead), which wouldn't otherwise change any signal.
@@ -106,6 +112,38 @@ export const zoomLevel = signal(1);
 // (Timeline applies it to the DOM on switch, after the zoom width lands). Peeked
 // by the persist effect for the same no-churn reason as zoom.
 export const timelineScroll = signal(0);
+
+// ── Volume ─────────────────────────────────────────────────────────────────
+// App-level preference (localStorage, never .cod). Both players — the
+// mediabunny engine's gain node and the <video> rescue path — consume
+// effectiveVolume: a quadratic taper (fine control lives in the low end)
+// with a hard 0 when muted. Scrub grains ride the same engine gain, so they
+// follow volume/mute automatically.
+const storedVolume = localStorage.getItem("codfish:volume");
+export const volume = signal(
+  storedVolume !== null && Number.isFinite(Number(storedVolume))
+    ? Math.max(0, Math.min(1, Number(storedVolume)))
+    : 1,
+);
+export const muted = signal(localStorage.getItem("codfish:muted") === "true");
+export const effectiveVolume = computed((): number => (muted.value ? 0 : volume.value ** 2));
+
+export function setVolume(v: number): void {
+  volume.value = Math.max(0, Math.min(1, v));
+  // Dragging the slider while muted means "I want to hear this" — unmute.
+  if (muted.peek() && volume.value > 0) muted.value = false;
+  try {
+    localStorage.setItem("codfish:volume", String(volume.value));
+    localStorage.setItem("codfish:muted", String(muted.peek()));
+  } catch { /* best-effort */ }
+}
+
+export function toggleMuted(): void {
+  muted.value = !muted.peek();
+  try {
+    localStorage.setItem("codfish:muted", String(muted.value));
+  } catch { /* best-effort */ }
+}
 
 /** Clear every selection and close the editor: no clip open, nothing
  *  highlighted, playback reset. Used when the user clicks empty space in the
@@ -586,6 +624,11 @@ effect(() => {
 /** Step the playhead one frame in `dir` (1 = forward, -1 = back) and pause —
  *  the shared action behind the Left/Right keys and the transport's frame-step
  *  buttons. No-op without a usable fps and duration. */
+// Bumped on every frame step so the player can blip that frame's audio —
+// deliberate steps only, never scrub drags (same tick pattern as
+// revealCaptionTick). The player reads the landed time from playbackTime.
+export const frameStepTick = signal(0);
+
 export function stepPlayhead(dir: 1 | -1): void {
   const f = timelineFps.peek();
   const dur = timelineDuration.peek();
@@ -593,6 +636,7 @@ export function stepPlayhead(dir: 1 | -1): void {
   isPlaying.value = false; // stepping is a paused review action
   const next = frameStep(playbackTime.peek(), f, dir);
   playbackTime.value = Math.max(0, Math.min(dur, next));
+  frameStepTick.value++;
 }
 
 /** Validation warnings for the selected media's captions, grouped by caption

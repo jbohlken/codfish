@@ -5,7 +5,7 @@
 // write-through drift check), follows isPlaying, and applies external seeks
 // while paused. Downstream code can't tell which engine is underneath.
 import { useEffect, useRef } from "preact/hooks";
-import { playbackTime, isPlaying, timelineFps, scrubbing } from "../../store/app";
+import { playbackTime, isPlaying, timelineFps, frameStepTick, scrubbing, scrubAudio } from "../../store/app";
 import { createMediabunnyPlayer, isRescue, type MediabunnyPlayer, type EngineRescue } from "../../lib/mediabunnyPlayer";
 import { isAudioPath } from "../../lib/mediaExts";
 import type { MediaItem } from "../../types/project";
@@ -127,13 +127,25 @@ export function EnginePlayer({ media, onRescue }: {
     if (!player) return;
     if (Math.abs(player.currentTime() - currentTime) > 1 / (2 * fps)) {
       player.seek(currentTime);
-      // Tape-style scrub audio: a short grain at each drag position while the
-      // user is scrubbing the waveform. Gated on the same deadband as the
-      // seek, so sub-frame pointer wiggle stays silent. (peek: firing is
-      // keyed to seeks, not to the scrubbing signal itself.)
-      if (scrubbing.peek()) player.playGrain(currentTime);
+      // Audible scrub is OPT-IN per gesture: grains fire only while the user
+      // holds Ctrl/Cmd during the drag (scrubAudio, set per pointermove by
+      // the Timeline). A bare drag stays silent.
+      if (scrubbing.peek() && scrubAudio.peek()) player.playGrain(currentTime);
     }
   }, [currentTime, fps, playing]);
+
+  // Frame-step audio blips: on every deliberate frame step (arrow keys /
+  // transport prev-next buttons) play exactly that frame's worth of audio at
+  // the landed position. Deliberate steps ONLY — scrub drags and other seeks
+  // stay silent by design. The ref swallows the mount-time tick value so
+  // opening a clip never blips.
+  const stepTick = frameStepTick.value;
+  const lastStepTick = useRef(stepTick);
+  useEffect(() => {
+    if (stepTick === lastStepTick.current) return;
+    lastStepTick.current = stepTick;
+    playerRef.current?.playGrain(playbackTime.peek(), 1 / fps);
+  }, [stepTick, fps]);
 
   return (
     <canvas

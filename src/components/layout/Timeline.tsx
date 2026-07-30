@@ -20,6 +20,7 @@ import {
   isPlaying,
   stepPlayhead,
   scrubbing,
+  scrubAudio,
   revealCaptionTick,
   zoomLevel,
   timelineScroll,
@@ -498,6 +499,7 @@ export function Timeline() {
 
     const scroll = scrollRef.current;
     scrubbing.value = true; // pause per-action view persistence until release
+    scrubAudio.value = e.ctrlKey || e.metaKey; // Ctrl/Cmd-drag = audible scrub
     const wasPlaying = isPlaying.peek();
     if (wasPlaying) isPlaying.value = false;
 
@@ -524,6 +526,7 @@ export function Timeline() {
     const onMove = (ev: MouseEvent) => {
       if (Math.abs(ev.clientX - startX) > 4) dragged = true;
       lastClientX = ev.clientX;
+      scrubAudio.value = ev.ctrlKey || ev.metaKey; // modifier can engage mid-drag
       seekToClientX(ev.clientX);
     };
     const onUp = () => {
@@ -539,6 +542,7 @@ export function Timeline() {
       const atEnd = playbackTime.peek() >= duration - 1.5 / effectiveFps;
       if (wasPlaying && !atEnd) isPlaying.value = true;
       scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
+      scrubAudio.value = false;
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);

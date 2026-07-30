@@ -55,11 +55,13 @@ export interface MediabunnyPlayer {
   /** Seek to a zero-based position (clamped). Restarts iterators; safe to
    *  call rapidly — stale async work is cancelled by the id counter. */
   seek(seconds: number): void;
-  /** Tape-style scrub audio: play one short, click-free grain of audio at a
-   *  zero-based position. Paused-state only; a newer grain supersedes an
-   *  in-flight one, so calling at pointer-move rate is safe. No-op while
-   *  playing or for clips without decodable audio. */
-  playGrain(seconds: number): void;
+  /** Play one short, click-free grain of audio at a zero-based position —
+   *  the frame-step blip primitive. `durationSec` defaults to ~60 ms and is
+   *  clamped to [30, 120] ms; pass 1/fps to blip exactly the stepped frame.
+   *  Paused-state only; a newer grain supersedes an in-flight one, so
+   *  rapid-fire calls are safe. No-op while playing or for clips without
+   *  decodable audio. */
+  playGrain(seconds: number, durationSec?: number): void;
   dispose(): void;
 }
 
@@ -216,11 +218,12 @@ export async function createMediabunnyPlayer(opts: {
     const GRAIN_FADE = 0.008;
     let grainSeq = 0;
     let grainBusy = false;
-    let grainPending: number | null = null;
+    let grainPending: { t: number; dur: number } | null = null;
     let grainGain: GainNode | null = null;
     let grainNodes: AudioBufferSourceNode[] = [];
     let grainNativeStart = -1;
     let grainStartedAt = -1;
+    let grainLen = GRAIN_SEC;
 
     const stopGrain = () => {
       const g = grainGain;
@@ -242,21 +245,24 @@ export async function createMediabunnyPlayer(opts: {
       setTimeout(() => g.disconnect(), 60);
     };
 
-    const playGrainAt = async (publicT: number) => {
+    const playGrainAt = async (publicT: number, durationSec = GRAIN_SEC) => {
       if (!audioSink || disposed || playing) return;
+      const grainSec = Math.max(0.03, Math.min(durationSec, 0.12));
       if (grainBusy) {
-        grainPending = publicT;
+        grainPending = { t: publicT, dur: grainSec };
         return;
       }
       grainBusy = true;
       try {
         const seq = ++grainSeq;
         const nativeStart = startTs + Math.max(0, Math.min(publicT, Math.max(0, duration - 0.01)));
-        // Pointer wiggling in place while the current grain still sounds:
-        // don't re-trigger, it would stutter.
+        // Re-trigger at (nearly) the same spot while the current grain still
+        // sounds — e.g. stepping against the clamped end — would stutter;
+        // skip it. Threshold is relative to the grain so consecutive frame
+        // steps (one grain-length apart) are never mistaken for wiggle.
         if (
-          Math.abs(nativeStart - grainNativeStart) < 0.012
-          && audioContext.currentTime - grainStartedAt < GRAIN_SEC
+          Math.abs(nativeStart - grainNativeStart) < grainSec * 0.25
+          && audioContext.currentTime - grainStartedAt < grainLen
         ) {
           return;
         }
@@ -268,7 +274,7 @@ export async function createMediabunnyPlayer(opts: {
           ]);
         }
         if (disposed || playing || audioContext.state !== "running" || seq !== grainSeq) return;
-        const grainEnd = Math.min(nativeStart + GRAIN_SEC, nativeEnd);
+        const grainEnd = Math.min(nativeStart + grainSec, nativeEnd);
         const collected: { buffer: AudioBuffer; timestamp: number }[] = [];
         for await (const wb of audioSink.buffers(nativeStart, grainEnd)) {
           collected.push(wb);
@@ -281,8 +287,8 @@ export async function createMediabunnyPlayer(opts: {
         const now = audioContext.currentTime;
         g.gain.setValueAtTime(0, now);
         g.gain.linearRampToValueAtTime(1, now + GRAIN_FADE);
-        g.gain.setValueAtTime(1, now + GRAIN_SEC - GRAIN_FADE);
-        g.gain.linearRampToValueAtTime(0, now + GRAIN_SEC);
+        g.gain.setValueAtTime(1, now + grainSec - GRAIN_FADE);
+        g.gain.linearRampToValueAtTime(0, now + grainSec);
         const nodes: AudioBufferSourceNode[] = [];
         for (const { buffer, timestamp } of collected) {
           const rel = timestamp - nativeStart;
@@ -298,12 +304,13 @@ export async function createMediabunnyPlayer(opts: {
         grainNodes = nodes;
         grainNativeStart = nativeStart;
         grainStartedAt = now;
+        grainLen = grainSec;
       } finally {
         grainBusy = false;
         if (grainPending !== null && !disposed && !playing) {
           const next = grainPending;
           grainPending = null;
-          void playGrainAt(next);
+          void playGrainAt(next.t, next.dur);
         }
       }
     };
@@ -389,8 +396,8 @@ export async function createMediabunnyPlayer(opts: {
           if (!disposed && wasPlaying && nativeAtStart < nativeEnd) void this.play();
         });
       },
-      playGrain(seconds) {
-        void playGrainAt(seconds);
+      playGrain(seconds, durationSec) {
+        void playGrainAt(seconds, durationSec);
       },
       dispose() {
         if (disposed) return;

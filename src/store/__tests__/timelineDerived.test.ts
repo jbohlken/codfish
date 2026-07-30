@@ -16,6 +16,7 @@ import {
   detectedFps,
   timelineFps,
   stepPlayhead,
+  frameStepTick,
   playbackTime,
   isPlaying,
   profiles,
@@ -178,6 +179,15 @@ describe("stepPlayhead", () => {
     playbackTime.value = 4.95;
     stepPlayhead(1);
     expect(playbackTime.value).toBe(5);
+  });
+
+  it("bumps frameStepTick on every step (the audio-blip trigger)", () => {
+    openClip(makeMedia({ fps: 30 }));
+    probedInfo.value = probe({ duration: 5 });
+    const before = frameStepTick.value;
+    stepPlayhead(1);
+    stepPlayhead(-1);
+    expect(frameStepTick.value).toBe(before + 2);
   });
 });
 
