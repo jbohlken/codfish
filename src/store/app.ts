@@ -503,24 +503,38 @@ export const timelineDuration = computed((): number => {
 // only notifies when its VALUE changes, so same-path writes don't refire this.
 const selectedMediaPath = computed((): string | null => selectedMedia.value?.path ?? null);
 
-// Probe the open clip off the critical path. Reset synchronously on switch so
-// a stale probe can't leak across clips; the token guards the async landing.
-// Debounced so arrowing through a bin only probes the clip the user lands on
-// (a probe can be expensive: index-less containers cost a header walk).
-// Skipped under vitest: the store loads in every suite and the probe would
-// pull mediabunny into each of them for a fetch that can only fail.
+export const PROBE_DEBOUNCE_MS = 200;
+
+/** Schedule the debounced probe for `path`; returns the cancel function the
+ *  effect uses as its cleanup. Debounce: arrowing through a bin only probes
+ *  the clip the user lands on (a probe can be expensive — index-less
+ *  containers cost a header walk). The token guards the async landing: a
+ *  probe that resolves after a newer schedule is discarded, and cancel()
+ *  covers the not-yet-started window. Exported with an injectable prober so
+ *  the timing contract is unit-testable — the effect below can't run under
+ *  vitest, where the store loads in every suite and a real probe could only
+ *  fail. */
 let _probeToken = 0;
+export function scheduleProbe(
+  path: string,
+  prober: (path: string) => Promise<MediaProbe | null> = probeMedia,
+): () => void {
+  const token = ++_probeToken;
+  const timer = setTimeout(() => {
+    void prober(path).then((info) => {
+      if (info && token === _probeToken) probedInfo.value = info;
+    });
+  }, PROBE_DEBOUNCE_MS);
+  return () => clearTimeout(timer);
+}
+
+// Probe the open clip off the critical path. Reset synchronously on switch so
+// a stale probe can't leak across clips.
 effect(() => {
   const path = selectedMediaPath.value;
   probedInfo.value = null;
   if (!path || import.meta.env.MODE === "test") return;
-  const token = ++_probeToken;
-  const timer = setTimeout(() => {
-    void probeMedia(path).then((info) => {
-      if (info && token === _probeToken) probedInfo.value = info;
-    });
-  }, 200);
-  return () => clearTimeout(timer);
+  return scheduleProbe(path);
 });
 
 /** Detected frame rate of the open clip: import-time sidecar probe (persisted)

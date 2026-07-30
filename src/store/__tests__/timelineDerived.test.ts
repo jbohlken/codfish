@@ -5,7 +5,7 @@
 // same-path project rewrites (caption edits clone MediaItems; an effect keyed
 // on object identity flapped the filmstrip and extent on every trim-drag
 // pointermove).
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   project,
   selectedMediaId,
@@ -20,6 +20,8 @@ import {
   isPlaying,
   profiles,
   selectedProfile,
+  scheduleProbe,
+  PROBE_DEBOUNCE_MS,
 } from "../app";
 import type { CodProject, MediaItem } from "../../types/project";
 import type { CaptionProfile } from "../../types/profile";
@@ -205,5 +207,56 @@ describe("probe effect keying (the trim-drag flap regression)", () => {
     selectedMediaId.value = "m2";
 
     expect(probedInfo.value).toBeNull();
+  });
+});
+
+describe("scheduleProbe (debounce + stale-token contract)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("probes only after the debounce elapses, then lands in probedInfo", async () => {
+    const prober = vi.fn(async () => probe({ duration: 6 }));
+    scheduleProbe("C:\\media\\a.mp4", prober);
+
+    await vi.advanceTimersByTimeAsync(PROBE_DEBOUNCE_MS - 1);
+    expect(prober).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(prober).toHaveBeenCalledTimes(1);
+    expect(probedInfo.value?.duration).toBe(6);
+  });
+
+  it("cancel inside the debounce window never probes (rapid clip-hop)", async () => {
+    const prober = vi.fn(async () => probe({}));
+    const cancel = scheduleProbe("C:\\media\\a.mp4", prober);
+
+    await vi.advanceTimersByTimeAsync(PROBE_DEBOUNCE_MS - 10);
+    cancel();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(prober).not.toHaveBeenCalled();
+    expect(probedInfo.value).toBeNull();
+  });
+
+  it("a slow probe superseded mid-flight cannot overwrite the newer clip's result", async () => {
+    // Clip A's probe starts (debounce elapsed) but resolves slowly…
+    let resolveA!: (v: ReturnType<typeof probe> | null) => void;
+    const proberA = vi.fn(() => new Promise<ReturnType<typeof probe> | null>((r) => { resolveA = r; }));
+    const cancelA = scheduleProbe("C:\\media\\a.mp4", proberA);
+    await vi.advanceTimersByTimeAsync(PROBE_DEBOUNCE_MS);
+    expect(proberA).toHaveBeenCalledTimes(1);
+
+    // …the user switches to clip B: A's timer already fired, so only the
+    // stale token protects us now.
+    cancelA();
+    const proberB = vi.fn(async () => probe({ duration: 2 }));
+    scheduleProbe("C:\\media\\b.mp4", proberB);
+    await vi.advanceTimersByTimeAsync(PROBE_DEBOUNCE_MS);
+    expect(probedInfo.value?.duration).toBe(2);
+
+    // A finally resolves, late — its landing must be discarded.
+    resolveA(probe({ duration: 99 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(probedInfo.value?.duration).toBe(2);
   });
 });
