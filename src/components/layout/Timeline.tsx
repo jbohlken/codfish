@@ -6,8 +6,9 @@ import { codometer, approach, buildReaderSchedule, readerPosition } from "../../
 import { CODOMETER_ENABLED } from "../../lib/features";
 import { useSignalEffect, signal, computed, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
-import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
+import { getCachedPeaks, cachePeaks } from "../../lib/peaks-cache";
 import { generatePeaksViaMediabunny } from "../../lib/peaksMediabunny";
+import { loadPeaks } from "../../lib/peaksPipeline";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
 import { createFilmstripPainter, createThumbSource, type FilmstripPainter } from "../../lib/filmstrip";
 import { nextBoundary, clampStart, clampEnd, snapToMediaFrame, computeTrim, computeRoll } from "../../lib/playhead";
@@ -214,11 +215,7 @@ export function Timeline() {
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
 
-    // Peaks come from the sidecar's ffmpeg, not from a browser fetch+decode.
-    // The browser-side path is unreliable for the Tauri asset protocol
-    // (whole-file fetch fails for many files even though playback via range
-    // requests works fine) and can't handle codecs WebAudio doesn't support.
-    // On failure (no sidecar, no audio stream) drop the spinner so
+    // On hard failure (both generators unavailable) drop the spinner so
     // "Generating waveform…" doesn't hang forever.
     const markFailed = (reason: string) => {
       flog(reason);
@@ -227,61 +224,25 @@ export function Timeline() {
       }
     };
     flog(`init path=${media.path}`);
-    (async () => {
-      const mtime = await invoke<number>("file_mtime", { path: media.path });
-      if (cancelled) return;
-      let peaks: Float32Array;
-      let audioDuration: number;
-      // Look up by (path, mtime) only — independent of density, so a stale
-      // <video> duration on a media switch can't cause a spurious miss.
-      const cached = await getCachedPeaks(media.path, mtime);
-      if (cancelled) return;
-      if (cached) {
-        flog(`cache hit bins=${cached.peaks.length}`);
-        peaks = cached.peaks;
-        audioDuration = cached.duration;
-      } else {
-        // In-process first: mediabunny decodes at the native sample rate (the
-        // sidecar pipe is 8 kHz mono), derives its own exact duration for the
-        // density policy, and doesn't need the daemon to be up. Returns null
-        // for anything it can't read/decode → sidecar ffmpeg fallback below.
-        // The cancellation hook stops an orphaned decode on clip switch; a
-        // decode that completes anyway is still cached (cachePeaks BEFORE the
-        // cancelled check) so the work isn't thrown away.
-        const mb = await generatePeaksViaMediabunny(media.path, () => cancelled);
-        if (mb) {
-          cachePeaks(media.path, mtime, mb.peaks, mb.duration, mb.binsPerSec);
-          if (cancelled) return;
-          peaks = mb.peaks;
-          audioDuration = mb.duration;
-          flog(`mediabunny peaks bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
-        } else if (cancelled) {
-          return;
-        } else {
-          // Density scales with duration (denser bins for shorter files). Only
-          // needed when actually generating, so we wait for the <video> metadata
-          // here rather than up front — the cache lookup above doesn't need it.
-          // The painter is density-agnostic, so an approximate value is fine.
-          const videoDuration = await waitForMediaDuration(5000);
-          if (cancelled) return;
-          const binsPerSec = desiredBinsPerSec(videoDuration);
-          flog(`mediabunny declined → generate_peaks binsPerSec=${binsPerSec}`);
-          const r = await invoke<{ peaks: number[]; duration: number }>(
-            "generate_peaks",
-            { path: media.path, binsPerSec },
-          );
-          if (cancelled) return;
-          peaks = new Float32Array(r.peaks);
-          audioDuration = r.duration;
-          cachePeaks(media.path, mtime, peaks, audioDuration, binsPerSec);
-          flog(`generated bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
-        }
-      }
-      painter.setPeaks(peaks, audioDuration);
-      waveformAudioDuration.value = audioDuration;
+    // The branching (cache → mediabunny → sidecar, cancellation checkpoints)
+    // lives in lib/peaksPipeline where it's unit-tested; this effect only
+    // supplies the real dependencies and lands the result in the signals.
+    loadPeaks(media.path, () => cancelled, {
+      getMtime: (path) => invoke<number>("file_mtime", { path }),
+      getCached: getCachedPeaks,
+      cache: cachePeaks,
+      generateInProcess: generatePeaksViaMediabunny,
+      generateSidecar: (path, binsPerSec) =>
+        invoke<{ peaks: number[]; duration: number }>("generate_peaks", { path, binsPerSec }),
+      waitForElementDuration: () => waitForMediaDuration(5000),
+      log: flog,
+    }).then((result) => {
+      if (!result || cancelled) return;
+      painter.setPeaks(result.peaks, result.duration);
+      waveformAudioDuration.value = result.duration;
       waveformState.value = "ready";
-      flog(`painter ready audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
-    })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
+      flog(`painter ready audioDuration=${result.duration.toFixed(2)}s bins=${result.peaks.length} source=${result.source}`);
+    }).catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     return () => {
       cancelled = true;
