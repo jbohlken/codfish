@@ -6,7 +6,11 @@
  */
 
 const DB_NAME = "codfish-peaks";
-const DB_VERSION = 2;
+// v3: purged entries poisoned by the swapped-args bug in the first
+// mediabunny-peaks build (all-zero amplitudes cached with correct bin counts).
+// v4: purge entries whose duration was the AAC-padded decode end rather than
+// the span of the stored bins — a ~0.27% time-axis stretch (FR7 drift).
+const DB_VERSION = 4;
 const STORE = "peaks";
 
 interface PeakEntry {
