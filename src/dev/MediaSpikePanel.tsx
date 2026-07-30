@@ -474,16 +474,21 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
     return rec;
   };
 
-  /** Cheap fingerprint of the canvas's top-left 32×32 — enough to tell
-   *  whether frames are ADVANCING (the frozen-video bug class: audio and
-   *  clock run while the frame iterator died mid-restart). */
-  const canvasHash = (canvas: HTMLCanvasElement): number => {
-    if (canvas.width === 0 || canvas.height === 0) return 0;
-    const data = canvas
-      .getContext("2d")!
-      .getImageData(0, 0, Math.min(32, canvas.width), Math.min(32, canvas.height)).data;
+  /** Fingerprint for "are frames ADVANCING" (the frozen-video bug class:
+   *  audio and clock run while the frame iterator died mid-restart).
+   *  Downsamples the WHOLE frame to 32×32 and hashes every cell — sampling a
+   *  fixed corner region false-positived as FROZEN when that corner of the
+   *  test pattern happened to be static content. */
+  const canvasHash = (source: HTMLCanvasElement): number => {
+    if (source.width === 0 || source.height === 0) return 0;
+    const probe = document.createElement("canvas");
+    probe.width = 32;
+    probe.height = 32;
+    const ctx = probe.getContext("2d")!;
+    ctx.drawImage(source, 0, 0, 32, 32);
+    const data = ctx.getImageData(0, 0, 32, 32).data;
     let h = 0;
-    for (let i = 0; i < data.length; i += 16) h = (h * 31 + data[i]) >>> 0;
+    for (let i = 0; i < data.length; i += 4) h = (h * 31 + data[i]) >>> 0;
     return h;
   };
 
