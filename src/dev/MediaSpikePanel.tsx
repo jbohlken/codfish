@@ -23,7 +23,9 @@ import {
   type InputVideoTrack,
 } from "mediabunny";
 import { generatePeaksViaMediabunny } from "../lib/peaksMediabunny";
+import { probeMedia } from "../lib/mediaProbe";
 import { loadMediabunny } from "../lib/mediabunnyRuntime";
+import { daemonStatus } from "../store/app";
 
 // ProRes/AC-3 decoder registration goes through the SAME shared runtime loader
 // production uses (lib/mediabunnyRuntime) — so the battery exercises exactly
@@ -471,7 +473,7 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
     return rec;
   };
 
-  const buildReport = (all: FileResult[], sanity: string[] = []): string => {
+  const buildReport = (all: FileResult[], sanity: string[] = [], parity: string[] = []): string => {
     const row = (r: FileResult, m: SourceMetrics) => {
       const v = m.video;
       const a = m.audio;
@@ -506,6 +508,10 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       "## Peaks sanity (production lib/peaksMediabunny path)",
       "",
       ...(sanity.length ? sanity.map((s) => `- ${s}`) : ["- (not run)"]),
+      "",
+      "## Probe parity (mediabunny vs sidecar probe_fps — import-swap gate)",
+      "",
+      ...(parity.length ? parity.map((s) => `- ${s}`) : ["- (not run)"]),
       "",
       "## Raw data",
       "",
@@ -575,8 +581,54 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
         push(flag ? "err" : "ok", `  ${line}${flag}`);
       }
 
+      // Probe parity — the gate for swapping import-time probe_fps to
+      // mediabunny: both probes must agree on fps/VFR/hasAudio across the
+      // suite before mediabunny verdicts may persist into .cod files. fps
+      // disagreement is tolerated when BOTH flag VFR (an average frame rate
+      // for VFR media is arbitrary; the sidecar averages the whole file, the
+      // probe samples the first ~120 packets — both are correctly flagged).
+      push("head", "━━ probe parity (mediabunny vs sidecar probe_fps) ━━");
+      const parity: string[] = [];
+      const daemonDeadline = performance.now() + 90_000;
+      while (daemonStatus.value !== "ready" && performance.now() < daemonDeadline && !isStale()) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
       if (isStale()) return;
-      const saved = await invoke<string>("save_spike_report", { content: buildReport(all, sanity) });
+      if (daemonStatus.value !== "ready") {
+        push("err", "  daemon not ready within 90s — parity comparison SKIPPED");
+        parity.push("SKIPPED: daemon not ready");
+      } else {
+        for (const path of files) {
+          if (isStale()) return;
+          const name = basename(path);
+          const [mbProbe, sidecar] = await Promise.all([
+            probeMedia(path),
+            invoke<{ fps: number | null; vfr: boolean; hasAudio?: boolean }>("probe_fps", { path })
+              .catch(() => null),
+          ]);
+          if (!mbProbe || !sidecar) {
+            const line = `${name}: ${!mbProbe ? "mediabunny declined" : ""}${!mbProbe && !sidecar ? " + " : ""}${!sidecar ? "sidecar failed" : ""}`;
+            parity.push(line);
+            push(name.endsWith(".avi") || name.endsWith(".wmv") ? "info" : "err", `  ${line}`);
+            continue;
+          }
+          const bothVfr = mbProbe.vfr && sidecar.vfr;
+          const fpsOk = bothVfr
+            || (mbProbe.fps === null && sidecar.fps === null)
+            || (mbProbe.fps !== null && sidecar.fps !== null && Math.abs(mbProbe.fps - sidecar.fps) <= 0.001);
+          const vfrOk = mbProbe.vfr === sidecar.vfr;
+          const audioOk = sidecar.hasAudio === undefined || mbProbe.hasAudio === sidecar.hasAudio;
+          const ok = fpsOk && vfrOk && audioOk;
+          const line = `${name}: mb{fps=${mbProbe.fps} vfr=${mbProbe.vfr} audio=${mbProbe.hasAudio}} `
+            + `sidecar{fps=${sidecar.fps} vfr=${sidecar.vfr} audio=${sidecar.hasAudio}}`
+            + (ok ? "" : ` ← MISMATCH(${[!fpsOk && "fps", !vfrOk && "vfr", !audioOk && "audio"].filter(Boolean).join(",")})`);
+          parity.push(line);
+          push(ok ? "ok" : "err", `  ${line}`);
+        }
+      }
+
+      if (isStale()) return;
+      const saved = await invoke<string>("save_spike_report", { content: buildReport(all, sanity, parity) });
       push("head", `━━ report saved → ${saved} ━━`);
     } catch (e) {
       push("err", `run all — FAILED: ${errText(e)}`);

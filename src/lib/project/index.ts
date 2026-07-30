@@ -22,6 +22,7 @@ const PROJECT_VERSION = 1;
 
 export { VIDEO_EXTS, AUDIO_EXTS } from "../mediaExts";
 import { VIDEO_EXTS, AUDIO_EXTS } from "../mediaExts";
+import { probeMedia } from "../mediaProbe";
 const MEDIA_EXTS = [...VIDEO_EXTS, ...AUDIO_EXTS];
 
 // ── Public actions ────────────────────────────────────────────────────────────
@@ -440,6 +441,22 @@ interface ProbeResult {
 }
 
 export async function probeFps(path: string): Promise<ProbeResult> {
+  // Mediabunny first: instant, works with the daemon down, and parity-verified
+  // against the sidecar over the fixture suite (RESULTS.md "probe parity" —
+  // exact fps/VFR/hasAudio agreement on every accepted format; VFR files agree
+  // on the flag, which is what matters). The sidecar stays as the fallback for
+  // containers mediabunny declines (e.g. AVI). Same persisted fields either
+  // way, and the tri-state hasAudio contract holds: a successful mediabunny
+  // probe always KNOWS whether audio exists, while a total failure leaves it
+  // undefined so a transient error can't permanently block transcription.
+  // Skipped under vitest so import-flow tests keep exercising the (mocked)
+  // sidecar path instead of paying a doomed mediabunny load per suite.
+  if (import.meta.env.MODE !== "test") {
+    const probe = await probeMedia(path);
+    if (probe) {
+      return { fps: probe.fps, vfr: probe.vfr, hasAudio: probe.hasAudio };
+    }
+  }
   try {
     return await invoke<ProbeResult>("probe_fps", { path });
   } catch (e: any) {
