@@ -27,6 +27,7 @@ import {
   mediaDuration,
   waveformAudioDuration,
   probedInfo,
+  usingElementPlayer,
   detectedFps,
   timelineFps,
   timelineDuration,
@@ -743,7 +744,12 @@ export function Timeline() {
             class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}${vfrDetected ? " timeline-fps-badge--vfr" : ""}`}
             data-tooltip={
               vfrDetected
-                ? "Variable frame rate — the playhead grid uses the average rate, so frame steps may not land on true frame boundaries (displayed frames are exact)"
+                // "Displayed frames are exact" is an ENGINE promise — the
+                // compatibility player seeks via the frame-midpoint
+                // approximation and can show a neighboring frame on VFR.
+                ? usingElementPlayer.value
+                  ? "Variable frame rate — frame stepping and displayed frames may be imprecise on the compatibility player"
+                  : "Variable frame rate — the playhead grid uses the average rate, so frame steps may not land on true frame boundaries (displayed frames are exact)"
                 : fpsIsDetected
                   ? "Detected from file"
                   : `No framerate detected — using profile default (${profileDefaultFps} fps)`
@@ -865,7 +871,9 @@ export function Timeline() {
                     <span>No audio track</span>
                   </div>
                 )}
-                {duration > 0 && <TimelinePlayhead duration={duration} />}
+                {/* The round handle belongs to the TOPMOST lane (it pokes up
+                    onto the ruler): here only when the filmstrip is hidden. */}
+                {duration > 0 && <TimelinePlayhead duration={duration} handle={!showFilmstrip} />}
                 {duration > 0 && resizeIndicator.value !== null && (
                   <div
                     class={`timeline-resize-indicator${resizeSnapped.value ? " timeline-resize-indicator--snapped" : ""}`}
@@ -1176,7 +1184,7 @@ function ResizableCaptionBlock({
 
 /** Reads playbackTime locally so the parent Timeline doesn't have to
  *  subscribe to the rAF tick — only this 1-div component re-renders 60×/s. */
-function TimelinePlayhead({ duration }: { duration: number }) {
+function TimelinePlayhead({ duration, handle = true }: { duration: number; handle?: boolean }) {
   const currentTime = playbackTime.value;
   // Cod-o-meter: the fish is drawn at the VIRTUAL READER's media position (see
   // lib/codometer) — on the playhead when captions read at exactly max CPS,
@@ -1242,7 +1250,7 @@ function TimelinePlayhead({ duration }: { duration: number }) {
   return (
     <>
       <div
-        class="timeline-playhead"
+        class={`timeline-playhead${handle ? "" : " timeline-playhead--line"}`}
         style={{ left: `${(currentTime / duration) * 100}%` }}
       />
       {fish}
@@ -1250,14 +1258,15 @@ function TimelinePlayhead({ duration }: { duration: number }) {
   );
 }
 
-/** Line-only playhead echo for the filmstrip lane. Same per-tick isolation
- *  pattern as TimelinePlayhead; no handle or fish — those belong to the
- *  waveform row (one grab affordance, one mascot). */
+/** Playhead echo for the filmstrip lane. Same per-tick isolation pattern as
+ *  TimelinePlayhead, no fish. When this lane exists it is the topmost, so it
+ *  carries the round handle (poking up onto the ruler) and the waveform's
+ *  playhead goes line-only — the ball sits on the ruler either way. */
 function FilmstripPlayhead({ duration }: { duration: number }) {
   const currentTime = playbackTime.value;
   return (
     <div
-      class="timeline-playhead timeline-playhead--line"
+      class="timeline-playhead"
       style={{ left: `${(currentTime / duration) * 100}%` }}
     />
   );

@@ -1,7 +1,7 @@
 import { useRef, useEffect, useReducer } from "preact/hooks";
 import { MusicNoteIcon as MusicNote, WarningIcon as Warning } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps, effectiveVolume } from "../../store/app";
+import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps, effectiveVolume, usingElementPlayer } from "../../store/app";
 import { EnginePlayer } from "./EnginePlayer";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
@@ -64,6 +64,14 @@ export function VideoPanel() {
   const currentTime = playbackTime.value;
 
   const activeCaption = media ? findCaptionAt(media.captions, currentTime) : null;
+
+  // Which player owns this clip (phase-3 routing: engine default, element on
+  // rescue/force). Mirrored into the store so e.g. the VFR badge can scope
+  // its "displayed frames are exact" claim to the engine.
+  const useElement = media != null && (FORCE_ELEMENT || rescuedPaths.has(media.path));
+  useEffect(() => {
+    usingElementPlayer.value = useElement;
+  }, [useElement]);
 
   const isEditingActive = activeCaption !== null && editingIndex.value === activeCaption.index;
   const overlayLines = isEditingActive
@@ -208,7 +216,7 @@ export function VideoPanel() {
           <span class="empty-state-title">No media selected</span>
           <span class="empty-state-body">Select a media item from the project panel.</span>
         </div>
-      ) : !(FORCE_ELEMENT || rescuedPaths.has(media.path)) ? (
+      ) : !useElement ? (
         // Phase 3: the mediabunny engine is the default player — one clock,
         // deterministic seeks, every accepted format. It speaks the element
         // path's signal protocol, so the overlay/placeholder and downstream

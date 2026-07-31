@@ -88,6 +88,11 @@ export const waveformAudioDuration = signal(0);
 // Infinity/provisional durations non-faststart MP4s feed the <video> element.
 // RUNTIME ONLY — never persisted into the project (.cod stays untouched).
 export const probedInfo = signal<MediaProbe | null>(null);
+// True while the CURRENT clip plays through the <video> compatibility path
+// (engine rescued or forced; maintained by VideoPanel). Surfaces that promise
+// engine behavior — the VFR badge's "displayed frames are exact" — read this
+// to stay honest when the system player is actually driving.
+export const usingElementPlayer = signal(false);
 // True only while the user is dragging the waveform to scrub. Lets the view-state
 // persist effect below skip the continuous drag and fire once on release — when
 // the playhead has "landed somewhere" — instead of writing on every pointermove.
