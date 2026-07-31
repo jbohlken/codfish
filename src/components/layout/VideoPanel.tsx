@@ -27,9 +27,12 @@ const FORCE_ELEMENT = typeof localStorage !== "undefined"
 
 // User-facing explanation for the compatibility-playback badge. With phase-3
 // routing the element branch only ever renders as a fallback, so reaching it
-// is always worth telling the user about: engine features (frame-step audio,
-// Ctrl/Cmd scrub audio, deterministic stepping) don't apply here.
-const LIMITS = "Frame stepping may be less precise, and step/scrub audio is unavailable.";
+// is always worth telling the user about. Wording is deliberately scoped to
+// what's actually true: step/scrub audio is ALWAYS absent here, but frame
+// stepping only degrades on variable-frame-rate files (the system player is
+// seeked via the frame-midpoint approximation, which assumes a constant
+// rate; the engine reads real per-frame timestamps instead).
+const LIMITS = "Step and scrub audio are unavailable, and frame stepping on variable-frame-rate files may be less precise.";
 function rescueTooltip(reason: string | undefined): string {
   switch (reason) {
     case "hdr":
