@@ -92,10 +92,10 @@ I think undo history can result in bringing back an added caption that has no co
 ### Playback
 
 - [X] **T1** Play/pause with transport button
-- [!] **T2** Click waveform to seek -- playhead jumps correctly
--- Doesn't work if playing
-- [!] **T3** Drag on waveform to scrub
--- Doesn't work if playing
+- [X] **T2** Click waveform to seek -- playhead jumps correctly
+-- Was: "Doesn't work if playing". Fixed on the `mediabunny` branch (engine-default playback + scrub-during-play race fix); retest at next release.
+- [X] **T3** Drag on waveform to scrub
+-- Was: "Doesn't work if playing". Fixed with T2 -- scrubbing a playing timeline now stops playback immediately on both players.
 - [X] **T4** Caption list auto-scrolls to playing caption during playback
 - [X] **T5** Playhead auto-scrolls into view when zoomed in
 
@@ -120,7 +120,7 @@ First and last captions don't need to abide by the minGap rules for beginning an
 - [X] **T16** Zoom anchors around cursor (Ctrl+scroll) or playhead (buttons)
 
 -Should we reset zoom when a new project is loaded?
--Sometimes the waveform still doesn't appear at certain zoom sizes (inconsistent) — PARKED. Breakage starts at ~28x zoom (total waveform width ~32767px, Chrome single-canvas limit). Root cause is WaveSurfer v7's lazy-render + isScrollable heuristic interacting with our outer-scroll-sync shim. Revisit alongside smooth-scroll rework since both touch the same sync path.
+-~~Sometimes the waveform still doesn't appear at certain zoom sizes (inconsistent) — PARKED.~~ RESOLVED: WaveSurfer was replaced by a viewport-sized sticky-canvas painter (repaint cost O(viewport) at any zoom; no 32767px canvas limit).
 
 ### Timecode
 
@@ -135,10 +135,11 @@ First and last captions don't need to abide by the minGap rules for beginning an
 ### Video (playback + transcription)
 
 - [X] **MF1** mp4 (h.264, HEVC -- HEVC relies on OS decoder extension being present)
-- [X] **MF2** mov (h.264, HEVC; ProRes = waveform + captions only, no playback)
+- [X] **MF2** mov (h.264, HEVC; ~~ProRes = waveform + captions only, no playback~~ ProRes PLAYS via the mediabunny engine as of the `mediabunny` branch)
 - [X] **MF3** webm (VP9 + Opus)
+- [ ] **MF4** mkv (h.264 + AAC) -- NEW on the `mediabunny` branch: imports and plays via the engine (WebView2's <video> still rejects the container; the engine owns it)
 
-Dropped: mkv, avi -- too patchy across WebView2 codec builds to support reliably.
+Dropped: avi -- unsupported by both WebView2 and mediabunny; import shows the skipped-items notice. (mkv was dropped here for WebView2 patchiness; the engine un-dropped it.)
 
 ### Audio (playback + transcription)
 
@@ -147,10 +148,11 @@ Dropped: mkv, avi -- too patchy across WebView2 codec builds to support reliably
 - [X] **MF9** aac
 - [X] **MF10** flac
 - [X] **MF11** ogg
+- [ ] **MF16** m4a -- NEW on the `mediabunny` branch: imports and plays via the engine (was dropped for MEDIA_ERR_SRC_NOT_SUPPORTED)
 
 For each: waveform loads, playback works, transcription produces captions.
 
-Dropped: m4a, aif/aiff, au -- WebView2 rejects playback (MEDIA_ERR_SRC_NOT_SUPPORTED); mp3/wav/aac/flac/ogg cover the lossy/lossless use cases.
+Dropped: aif/aiff, au -- niche; mp3/wav/aac/flac/ogg/m4a cover the lossy/lossless use cases. (m4a was dropped here for WebView2 rejection; the engine un-dropped it.)
 
 ### No Audio Stream
 
@@ -176,9 +178,9 @@ Dropped: m4a, aif/aiff, au -- WebView2 rejects playback (MEDIA_ERR_SRC_NOT_SUPPO
 ### Variable Frame Rate (VFR)
 
 - [X] **FR5** VFR media -- fps badge shows "VFR" label
-- [X] **FR6** VFR media -- tooltip warns that frame-snapping may be imprecise
-- [!] **FR7** VFR media -- captions still generate and export correctly
-   -There seems to be an issue with the timeline waveform display and the caption regions not lining up. Playback shows captions are timed correctly, but it's like the waveform isn't right, including the seek bar (drift?)
+- [X] **FR6** VFR media -- tooltip warns about VFR (wording is now player-aware: on the engine, displayed frames are exact and only the step grid is approximate; on the compatibility player both may be imprecise)
+- [X] **FR7** VFR media -- captions still generate and export correctly
+   -~~Waveform/caption regions not lining up, including the seek bar (drift?)~~ CLOSED on the `mediabunny` branch: the drift was the peaks time-axis stretch (AAC's padded final decode frame reported as the duration); fixed with an axis invariant (bins/duration == binsPerSec) and verified against the `vfr-clicks-h264-aac.mp4` fixture (1 kHz clicks at half-second marks + burned-in clock; clicks align with ruler ticks at every zoom, both sides of the mid-file rate switch).
 
 
 ### Drop Frame
@@ -326,3 +328,44 @@ Submit Feedback and About modals can overlay.
 - [X] **EC11** Dark mode -- all panels, modals, and timeline render correctly
 
 Dial in profiles -- date last edited?
+---
+
+## Mediabunny engine addendum (post-0.6.0, `mediabunny` branch)
+
+The media engine changed under everything above: mediabunny (WebCodecs) is now
+the DEFAULT player for every clip, with the `<video>` element demoted to a
+compatibility fallback (HDR, undecodable codecs, unreadable files — an amber
+"compatibility playback" badge names the reason and its limits). Probing,
+waveform peaks, and thumbnails also run in-process; the sidecar's ffmpeg is
+transcription + fallback insurance only. New matrix for the next full pass:
+
+### Playback engine
+
+- [ ] **MB1** mp4/webm/mp3/wav (everyday formats) play via the engine — playback, pause, seek, end-of-media restart on spacebar
+- [ ] **MB2** ProRes .mov plays with picture AND sound; A/V sync by ear
+- [ ] **MB3** mkv and m4a import via dialog AND drag-drop, and play
+- [ ] **MB4** Scrub or frame-step a PLAYING timeline — everything stops immediately (no ghost audio)
+- [ ] **MB5** Compatibility badge: force with localStorage `codfish:playerEngine = "element"` + reload — amber chip on every clip, tooltip explains; remove key to restore
+- [ ] **MB6** Volume slider + mute (transport bar, right side) — affects both players identically; persists across restarts; dragging while muted unmutes
+
+### Step/scrub audio (engine clips only)
+
+- [ ] **MB7** Frame step (arrow keys / transport buttons) — one frame's worth of audio blips at the landed position
+- [ ] **MB8** Bare waveform drag — silent; holding Ctrl (Cmd on Mac) during the drag — audible grains, live mid-gesture
+- [ ] **MB9** Compatibility-player clips — no blips/grains (expected; badge tooltip says so)
+
+### Filmstrip
+
+- [ ] **MB10** Video clips show the thumbnail lane; toggle button in the timeline toolbar (disabled for audio-only clips)
+- [ ] **MB11** Re-opening a clip paints the strip instantly (persistent cache); thumbnails stay sharp after a zoom
+- [ ] **MB12** Playhead ball sits on the ruler whether the filmstrip is shown or hidden; line crosses both lanes
+
+### Dev battery (regression harness, dev builds only)
+
+- [ ] **MB13** `npm run spike:media` generates the 25-fixture suite; Ctrl+Shift+B → "run all fixtures" → RESULTS.md reports engine smoke ALL PASS (clock, frames-advance, seek+play, seek+pause, restart), peaks sanity with no FLAT/AXIS flags, and probe parity
+
+### Release notes to carry (when this ships)
+
+- New playable formats: ProRes .mov, .mkv, .m4a
+- Compatibility-playback badge for files the engine hands to the system player
+- Reverting from this build to an older one leaves the older build unable to READ the waveform cache (it regenerates every launch; harmless)
