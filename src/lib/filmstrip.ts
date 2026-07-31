@@ -13,6 +13,7 @@
  */
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { loadMediabunny } from "./mediabunnyRuntime";
+import { getCachedThumbs, cacheThumb, pruneStaleThumbs } from "./thumbs-cache";
 
 // ── Pure slot/key math (unit-tested; the painter calls these) ────────────────
 
@@ -132,16 +133,24 @@ export function createFilmstripPainter(opts: {
   /** Full-width filmstrip row — provides the row height. */
   rowEl: HTMLElement;
   source: ThumbSource;
+  /** When present, thumbs persist to IndexedDB keyed (path, mtime, heightPx)
+   *  and re-opening the clip paints from the store instead of re-decoding.
+   *  heightPx must match the sink height the source decodes at. */
+  persist?: { path: string; mtime: number; heightPx: number };
 }): FilmstripPainter {
-  const { canvas, scrollEl, rowEl, source } = opts;
+  const { canvas, scrollEl, rowEl, source, persist } = opts;
   const ctx = canvas.getContext("2d");
+  if (persist) pruneStaleThumbs(persist.path, persist.mtime);
 
   let layoutDuration = 0;
   let raf = 0;
   let destroyed = false;
   let loading = false;
   // key → decoded thumb, or null for "asked, no frame there" (don't re-ask).
-  const cache = new Map<number, HTMLCanvasElement | OffscreenCanvas | null>();
+  const cache = new Map<number, HTMLCanvasElement | OffscreenCanvas | ImageBitmap | null>();
+  const closeThumb = (t: HTMLCanvasElement | OffscreenCanvas | ImageBitmap | null | undefined) => {
+    if (t instanceof ImageBitmap) t.close();
+  };
   let liveIterator: AsyncGenerator<unknown, void, unknown> | null = null;
 
   /** Keys for currently visible slots, in paint order. */
@@ -220,16 +229,37 @@ export function createFilmstripPainter(opts: {
           const keep = new Set(visible);
           for (const key of cache.keys()) {
             if (cache.size + missing.length <= CACHE_CAP) break;
-            if (!keep.has(key)) cache.delete(key);
+            if (!keep.has(key)) {
+              closeThumb(cache.get(key));
+              cache.delete(key);
+            }
           }
         }
-        const times = missing.map((k) => keyTime(k, source.keyFps, layoutDuration));
+        // Persistent store first: a re-opened clip paints from IndexedDB
+        // without touching the decoder.
+        let toDecode = missing;
+        if (persist) {
+          const stored = await getCachedThumbs(persist.path, persist.mtime, persist.heightPx, missing);
+          if (destroyed) {
+            for (const bmp of stored.values()) bmp.close();
+            return;
+          }
+          for (const [key, bitmap] of stored) cache.set(key, bitmap);
+          if (stored.size) schedulePaint();
+          toDecode = missing.filter((k) => !cache.has(k));
+          if (!toDecode.length) continue;
+        }
+        const times = toDecode.map((k) => keyTime(k, source.keyFps, layoutDuration));
         const iterator = source.canvasesAt(times);
         liveIterator = iterator;
         let i = 0;
         for await (const wrapped of iterator) {
           if (destroyed) return;
-          cache.set(missing[i++], wrapped ? wrapped.canvas : null);
+          const key = toDecode[i++];
+          cache.set(key, wrapped ? wrapped.canvas : null);
+          if (wrapped && persist) {
+            cacheThumb(persist.path, persist.mtime, persist.heightPx, key, wrapped.canvas);
+          }
           schedulePaint();
         }
         liveIterator = null;
@@ -271,6 +301,7 @@ export function createFilmstripPainter(opts: {
       resizeObserver?.disconnect();
       scrollEl.removeEventListener("scroll", schedulePaint);
       void liveIterator?.return();
+      for (const thumb of cache.values()) closeThumb(thumb);
       cache.clear();
       source.dispose();
     },

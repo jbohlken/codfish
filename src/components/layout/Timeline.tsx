@@ -287,16 +287,30 @@ export function Timeline() {
     let cancelled = false;
     let painter: FilmstripPainter | null = null;
     const dpr = Math.max(1, window.devicePixelRatio || 1);
-    void createThumbSource(media.path, rowEl.clientHeight * dpr).then((source) => {
+    // One lane height shared by the sink and the persistence key, so stored
+    // thumbs always match the decode size exactly.
+    const laneH = Math.max(16, Math.round(rowEl.clientHeight * dpr));
+    void (async () => {
+      // mtime keys the persistent thumb cache (same invalidation rule as
+      // peaks); failure just disables persistence for this open.
+      const mtime = await invoke<number>("file_mtime", { path: media.path }).catch(() => null);
+      if (cancelled) return;
+      const source = await createThumbSource(media.path, laneH);
       if (!source) return;
       if (cancelled) {
         source.dispose();
         return;
       }
-      painter = createFilmstripPainter({ canvas, scrollEl, rowEl, source });
+      painter = createFilmstripPainter({
+        canvas,
+        scrollEl,
+        rowEl,
+        source,
+        persist: mtime !== null ? { path: media.path, mtime, heightPx: laneH } : undefined,
+      });
       filmPainterRef.current = painter;
       painter.setLayoutDuration(timelineDuration.peek());
-    });
+    })();
     return () => {
       cancelled = true;
       painter?.destroy();

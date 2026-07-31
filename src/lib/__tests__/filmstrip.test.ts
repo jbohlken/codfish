@@ -1,5 +1,22 @@
 import { describe, it, expect } from "vitest";
 import { slotWidthPx, visibleSlotRange, slotCenterTime, thumbKey, keyTime, clampKeyFps } from "../filmstrip";
+import { thumbCacheKey } from "../thumbs-cache";
+
+describe("thumbCacheKey", () => {
+  it("is unambiguous under adversarial field boundaries", () => {
+    // Same concatenation, different field split — NUL separators must keep
+    // them distinct (spaces and digits can legally appear in paths).
+    expect(thumbCacheKey("C:\\a 1", 2, 88, 3)).not.toBe(thumbCacheKey("C:\\a", 12, 88, 3));
+    expect(thumbCacheKey("p", 1, 884, 5)).not.toBe(thumbCacheKey("p", 1, 88, 45));
+  });
+  it("varies with every field", () => {
+    const base = thumbCacheKey("p", 1, 88, 5);
+    expect(thumbCacheKey("q", 1, 88, 5)).not.toBe(base);
+    expect(thumbCacheKey("p", 2, 88, 5)).not.toBe(base);
+    expect(thumbCacheKey("p", 1, 44, 5)).not.toBe(base);
+    expect(thumbCacheKey("p", 1, 88, 6)).not.toBe(base);
+  });
+});
 
 describe("slotWidthPx", () => {
   it("derives width from row height and aspect", () => {
