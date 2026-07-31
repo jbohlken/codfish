@@ -74,7 +74,11 @@ export function EnginePlayer({ media, onRescue }: {
     const tick = () => {
       if (!alive) return;
       const player = playerRef.current;
-      if (player) {
+      // isPlaying.peek(): the effect cleanup (alive=false) only lands after
+      // Preact processes the re-render, so one stale tick can fire after the
+      // signal already flipped to paused — it must not write-through a
+      // scrub position as if it were a during-playback seek.
+      if (player && isPlaying.peek()) {
         const pt = playbackTime.value;
         if (Math.abs(pt - rafLastWrittenRef.current) > 1 / (2 * fps)) {
           player.seek(pt);

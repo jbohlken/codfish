@@ -319,7 +319,17 @@ export async function createMediabunnyPlayer(opts: {
       }
     };
 
+    // Bumped by EVERY pause() call — including when already internally paused.
+    // seek()'s auto-resume checks it, so a pause landing while a seek's
+    // iterator restart is in flight cancels the pending resume. Without the
+    // unconditional bump, the scrub-during-play race resurrected playback:
+    // a stale rAF tick seeks (engine internally pauses, capturing
+    // wasPlaying=true), the real pause then no-ops on the early return, and
+    // the seek's .then resumes audio under a paused UI.
+    let resumeGen = 0;
+
     const pause = () => {
+      resumeGen++;
       if (!playing) return;
       nativeAtStart = nativeClock();
       playing = false;
@@ -395,9 +405,15 @@ export async function createMediabunnyPlayer(opts: {
         if (disposed) return;
         const wasPlaying = playing;
         if (wasPlaying) pause();
+        // Captured AFTER the internal pause's bump: only an EXTERNAL pause
+        // (or a later seek's pause) arriving during the iterator restart can
+        // advance it past this value and veto the resume.
+        const gen = resumeGen;
         nativeAtStart = startTs + Math.max(0, Math.min(seconds, duration));
         void startFrameIterator().then(() => {
-          if (!disposed && wasPlaying && nativeAtStart < nativeEnd) void this.play();
+          if (!disposed && wasPlaying && gen === resumeGen && nativeAtStart < nativeEnd) {
+            void this.play();
+          }
         });
       },
       setVolume(value) {

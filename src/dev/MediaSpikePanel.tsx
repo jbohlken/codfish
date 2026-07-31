@@ -535,6 +535,19 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       for (let i = 0; i < 5; i++) player.playGrain(target + i * 0.05);
       await wait(150);
 
+      // Scrub-during-play race: a write-through seek fires while the engine
+      // is playing, and the external pause lands while the seek's iterator
+      // restart is still in flight. The seek's auto-resume must be vetoed —
+      // audio dead, clock parked at the seek target. (The bug: pause hit an
+      // early-return, the resume survived, audio kept going under a paused UI.)
+      await player.play();
+      await wait(200);
+      player.seek(1.5);
+      player.pause();
+      await wait(600);
+      const stopT = player.currentTime();
+      const stopOk = !player.isPlaying() && Math.abs(stopT - 1.5) < 0.05;
+
       // Play-at-end must restart from the top (the engine-level half of the
       // spacebar-restart contract; EnginePlayer owns the signal half).
       player.seek(player.duration);
@@ -545,11 +558,12 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       const restartOk = restartT > 0.2 && restartT < 1.5;
 
       const clockOk = clockT > 0.8 && clockT < 1.6;
-      const pass = clockOk && framesOk && raceOk && seekOk && restartOk;
+      const pass = clockOk && framesOk && raceOk && seekOk && stopOk && restartOk;
       return `${name}: dur=${player.duration.toFixed(2)}s clock@1.2s=${clockT.toFixed(2)}${clockOk ? "" : " ←CLOCK"}`
         + ` frames=${framesOk ? "advance" : "FROZEN"}`
         + ` seek+play=${raceOk ? "ok" : "FROZEN/STALLED"}`
         + ` seek(${target.toFixed(2)})→${seekT.toFixed(2)}${seekOk ? "" : " ←SEEK"}`
+        + ` seek+pause=${stopOk ? "stops" : `KEEPS PLAYING(${stopT.toFixed(2)})`}`
         + ` restart@end→${restartT.toFixed(2)}${restartOk ? "" : " ←RESTART"}`
         + `${pass ? " PASS" : " FAIL"}`;
     } finally {
