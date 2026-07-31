@@ -729,7 +729,7 @@ export function Timeline() {
             class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}${vfrDetected ? " timeline-fps-badge--vfr" : ""}`}
             data-tooltip={
               vfrDetected
-                ? "Variable frame rate detected — frame-snapping may be imprecise"
+                ? "Variable frame rate — the playhead grid uses the average rate, so frame steps may not land on true frame boundaries (displayed frames are exact)"
                 : fpsIsDetected
                   ? "Detected from file"
                   : `No framerate detected — using profile default (${profileDefaultFps} fps)`
