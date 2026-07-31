@@ -1807,6 +1807,12 @@ body.rows-dragging * {
   border-radius: 50%;
 }
 
+/* Line-only echo of the playhead for the filmstrip lane — the round handle
+   stays on the waveform row (one grab affordance, not two). */
+.timeline-playhead--line::before {
+  content: none;
+}
+
 /* ── Cod-o-meter ──────────────────────────────────────────────────────────
    The mascot is a virtual reader pacing the media at the profile's max CPS: the
    track sits at the READER's media position (on the playhead = reading exactly

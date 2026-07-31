@@ -824,6 +824,7 @@ export function Timeline() {
                   style={{ cursor: "pointer" }}
                 >
                   <canvas ref={filmCanvasRef} class="timeline-filmstrip-canvas" />
+                  <FilmstripPlayhead duration={duration} />
                 </div>
               )}
 
@@ -1232,6 +1233,19 @@ function TimelinePlayhead({ duration }: { duration: number }) {
       />
       {fish}
     </>
+  );
+}
+
+/** Line-only playhead echo for the filmstrip lane. Same per-tick isolation
+ *  pattern as TimelinePlayhead; no handle or fish — those belong to the
+ *  waveform row (one grab affordance, one mascot). */
+function FilmstripPlayhead({ duration }: { duration: number }) {
+  const currentTime = playbackTime.value;
+  return (
+    <div
+      class="timeline-playhead timeline-playhead--line"
+      style={{ left: `${(currentTime / duration) * 100}%` }}
+    />
   );
 }
 
