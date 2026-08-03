@@ -212,9 +212,11 @@ jobs:
 
           # Per-platform minimum OS floor for THIS release, read by the update
           # gate in clients >= 0.6.10 (older/fieldless clients ignore it).
-          # 0.6.10 declares none — it runs everywhere 0.6.9 does. The 0.7.0
-          # branch sets this to '{"darwin":"13.4"}'.
-          min_os='{}'
+          # The 0.7.0 line raises darwin to 13.4: caption-preview CSS needs
+          # WebKit 16.5 (styling arc), and the mediabunny engine needs
+          # WKWebView WebCodecs (>= 13.3) — 13.4 covers both. Windows stays
+          # floorless (WebView2 is evergreen; see release-engineering.md).
+          min_os='{"darwin":"13.4"}'
 
           jq -n \
             --arg version "$version" \

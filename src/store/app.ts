@@ -10,6 +10,7 @@ import type { ValidationWarning } from "../lib/pipeline/types";
 import { SORT_MODES, SORT_DIRS, type SortMode, type SortDir } from "../lib/mediaSort";
 import { isAudioPath } from "../lib/mediaExts";
 import { getClipView, rememberClipView, rememberActiveClip } from "../lib/clipView";
+import { probeMedia, type MediaProbe } from "../lib/mediaProbe";
 
 // ── Project ────────────────────────────────────────────────────────────────
 export const project = signal<CodProject | null>(null);
@@ -80,10 +81,28 @@ export const mediaDuration = signal(0);  // seconds — set from loadedmetadata
 // clock): the element duration is a demuxer estimate that can be wrong for VBR
 // MP3, and video files can legitimately have audio shorter than the picture.
 export const waveformAudioDuration = signal(0);
+// Packet-exact facts about the open clip from the mediabunny probe (null until
+// it resolves; reset synchronously on clip switch). Its duration beats both
+// element and decoded-audio numbers: available in ~100 ms without waiting for
+// metadata events or a full peaks decode, exact for VBR MP3, and immune to the
+// Infinity/provisional durations non-faststart MP4s feed the <video> element.
+// RUNTIME ONLY — never persisted into the project (.cod stays untouched).
+export const probedInfo = signal<MediaProbe | null>(null);
+// True while the CURRENT clip plays through the <video> compatibility path
+// (engine rescued or forced; maintained by VideoPanel). Surfaces that promise
+// engine behavior — the VFR badge's "displayed frames are exact" — read this
+// to stay honest when the system player is actually driving.
+export const usingElementPlayer = signal(false);
 // True only while the user is dragging the waveform to scrub. Lets the view-state
 // persist effect below skip the continuous drag and fire once on release — when
 // the playhead has "landed somewhere" — instead of writing on every pointermove.
 export const scrubbing = signal(false);
+// True while a scrub drag should be AUDIBLE: the user is holding Ctrl/Cmd
+// during the drag (updated per pointermove, so the modifier can engage or
+// release mid-drag). Read by the engine player, which plays a short audio
+// grain per scrub position while this is up. Deliberate frame steps blip
+// unconditionally via frameStepTick — this signal only governs drags.
+export const scrubAudio = signal(false);
 // Bumped when a caption is clicked in the captions panel, to ask the timeline to
 // scroll that caption into view — even when it's already the active one (its start
 // already the playhead), which wouldn't otherwise change any signal.
@@ -98,6 +117,38 @@ export const zoomLevel = signal(1);
 // (Timeline applies it to the DOM on switch, after the zoom width lands). Peeked
 // by the persist effect for the same no-churn reason as zoom.
 export const timelineScroll = signal(0);
+
+// ── Volume ─────────────────────────────────────────────────────────────────
+// App-level preference (localStorage, never .cod). Both players — the
+// mediabunny engine's gain node and the <video> rescue path — consume
+// effectiveVolume: a quadratic taper (fine control lives in the low end)
+// with a hard 0 when muted. Scrub grains ride the same engine gain, so they
+// follow volume/mute automatically.
+const storedVolume = localStorage.getItem("codfish:volume");
+export const volume = signal(
+  storedVolume !== null && Number.isFinite(Number(storedVolume))
+    ? Math.max(0, Math.min(1, Number(storedVolume)))
+    : 1,
+);
+export const muted = signal(localStorage.getItem("codfish:muted") === "true");
+export const effectiveVolume = computed((): number => (muted.value ? 0 : volume.value ** 2));
+
+export function setVolume(v: number): void {
+  volume.value = Math.max(0, Math.min(1, v));
+  // Dragging the slider while muted means "I want to hear this" — unmute.
+  if (muted.peek() && volume.value > 0) muted.value = false;
+  try {
+    localStorage.setItem("codfish:volume", String(volume.value));
+    localStorage.setItem("codfish:muted", String(muted.peek()));
+  } catch { /* best-effort */ }
+}
+
+export function toggleMuted(): void {
+  muted.value = !muted.peek();
+  try {
+    localStorage.setItem("codfish:muted", String(muted.value));
+  } catch { /* best-effort */ }
+}
 
 /** Clear every selection and close the editor: no clip open, nothing
  *  highlighted, playback reset. Used when the user clicks empty space in the
@@ -476,11 +527,74 @@ export const selectedMedia = computed((): MediaItem | null => {
 export const timelineDuration = computed((): number => {
   const m = selectedMedia.value;
   const capDur = m?.captions.length ? m.captions[m.captions.length - 1].end : 0;
+  // The mediabunny probe wins outright: packet-exact for every container we
+  // accept (including VBR MP3, where it equals the decoded length the old
+  // audio-only rule waited on) and available before the element clock settles.
+  const probed = probedInfo.value?.duration ?? 0;
+  if (m && probed > 0) return probed;
   if (m && isAudioPath(m.path) && waveformAudioDuration.value > 0) {
     return waveformAudioDuration.value;
   }
   return mediaDuration.value || waveformAudioDuration.value || capDur;
 });
+
+// The probe effect must key on the PATH PRIMITIVE, not on selectedMedia: every
+// project write rebuilds the MediaItem object (…media.map(m => ({...m}))), so
+// an effect subscribed to selectedMedia refires on every caption edit — during
+// an edge-trim drag that meant a probedInfo null→restore flap per pointermove,
+// unmounting the filmstrip and flapping timelineDuration mid-drag. A computed
+// only notifies when its VALUE changes, so same-path writes don't refire this.
+const selectedMediaPath = computed((): string | null => selectedMedia.value?.path ?? null);
+
+export const PROBE_DEBOUNCE_MS = 200;
+
+/** Schedule the debounced probe for `path`; returns the cancel function the
+ *  effect uses as its cleanup. Debounce: arrowing through a bin only probes
+ *  the clip the user lands on (a probe can be expensive — index-less
+ *  containers cost a header walk). The token guards the async landing: a
+ *  probe that resolves after a newer schedule is discarded, and cancel()
+ *  covers the not-yet-started window. Exported with an injectable prober so
+ *  the timing contract is unit-testable — the effect below can't run under
+ *  vitest, where the store loads in every suite and a real probe could only
+ *  fail. */
+let _probeToken = 0;
+export function scheduleProbe(
+  path: string,
+  prober: (path: string) => Promise<MediaProbe | null> = probeMedia,
+): () => void {
+  const token = ++_probeToken;
+  const timer = setTimeout(() => {
+    void prober(path).then((info) => {
+      if (info && token === _probeToken) probedInfo.value = info;
+    });
+  }, PROBE_DEBOUNCE_MS);
+  return () => clearTimeout(timer);
+}
+
+// Probe the open clip off the critical path. Reset synchronously on switch so
+// a stale probe can't leak across clips.
+effect(() => {
+  const path = selectedMediaPath.value;
+  probedInfo.value = null;
+  if (!path || import.meta.env.MODE === "test") return;
+  return scheduleProbe(path);
+});
+
+/** Detected frame rate of the open clip: import-time sidecar probe (persisted)
+ *  → mediabunny runtime probe → null when neither knows. The nullable variant
+ *  exists for consumers that treat "unknown" differently from a default (e.g.
+ *  validation). */
+export const detectedFps = computed((): number | null =>
+  selectedMedia.value?.fps ?? probedInfo.value?.fps ?? null);
+
+/** THE frame rate every selected-clip surface must share (player seeks, frame
+ *  step, trim/roll snapping, add-caption, timecode display, badge) — detected
+ *  rate with the profile default as last resort. Split sources here caused
+ *  real bugs: a probed 23.976 grid for drag-snapping while keyboard trims used
+ *  the 30fps profile default. Batch/export paths deliberately stay on each
+ *  item's persisted media.fps — probed data only exists for the OPEN clip. */
+export const timelineFps = computed((): number =>
+  detectedFps.value ?? activeProfile.value.timing.defaultFps);
 
 /** Index of the caption the playhead is currently inside, or null. Computed
  * from playbackTime + selectedMedia. Only emits change notifications when the
@@ -515,14 +629,19 @@ effect(() => {
 /** Step the playhead one frame in `dir` (1 = forward, -1 = back) and pause —
  *  the shared action behind the Left/Right keys and the transport's frame-step
  *  buttons. No-op without a usable fps and duration. */
+// Bumped on every frame step so the player can blip that frame's audio —
+// deliberate steps only, never scrub drags (same tick pattern as
+// revealCaptionTick). The player reads the landed time from playbackTime.
+export const frameStepTick = signal(0);
+
 export function stepPlayhead(dir: 1 | -1): void {
-  const m = selectedMedia.peek();
-  const f = m?.fps ?? activeProfile.peek().timing.defaultFps;
+  const f = timelineFps.peek();
   const dur = timelineDuration.peek();
   if (!f || !dur) return;
   isPlaying.value = false; // stepping is a paused review action
   const next = frameStep(playbackTime.peek(), f, dir);
   playbackTime.value = Math.max(0, Math.min(dur, next));
+  frameStepTick.value++;
 }
 
 /** Validation warnings for the selected media's captions, grouped by caption
@@ -535,7 +654,7 @@ export const warningsByCaption = computed((): Map<number, ValidationWarning[]> =
   const profile = activeProfile.value;
   const map = new Map<number, ValidationWarning[]>();
   if (!media || !media.captions.length) return map;
-  const report = validate(media.captions, profile, media.fps ?? undefined);
+  const report = validate(media.captions, profile, detectedFps.value ?? undefined);
   for (const w of report.warnings) {
     const arr = map.get(w.blockIndex) ?? [];
     arr.push(w);

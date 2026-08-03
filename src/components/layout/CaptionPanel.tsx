@@ -19,6 +19,7 @@ import {
   playingCaptionIndex,
   warningsByCaption,
   isBatchRunning,
+  timelineFps,
 } from "../../store/app";
 import { snapToFrame, breakTextIntoLines } from "../../lib/pipeline";
 import { getClipView } from "../../lib/clipView";
@@ -205,7 +206,7 @@ function splitCaption(index: number) {
   // point to block.start + 1/fps in that case.
   if (t < block.start || t >= block.end) return;
 
-  const fps = media.fps ?? activeProfile.value.timing.defaultFps;
+  const fps = timelineFps.value;
 
   // Caption must be at least 2 frames long to produce two non-empty halves.
   const totalFrames = framesBetween(block.start, block.end, fps);
@@ -340,7 +341,7 @@ function mergeCaption(index: number) {
 const canAddCaption = computed(() => {
   const m = selectedMedia.value;
   if (!m) return false;
-  const fps = m.fps ?? activeProfile.value.timing.defaultFps;
+  const fps = timelineFps.value;
   return computeAddCaption(m.captions, playbackTime.value, fps, timelineDuration.value) !== null;
 });
 
@@ -349,7 +350,7 @@ function addCaption() {
   const media = selectedMedia.value;
   if (!proj || !media) return;
 
-  const fps = media.fps ?? activeProfile.value.timing.defaultFps;
+  const fps = timelineFps.value;
   const add = computeAddCaption(media.captions, playbackTime.value, fps, timelineDuration.value);
   if (!add) return;
   const { start, end, insertPos } = add;
@@ -503,7 +504,7 @@ export function CaptionPanel() {
   const playingIndex = playingCaptionIndex.value;
 
   const profile = activeProfile.value;
-  const fps = media?.fps ?? profile.timing.defaultFps;
+  const fps = timelineFps.value;
   const warningsByIndex = warningsByCaption.value;
 
   // Search / find-and-replace derived state. The list renders ALL captions; an

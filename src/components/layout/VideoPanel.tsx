@@ -1,7 +1,8 @@
-import { useRef, useEffect } from "preact/hooks";
-import { MusicNoteIcon as MusicNote } from "@phosphor-icons/react";
+import { useRef, useEffect, useReducer } from "preact/hooks";
+import { MusicNoteIcon as MusicNote, WarningIcon as Warning } from "@phosphor-icons/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, activeProfile } from "../../store/app";
+import { selectedMedia, playbackTime, isPlaying, mediaDuration, waveformAudioDuration, probedInfo, timelineFps, effectiveVolume, usingElementPlayer } from "../../store/app";
+import { EnginePlayer } from "./EnginePlayer";
 import { editingIndex, editText } from "./CaptionPanel";
 import { AUDIO_EXTS } from "../../lib/project";
 import { findCaptionAt } from "../../lib/pipeline";
@@ -13,8 +14,43 @@ function isAudioOnly(path: string): boolean {
   return AUDIO_EXTS.includes(ext);
 }
 
+// Phase-3 routing: the mediabunny engine is the DEFAULT player; the <video>
+// element is the rescue path. The engine attempt itself is the probe — when
+// it declines a file (undecodable by WebCodecs, HDR the SDR canvas shouldn't
+// flatten, unreadable) the path is remembered for the session so re-opening
+// the clip goes straight to the element instead of retrying a doomed engine.
+const rescuedPaths = new Map<string, string>();
+// Debug escape hatch: localStorage codfish:playerEngine = "element" forces the
+// element for every clip (read once at load; restart to change).
+const FORCE_ELEMENT = typeof localStorage !== "undefined"
+  && localStorage.getItem("codfish:playerEngine") === "element";
+
+// User-facing explanation for the compatibility-playback badge. With phase-3
+// routing the element branch only ever renders as a fallback, so reaching it
+// is always worth telling the user about. Wording is deliberately scoped to
+// what's actually true: step/scrub audio is ALWAYS absent here, but frame
+// stepping only degrades on variable-frame-rate files (the system player is
+// seeked via the frame-midpoint approximation, which assumes a constant
+// rate; the engine reads real per-frame timestamps instead).
+const LIMITS = "Step and scrub audio are unavailable, and frame stepping on variable-frame-rate files may be less precise.";
+function rescueTooltip(reason: string | undefined): string {
+  switch (reason) {
+    case "hdr":
+      return `HDR video — using the system player for correct color. ${LIMITS}`;
+    case "undecodable":
+      return `This file's codec isn't supported by the built-in engine. Using the system player. ${LIMITS}`;
+    case "forced":
+      return "System player forced via the codfish:playerEngine setting.";
+    default:
+      return `The built-in engine couldn't read this file. Using the system player. ${LIMITS}`;
+  }
+}
+
 export function VideoPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Bumped when the engine rescues the current clip so the render below
+  // re-evaluates rescuedPaths and swaps to the element.
+  const [, bumpRescue] = useReducer((c: number) => c + 1, 0);
   const rafRef = useRef<number>(0);
   const rafLastWrittenRef = useRef<number>(0);
   // True only while the rAF tick loop is actively syncing currentTime ↔
@@ -28,6 +64,14 @@ export function VideoPanel() {
   const currentTime = playbackTime.value;
 
   const activeCaption = media ? findCaptionAt(media.captions, currentTime) : null;
+
+  // Which player owns this clip (phase-3 routing: engine default, element on
+  // rescue/force). Mirrored into the store so e.g. the VFR badge can scope
+  // its "displayed frames are exact" claim to the engine.
+  const useElement = media != null && (FORCE_ELEMENT || rescuedPaths.has(media.path));
+  useEffect(() => {
+    usingElementPlayer.value = useElement;
+  }, [useElement]);
 
   const isEditingActive = activeCaption !== null && editingIndex.value === activeCaption.index;
   const overlayLines = isEditingActive
@@ -61,12 +105,19 @@ export function VideoPanel() {
 
     if (playing) {
       let cancelled = false;
-      // For audio-only media the decoded waveform length (once known) is the real
-      // end — the element clock is a demuxer estimate that can run long for VBR
-      // MP3. Video keeps the element clock: its extent fallbacks (decoded audio /
-      // caption end) are NOT playback bounds, so clamping against them would
-      // freeze the playhead while the picture plays.
+      // The playhead must never slide past the shared timeline extent. Two
+      // trustworthy bounds, both peeked per-tick since they can land mid-play:
+      // the mediabunny probe's packet-exact duration (any media), and — for
+      // audio-only — the decoded waveform length. The element clock's OTHER
+      // extent fallbacks (caption end) are NOT playback bounds; when neither
+      // real bound is known yet, the element clock stays unclamped.
       const audioOnly = media != null && isAudioOnly(media.path);
+      const playbackBound = () => {
+        const probed = probedInfo.peek()?.duration ?? 0;
+        const decoded = audioOnly ? waveformAudioDuration.peek() : 0;
+        if (probed > 0 && decoded > 0) return Math.min(probed, decoded);
+        return probed > 0 ? probed : decoded;
+      };
 
       const tick = () => {
         // If playbackTime has drifted from what rAF last wrote, an external
@@ -77,12 +128,11 @@ export function VideoPanel() {
           video.currentTime = pt;
           rafLastWrittenRef.current = pt;
         } else {
-          // Audio-only: clamp to the decoded end so the playhead can't slide
-          // past the ruler on the estimate's phantom tail. rafLastWrittenRef
-          // gets the same clamped value so the drift check above stays stable.
-          // Peeked per-tick — peaks can finish loading mid-play.
-          const decodedEnd = audioOnly ? waveformAudioDuration.peek() : 0;
-          const vt = decodedEnd > 0 ? Math.min(video.currentTime, decodedEnd) : video.currentTime;
+          // Clamp so the playhead can't slide past the ruler on the element
+          // estimate's phantom tail. rafLastWrittenRef gets the same clamped
+          // value so the drift check above stays stable.
+          const bound = playbackBound();
+          const vt = bound > 0 ? Math.min(video.currentTime, bound) : video.currentTime;
           playbackTime.value = vt;
           rafLastWrittenRef.current = vt;
         }
@@ -91,12 +141,12 @@ export function VideoPanel() {
 
       // Play pressed at the end → restart from the top (standard player behavior);
       // otherwise play() sits at the end and does nothing. "The end" is the shared
-      // timeline end: for audio-only media the playhead parks at the decoded end,
-      // which can sit more than a frame short of the element's estimated duration —
+      // timeline end: the playhead parks at the probed/decoded bound, which can
+      // sit more than a frame short of the element's estimated duration —
       // checking only the element clock would make the restart unreachable there.
-      const decodedEnd = audioOnly ? waveformAudioDuration.peek() : 0;
-      const endOfMedia = decodedEnd > 0
-        ? Math.min(video.duration > 0 ? video.duration : Infinity, decodedEnd)
+      const bound = playbackBound();
+      const endOfMedia = bound > 0
+        ? Math.min(video.duration > 0 ? video.duration : Infinity, bound)
         : video.duration;
       if (endOfMedia > 0 && Number.isFinite(endOfMedia) && video.currentTime >= endOfMedia - 1 / fps) {
         video.currentTime = 0;
@@ -136,7 +186,16 @@ export function VideoPanel() {
   // warmup would only land on the next rAF tick (or be lost if the user
   // pauses again first). During active playback rAF owns sync; running
   // this effect there would micro-seek every tick.
-  const fps = media?.fps ?? activeProfile.value.timing.defaultFps;
+  // Volume/mute → the element (rescue path). Same effectiveVolume both
+  // players consume, so switching engines never changes loudness. The
+  // media?.path dep re-applies it to a freshly mounted element.
+  const vol = effectiveVolume.value;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.volume = vol;
+  }, [vol, media?.path]);
+
+  const fps = timelineFps.value;
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -156,6 +215,36 @@ export function VideoPanel() {
         <div class="empty-state">
           <span class="empty-state-title">No media selected</span>
           <span class="empty-state-body">Select a media item from the project panel.</span>
+        </div>
+      ) : !useElement ? (
+        // Phase 3: the mediabunny engine is the default player — one clock,
+        // deterministic seeks, every accepted format. It speaks the element
+        // path's signal protocol, so the overlay/placeholder and downstream
+        // consumers are shared. When the engine declines (rescue), this
+        // clip re-renders on the <video> element branch below.
+        <div class="video-container">
+          <div class="video-wrapper">
+            <EnginePlayer
+              media={media}
+              onRescue={(reason) => {
+                rescuedPaths.set(media.path, reason);
+                bumpRescue();
+              }}
+            />
+            {isAudioOnly(media.path) && (
+              <div class="audio-placeholder">
+                <span class="audio-placeholder-icon"><MusicNote size={32} /></span>
+                <span class="audio-placeholder-name">{media.name}</span>
+              </div>
+            )}
+            {overlayLines && overlayLines.length > 0 && (
+              <div class="caption-overlay">
+                {overlayLines.map((line, i) => (
+                  <span key={i} class="caption-overlay-line">{line}</span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div class="video-container">
@@ -181,6 +270,12 @@ export function VideoPanel() {
               onPause={() => { isPlaying.value = false; }}
               onEnded={() => { isPlaying.value = false; }}
             />
+            <span
+              class="player-badge player-badge--warning"
+              data-tooltip={rescueTooltip(FORCE_ELEMENT ? "forced" : rescuedPaths.get(media.path))}
+            >
+              <Warning size={11} /> compatibility playback
+            </span>
             {isAudioOnly(media.path) && (
               <div class="audio-placeholder">
                 <span class="audio-placeholder-icon"><MusicNote size={32} /></span>

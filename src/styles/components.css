@@ -1021,6 +1021,7 @@ body.rows-dragging * {
 /* Playback-only strip under the video: go to start, frame-step, play/pause.
    Timeline-view tools live in the timeline toolbar, not here. */
 .transport-bar {
+  position: relative; /* anchors the right-aligned volume cluster */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1030,6 +1031,43 @@ body.rows-dragging * {
   padding: 0 var(--space-3);
   border-top: 1px solid var(--color-border);
   background: var(--color-surface);
+}
+
+/* Volume cluster: mute toggle + slider, pinned right so the transport
+   buttons stay centered. The slider's fill is painted by an inline
+   linear-gradient (Chromium ranges have no native track-fill). */
+.transport-volume {
+  position: absolute;
+  right: var(--space-3);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.transport-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 72px;
+  height: 3px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.transport-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: none;
+}
+
+.transport-volume-slider--muted {
+  opacity: 0.45;
 }
 
 .video-container {
@@ -1074,6 +1112,40 @@ body.rows-dragging * {
 
 .video-element--hidden {
   display: none;
+}
+
+/* Compatibility-playback chip over the video surface. USER-FACING and shown
+   only on the <video> rescue path — with engine-default routing that path
+   only renders as a fallback, and its limits (no step/scrub audio, less
+   precise stepping) are worth telling the user about via the tooltip. The
+   default engine shows no badge at all. Preview: set localStorage
+   codfish:playerEngine = "element" to force the rescue path. Fixed dark
+   styling: it always sits over video, so it's theme-proof. */
+.player-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.65);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  line-height: 1.4;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Compatibility-playback warning: amber, hoverable (the tooltip carries the
+   reason and the feature limits), icon inline with the label. */
+.player-badge--warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning);
+  pointer-events: auto;
+  cursor: default;
 }
 
 .audio-placeholder {
@@ -1447,8 +1519,13 @@ body.rows-dragging * {
   transition: background 0.1s;
 }
 
-.timeline-btn:hover {
+.timeline-btn:hover:not(:disabled) {
   background: var(--tl-scrubber);
+}
+
+.timeline-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .timeline-btn--active {
@@ -1616,6 +1693,27 @@ body.rows-dragging * {
   pointer-events: none;
 }
 
+/* Filmstrip lane: fixed-height row of video thumbnails above the waveform.
+   Same viewport-canvas pattern as the waveform (sticky canvas, overflow-x clip
+   so the row doesn't become a scroll container and break the sticky). */
+.timeline-filmstrip-row {
+  height: 44px;
+  flex-shrink: 0;
+  position: relative;
+  background: var(--tl-surface);
+  border-bottom: 1px solid var(--tl-border);
+  overflow-x: clip;
+}
+
+.timeline-filmstrip-canvas {
+  position: sticky;
+  left: 0;
+  display: block;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
 .timeline-waveform-loading {
   position: absolute;
   inset: 0;
@@ -1707,6 +1805,12 @@ body.rows-dragging * {
   height: 9px;
   background: var(--tl-playhead);
   border-radius: 50%;
+}
+
+/* Line-only echo of the playhead for the filmstrip lane — the round handle
+   stays on the waveform row (one grab affordance, not two). */
+.timeline-playhead--line::before {
+  content: none;
 }
 
 /* ── Cod-o-meter ──────────────────────────────────────────────────────────

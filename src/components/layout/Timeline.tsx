@@ -1,13 +1,16 @@
 import { useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair, FishIcon as Fish } from "@phosphor-icons/react";
+import { MinusIcon as Minus, PlusIcon as Plus, MagnetIcon as Magnet, WaveSineIcon as WaveSine, WaveformIcon as Waveform, CrosshairIcon as Crosshair, FishIcon as Fish, FilmStripIcon as FilmStrip } from "@phosphor-icons/react";
 import codfishUrl from "../../assets/codfish.svg";
 import { codometer, approach, buildReaderSchedule, readerPosition } from "../../lib/codometer";
 import { CODOMETER_ENABLED } from "../../lib/features";
 import { useSignalEffect, signal, computed, batch } from "@preact/signals";
 import { invoke } from "@tauri-apps/api/core";
-import { getCachedPeaks, cachePeaks, desiredBinsPerSec } from "../../lib/peaks-cache";
+import { getCachedPeaks, cachePeaks } from "../../lib/peaks-cache";
+import { generatePeaksViaMediabunny } from "../../lib/peaksMediabunny";
+import { loadPeaks } from "../../lib/peaksPipeline";
 import { createWaveformPainter, type WaveformStyle } from "../../lib/waveform";
+import { createFilmstripPainter, createThumbSource, type FilmstripPainter } from "../../lib/filmstrip";
 import { nextBoundary, clampStart, clampEnd, snapToMediaFrame, computeTrim, computeRoll } from "../../lib/playhead";
 import {
   selectedMedia,
@@ -17,11 +20,16 @@ import {
   isPlaying,
   stepPlayhead,
   scrubbing,
+  scrubAudio,
   revealCaptionTick,
   zoomLevel,
   timelineScroll,
   mediaDuration,
   waveformAudioDuration,
+  probedInfo,
+  usingElementPlayer,
+  detectedFps,
+  timelineFps,
   timelineDuration,
   project,
   pushHistory,
@@ -45,6 +53,9 @@ const timecodeMode = signal<TimecodeCycle>(VALID_MODES.includes(stored) ? stored
 const snapEnabled = signal(true);
 const storedWaveStyle = localStorage.getItem("codfish:waveformStyle");
 const waveformStyle = signal<WaveformStyle>(storedWaveStyle === "bars" ? "bars" : "continuous");
+// Filmstrip lane (video thumbnails above the waveform). On by default; the lane
+// only actually renders when the probe says the clip has decodable video.
+const filmstripEnabled = signal(localStorage.getItem("codfish:filmstrip") !== "false");
 // Cod-o-meter: the mascot is a virtual reader pacing the media at the profile's
 // max CPS — its position vs the playhead is the cumulative reading balance
 // (behind = viewers can't keep up), its swim speed the current caption's CPS,
@@ -139,8 +150,15 @@ function waitForMediaDuration(timeoutMs: number): Promise<number | null> {
 export function Timeline() {
   const media = selectedMedia.value;
   const profileDefaultFps = activeProfile.value.timing.defaultFps;
-  const effectiveFps = media?.fps ?? profileDefaultFps;
-  const fpsIsDetected = media != null && media.fps != null;
+  // THE shared frame rate — every selected-clip surface reads store.timelineFps
+  // so drag-snapping, keyboard trims, seeks, and the badge agree on one grid.
+  const effectiveFps = timelineFps.value;
+  const fpsIsDetected = media != null && detectedFps.value != null;
+  // VFR flag: the sidecar's import-time verdict when it ran (media.fps set);
+  // otherwise the mediabunny probe's — so a probed average can't masquerade as
+  // a detected constant rate.
+  const vfrDetected = media != null
+    && (media.vfr === true || (media.fps == null && probedInfo.value?.vfr === true));
   // Resolve "smpte" cycle mode to the actual DisplayMode based on media's DF setting
   const smpteMode: DisplayMode = timecodeMode.value === "smpte" && media?.dropFrame
     ? "smpte-df"
@@ -199,11 +217,7 @@ export function Timeline() {
     const flog = (m: string) =>
       invoke("frontend_log", { message: `[waveform] ${m}` }).catch(() => {});
 
-    // Peaks come from the sidecar's ffmpeg, not from a browser fetch+decode.
-    // The browser-side path is unreliable for the Tauri asset protocol
-    // (whole-file fetch fails for many files even though playback via range
-    // requests works fine) and can't handle codecs WebAudio doesn't support.
-    // On failure (no sidecar, no audio stream) drop the spinner so
+    // On hard failure (both generators unavailable) drop the spinner so
     // "Generating waveform…" doesn't hang forever.
     const markFailed = (reason: string) => {
       flog(reason);
@@ -212,43 +226,31 @@ export function Timeline() {
       }
     };
     flog(`init path=${media.path}`);
-    (async () => {
-      const mtime = await invoke<number>("file_mtime", { path: media.path });
-      if (cancelled) return;
-      let peaks: Float32Array;
-      let audioDuration: number;
-      // Look up by (path, mtime) only — independent of density, so a stale
-      // <video> duration on a media switch can't cause a spurious miss.
-      const cached = await getCachedPeaks(media.path, mtime);
-      if (cancelled) return;
-      if (cached) {
-        flog(`cache hit bins=${cached.peaks.length}`);
-        peaks = cached.peaks;
-        audioDuration = cached.duration;
-      } else {
-        // Density scales with duration (denser bins for shorter files). Only
-        // needed when actually generating, so we wait for the <video> metadata
-        // here rather than up front — the cache lookup above doesn't need it.
-        // The painter is density-agnostic, so an approximate value is fine.
-        const videoDuration = await waitForMediaDuration(5000);
-        if (cancelled) return;
-        const binsPerSec = desiredBinsPerSec(videoDuration);
-        flog(`cache miss → generate_peaks binsPerSec=${binsPerSec}`);
-        const r = await invoke<{ peaks: number[]; duration: number }>(
-          "generate_peaks",
-          { path: media.path, binsPerSec },
-        );
-        if (cancelled) return;
-        peaks = new Float32Array(r.peaks);
-        audioDuration = r.duration;
-        cachePeaks(media.path, mtime, peaks, audioDuration, binsPerSec);
-        flog(`generated bins=${peaks.length} duration=${audioDuration.toFixed(2)}s`);
-      }
-      painter.setPeaks(peaks, audioDuration);
-      waveformAudioDuration.value = audioDuration;
+    // The branching (cache → mediabunny → sidecar, cancellation checkpoints)
+    // lives in lib/peaksPipeline where it's unit-tested; this effect only
+    // supplies the real dependencies and lands the result in the signals.
+    loadPeaks(media.path, () => cancelled, {
+      getMtime: (path) => invoke<number>("file_mtime", { path }),
+      getCached: getCachedPeaks,
+      cache: cachePeaks,
+      generateInProcess: generatePeaksViaMediabunny,
+      generateSidecar: (path, binsPerSec) =>
+        invoke<{ peaks: number[]; duration: number }>("generate_peaks", { path, binsPerSec }),
+      // Engine-played clips never feed the element clock; the probed duration
+      // is exact and already in hand — don't stall 5 s waiting for metadata
+      // that will never arrive.
+      waitForElementDuration: async () => {
+        const probed = probedInfo.peek()?.duration ?? 0;
+        return probed > 0 ? probed : waitForMediaDuration(5000);
+      },
+      log: flog,
+    }).then((result) => {
+      if (!result || cancelled) return;
+      painter.setPeaks(result.peaks, result.duration);
+      waveformAudioDuration.value = result.duration;
       waveformState.value = "ready";
-      flog(`painter ready audioDuration=${audioDuration.toFixed(2)}s bins=${peaks.length}`);
-    })().catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
+      flog(`painter ready audioDuration=${result.duration.toFixed(2)}s bins=${result.peaks.length} source=${result.source}`);
+    }).catch((e) => markFailed(`peaks pipeline failed: ${(e as any)?.message ?? String(e)}`));
 
     return () => {
       cancelled = true;
@@ -265,7 +267,57 @@ export function Timeline() {
   // is momentarily 0). A render effect runs once painterRef holds the new painter.
   useEffect(() => {
     painterRef.current?.setLayoutDuration(duration);
+    filmPainterRef.current?.setLayoutDuration(duration);
   }, [duration]);
+
+  // Filmstrip lane. Gated on the probe (not the file extension) so it appears
+  // exactly when thumbnails can actually be decoded; the row itself is
+  // conditionally rendered, so the effect re-runs when the gate flips and the
+  // canvas mounts. Thumbs decode lazily per viewport — see lib/filmstrip.ts.
+  const filmCanvasRef = useRef<HTMLCanvasElement>(null);
+  const filmPainterRef = useRef<FilmstripPainter | null>(null);
+  const canFilmstrip = probedInfo.value?.hasVideo === true
+    && probedInfo.value?.canDecodeVideo === true;
+  const showFilmstrip = filmstripEnabled.value && canFilmstrip;
+
+  useEffect(() => {
+    const canvas = filmCanvasRef.current;
+    const scrollEl = scrollRef.current;
+    if (!canvas || !scrollEl || !media || !showFilmstrip) return;
+    const rowEl = canvas.parentElement as HTMLElement;
+    let cancelled = false;
+    let painter: FilmstripPainter | null = null;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    // One lane height shared by the sink and the persistence key, so stored
+    // thumbs always match the decode size exactly.
+    const laneH = Math.max(16, Math.round(rowEl.clientHeight * dpr));
+    void (async () => {
+      // mtime keys the persistent thumb cache (same invalidation rule as
+      // peaks); failure just disables persistence for this open.
+      const mtime = await invoke<number>("file_mtime", { path: media.path }).catch(() => null);
+      if (cancelled) return;
+      const source = await createThumbSource(media.path, laneH);
+      if (!source) return;
+      if (cancelled) {
+        source.dispose();
+        return;
+      }
+      painter = createFilmstripPainter({
+        canvas,
+        scrollEl,
+        rowEl,
+        source,
+        persist: mtime !== null ? { path: media.path, mtime, heightPx: laneH } : undefined,
+      });
+      filmPainterRef.current = painter;
+      painter.setLayoutDuration(timelineDuration.peek());
+    })();
+    return () => {
+      cancelled = true;
+      painter?.destroy();
+      filmPainterRef.current = null;
+    };
+  }, [media?.path, showFilmstrip]);
 
   // Push the chosen render style to the painter (same post-render pattern as
   // duration, so it lands on the current painter after a media switch).
@@ -462,6 +514,7 @@ export function Timeline() {
 
     const scroll = scrollRef.current;
     scrubbing.value = true; // pause per-action view persistence until release
+    scrubAudio.value = e.ctrlKey || e.metaKey; // Ctrl/Cmd-drag = audible scrub
     const wasPlaying = isPlaying.peek();
     if (wasPlaying) isPlaying.value = false;
 
@@ -488,6 +541,7 @@ export function Timeline() {
     const onMove = (ev: MouseEvent) => {
       if (Math.abs(ev.clientX - startX) > 4) dragged = true;
       lastClientX = ev.clientX;
+      scrubAudio.value = ev.ctrlKey || ev.metaKey; // modifier can engage mid-drag
       seekToClientX(ev.clientX);
     };
     const onUp = () => {
@@ -503,6 +557,7 @@ export function Timeline() {
       const atEnd = playbackTime.peek() >= duration - 1.5 / effectiveFps;
       if (wasPlaying && !atEnd) isPlaying.value = true;
       scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
+      scrubAudio.value = false;
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -513,7 +568,7 @@ export function Timeline() {
   };
 
   const profile = activeProfile.value;
-  const fps = media?.fps ?? profile.timing.defaultFps;
+  const fps = timelineFps.value;
   const minGapRule = profile.timing.minGapSeconds;
   const minGap = profile.timing.minGapEnabled
     ? (minGapRule.unit === "fr" ? minGapRule.value / fps : minGapRule.value)
@@ -524,7 +579,7 @@ export function Timeline() {
   const handleResizeLive = (index: number, newStart: number, newEnd: number) => {
     const proj = project.value;
     const med = selectedMedia.value; // live, not the render-time const — the
-    const f = med?.fps ?? activeProfile.value.timing.defaultFps; // [/] keydown
+    const f = timelineFps.value; // [/] keydown
     if (!proj || !med) return; // handler reuses this from a mount-time closure
     project.value = {
       ...proj,
@@ -631,7 +686,7 @@ export function Timeline() {
         const m = selectedMedia.value;
         const idx = selectedCaptionIndex.value;
         if (!m || idx == null) return;
-        const f = m.fps ?? activeProfile.value.timing.defaultFps;
+        const f = timelineFps.value;
         const dur = timelineDuration.peek();
         const trimmed = computeTrim(m.captions, idx, e.key === "[" ? "in" : "out", playbackTime.peek(), f, dur);
         if (!trimmed) return; // caption not found, or clamped to no change
@@ -646,7 +701,7 @@ export function Timeline() {
         const m = selectedMedia.value;
         const idx = selectedCaptionIndex.value;
         if (!m || idx == null) return;
-        const f = m.fps ?? activeProfile.value.timing.defaultFps;
+        const f = timelineFps.value;
         const roll = computeRoll(m.captions, idx, e.key === "{" ? "in" : "out", playbackTime.peek(), f);
         if (!roll) return; // no shared boundary on that side, or no change
         batch(() => {
@@ -686,16 +741,21 @@ export function Timeline() {
         </button>
         {media && (
           <span
-            class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}${media.vfr ? " timeline-fps-badge--vfr" : ""}`}
+            class={`timeline-fps-badge${fpsIsDetected ? "" : " timeline-fps-badge--default"}${vfrDetected ? " timeline-fps-badge--vfr" : ""}`}
             data-tooltip={
-              media.vfr
-                ? "Variable frame rate detected — frame-snapping may be imprecise"
+              vfrDetected
+                // "Displayed frames are exact" is an ENGINE promise — the
+                // compatibility player seeks via the frame-midpoint
+                // approximation and can show a neighboring frame on VFR.
+                ? usingElementPlayer.value
+                  ? "Variable frame rate — frame stepping and displayed frames may be imprecise on the compatibility player"
+                  : "Variable frame rate — the playhead grid uses the average rate, so frame steps may not land on true frame boundaries (displayed frames are exact)"
                 : fpsIsDetected
                   ? "Detected from file"
                   : `No framerate detected — using profile default (${profileDefaultFps} fps)`
             }
           >
-            {effectiveFps} fps{fpsIsDetected ? "" : "*"}{media.vfr ? " VFR" : ""}
+            {effectiveFps} fps{fpsIsDetected ? "" : "*"}{vfrDetected ? " VFR" : ""}
           </span>
         )}
 
@@ -745,6 +805,18 @@ export function Timeline() {
           {waveformStyle.value === "continuous" ? <WaveSine size={14} /> : <Waveform size={14} />}
         </button>
 
+        <button
+          class={`timeline-btn${filmstripEnabled.value ? " timeline-btn--active" : ""}`}
+          disabled={!canFilmstrip}
+          onClick={() => {
+            filmstripEnabled.value = !filmstripEnabled.value;
+            localStorage.setItem("codfish:filmstrip", String(filmstripEnabled.value));
+          }}
+          data-tooltip={filmstripEnabled.value ? "Filmstrip on" : "Filmstrip off"}
+        >
+          <FilmStrip size={14} />
+        </button>
+
         <ZoomControls scrollRef={scrollRef} zoomAroundPlayhead={zoomAroundPlayhead} />
       </div>
       )}
@@ -762,6 +834,18 @@ export function Timeline() {
               {/* Ruler */}
               {duration > 0 && (
                 <RulerRow duration={duration} mode={smpteMode} fps={effectiveFps} onMouseDown={handleWaveMouseDown} />
+              )}
+
+              {/* Filmstrip lane — video thumbnails; click to seek like the waveform */}
+              {duration > 0 && showFilmstrip && (
+                <div
+                  class="timeline-filmstrip-row"
+                  onMouseDown={handleWaveMouseDown}
+                  style={{ cursor: "pointer" }}
+                >
+                  <canvas ref={filmCanvasRef} class="timeline-filmstrip-canvas" />
+                  <FilmstripPlayhead duration={duration} />
+                </div>
               )}
 
               {/* Waveform row — click to seek */}
@@ -787,7 +871,9 @@ export function Timeline() {
                     <span>No audio track</span>
                   </div>
                 )}
-                {duration > 0 && <TimelinePlayhead duration={duration} />}
+                {/* The round handle belongs to the TOPMOST lane (it pokes up
+                    onto the ruler): here only when the filmstrip is hidden. */}
+                {duration > 0 && <TimelinePlayhead duration={duration} handle={!showFilmstrip} />}
                 {duration > 0 && resizeIndicator.value !== null && (
                   <div
                     class={`timeline-resize-indicator${resizeSnapped.value ? " timeline-resize-indicator--snapped" : ""}`}
@@ -1098,7 +1184,7 @@ function ResizableCaptionBlock({
 
 /** Reads playbackTime locally so the parent Timeline doesn't have to
  *  subscribe to the rAF tick — only this 1-div component re-renders 60×/s. */
-function TimelinePlayhead({ duration }: { duration: number }) {
+function TimelinePlayhead({ duration, handle = true }: { duration: number; handle?: boolean }) {
   const currentTime = playbackTime.value;
   // Cod-o-meter: the fish is drawn at the VIRTUAL READER's media position (see
   // lib/codometer) — on the playhead when captions read at exactly max CPS,
@@ -1164,11 +1250,25 @@ function TimelinePlayhead({ duration }: { duration: number }) {
   return (
     <>
       <div
-        class="timeline-playhead"
+        class={`timeline-playhead${handle ? "" : " timeline-playhead--line"}`}
         style={{ left: `${(currentTime / duration) * 100}%` }}
       />
       {fish}
     </>
+  );
+}
+
+/** Playhead echo for the filmstrip lane. Same per-tick isolation pattern as
+ *  TimelinePlayhead, no fish. When this lane exists it is the topmost, so it
+ *  carries the round handle (poking up onto the ruler) and the waveform's
+ *  playhead goes line-only — the ball sits on the ruler either way. */
+function FilmstripPlayhead({ duration }: { duration: number }) {
+  const currentTime = playbackTime.value;
+  return (
+    <div
+      class="timeline-playhead"
+      style={{ left: `${(currentTime / duration) * 100}%` }}
+    />
   );
 }
 

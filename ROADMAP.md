@@ -44,7 +44,7 @@ Potential features and changes to consider. Not prioritized.
 - Batch export all media in a project
 - More default formats (ASS, TTML, SBV)
 - Reset built-in export formats button (re-seed defaults)
-- Subtitle burn-in (export video with hardcoded captions via ffmpeg)
+- Subtitle burn-in (export video with hardcoded captions) — two candidate paths: sidecar ffmpeg, or mediabunny's Conversion API with canvas overlays (in-process, no daemon; decide alongside the caption-styling work)
 
 ## Transcription
 
@@ -88,6 +88,11 @@ Potential features and changes to consider. Not prioritized.
 - ~~Crash recovery (temp file written periodically)~~
 - Project-level notes/metadata
 - ~~File type associations (.cod files)~~
+
+## Playback (mediabunny engine landed — WebCodecs player is the default, <video> is the compatibility fallback)
+
+- J-K-L shuttle — the old blocker ("needs a better player backend") is satisfied by the engine. Ship the complete scheme, not forward-only: varispeed K-L first, pitch-corrected rate needs a time-stretcher (license note: Rubber Band is GPL — use signalsmith-stretch/MIT or SoundTouch/LGPL), reverse J last (the scrub-grain machinery is the building block). Pair with the custom-shortcuts key dispatcher so the keyboard handlers are touched once.
+- MPEG-TS (.ts) support — engine and probe already handle it (the sidecar's ffprobe can't); gated on verifying transcription through the bundled ffmpeg.
 
 ## Timeline
 
