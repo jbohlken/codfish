@@ -44,7 +44,7 @@ import type { CodProject } from "./types/project";
 import { RecoveryPrompt, askRestoreRecovery } from "./components/RecoveryPrompt";
 import { FormatManager, openFormatManager, requestCloseFormatManager } from "./components/FormatManager";
 import { themeMode, setThemeMode } from "./store/theme";
-import { MediaSpike } from "./dev/MediaSpike";
+import { MediaBattery } from "./dev/MediaBattery";
 
 
 // Re-assert the Theme radio group's checks from the current mode. Called on a mode
@@ -485,7 +485,7 @@ export function App() {
         <BugReportModal />
         <RecoveryPrompt />
         <Tooltip />
-        {import.meta.env.DEV && <MediaSpike />}
+        {import.meta.env.DEV && <MediaBattery />}
       </div>
       <UpdateBlocker />
       <BatchBlocker />

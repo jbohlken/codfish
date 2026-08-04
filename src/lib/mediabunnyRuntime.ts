@@ -2,7 +2,7 @@
  * Shared lazy loader for mediabunny + the extension decoders (ProRes, AC-3).
  * Every production consumer (mediaProbe, peaksMediabunny, filmstrip) MUST get
  * mediabunny through this module: the adversarial review caught that decoder
- * registration originally lived only in the dev spike chunk, so production
+ * registration originally lived only in the dev battery chunk, so production
  * canDecode() would have returned false for ProRes/AC-3 — silently disabling
  * the filmstrip and waveform for exactly the formats this project adopted
  * mediabunny for.

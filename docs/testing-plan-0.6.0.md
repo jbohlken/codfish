@@ -362,7 +362,7 @@ transcription + fallback insurance only. New matrix for the next full pass:
 
 ### Dev battery (regression harness, dev builds only)
 
-- [ ] **MB13** `npm run spike:media` generates the 25-fixture suite; Ctrl+Shift+B → "run all fixtures" → RESULTS.md reports engine smoke ALL PASS (clock, frames-advance, seek+play, seek+pause, restart), peaks sanity with no FLAT/AXIS flags, and probe parity
+- [ ] **MB13** `npm run battery:media` generates the fixture suite; Ctrl+Shift+B → "run all fixtures" → RESULTS.md reports engine smoke ALL PASS (clock, frames-advance, seek+play, seek+pause, restart), peaks sanity with no FLAT/AXIS flags, and probe parity
 
 ### Release notes to carry (when this ships)
 

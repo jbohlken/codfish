@@ -1691,6 +1691,10 @@ body.rows-dragging * {
   width: 0;
   height: 0;
   pointer-events: none;
+  /* Sticky elements form their own stacking contexts, and WebKit (macOS) can
+     composite the full-width fit-view canvas ABOVE the z-indexed playhead
+     without an explicit level. Pin it below (playhead is z-index 10). */
+  z-index: 0;
 }
 
 /* Filmstrip lane: fixed-height row of video thumbnails above the waveform.
@@ -1712,6 +1716,7 @@ body.rows-dragging * {
   width: 0;
   height: 0;
   pointer-events: none;
+  z-index: 0; /* same WebKit sticky-stacking pin as the waveform canvas */
 }
 
 .timeline-waveform-loading {

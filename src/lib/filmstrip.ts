@@ -5,7 +5,7 @@
  * triggered by scroll, row resize, and thumbnail arrivals).
  *
  * Thumbnails decode on demand via mediabunny's CanvasSink (sparse
- * canvasesAtTimestamps — the spike measured ~5–30 ms per thumb) and are cached
+ * canvasesAtTimestamps — the battery measured ~5–30 ms per thumb) and are cached
  * by frame-quantized timestamp, so panning/zooming reuses frames instead of
  * re-decoding. Decode requests are batched: each round asks for whatever is
  * visible-and-missing right now, so a zoom mid-load simply redirects the next

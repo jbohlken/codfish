@@ -3,21 +3,22 @@ import type { FunctionComponent } from "preact";
 
 type PanelProps = { onClose: () => void };
 
-// Dev-only gate for the mediabunny evaluation panel (phase-0 spike).
+// Dev-only gate for the media battery — the regression/diagnostics panel
+// that grew out of the phase-0 mediabunny spike.
 // Ctrl+Shift+B toggles it. The panel module — and with it mediabunny and the
 // ProRes/AC-3 decoder bundles — is imported lazily on first open, so none of
 // it is loaded (or even fetched) until the hotkey is pressed, and the whole
 // subtree is compiled out of production builds by the DEV guard in App.
-export function MediaSpike() {
+export function MediaBattery() {
   const [Panel, setPanel] = useState<FunctionComponent<PanelProps> | null>(null);
   const [isOpen, setOpen] = useState(false);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const load = () => void import("./MediaSpikePanel").then((m) => setPanel(() => m.MediaSpikePanel));
-    // Unattended battery runs: VITE_SPIKE_AUTO=1 opens the panel immediately;
+    const load = () => void import("./MediaBatteryPanel").then((m) => setPanel(() => m.MediaBatteryPanel));
+    // Unattended battery runs: VITE_BATTERY_AUTO=1 opens the panel immediately;
     // the panel then runs all fixtures, saves RESULTS.md, and quits the app.
-    if (import.meta.env.VITE_SPIKE_AUTO === "1") {
+    if (import.meta.env.VITE_BATTERY_AUTO === "1") {
       setOpen(true);
       load();
     }

@@ -1,7 +1,7 @@
 {
   "name": "codfish",
   "private": true,
-  "version": "0.7.0-beta.1",
+  "version": "0.7.0-beta.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint:encoding": "node scripts/check-no-fffd.mjs",
-    "spike:media": "node scripts/make-spike-media.mjs"
+    "battery:media": "node scripts/make-battery-media.mjs"
   },
   "dependencies": {
     "@mediabunny/ac3": "^1.51.0",

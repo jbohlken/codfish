@@ -515,8 +515,9 @@ export function Timeline() {
     const scroll = scrollRef.current;
     scrubbing.value = true; // pause per-action view persistence until release
     scrubAudio.value = e.ctrlKey || e.metaKey; // Ctrl/Cmd-drag = audible scrub
-    const wasPlaying = isPlaying.peek();
-    if (wasPlaying) isPlaying.value = false;
+    // Any user seek stops playback (#43) — no resume on release; play is
+    // always an explicit action.
+    isPlaying.value = false;
 
     const seekToClientX = (clientX: number) => {
       const rect = el.getBoundingClientRect();
@@ -549,14 +550,7 @@ export function Timeline() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("blur", onUp);
-      // Don't resume when the scrub landed at the media end: resuming trips
-      // VideoPanel's play-at-end restart and rewinds to 0, but a scrub to the
-      // end means "park here — playback over". (1.5 frames covers the restart
-      // check's frame-midpoint seek slack.) An explicit play/space afterward
-      // still restarts from the top, as intended.
-      const atEnd = playbackTime.peek() >= duration - 1.5 / effectiveFps;
-      if (wasPlaying && !atEnd) isPlaying.value = true;
-      scrubbing.value = false; // landed — the persist effect saves the spot (if paused)
+      scrubbing.value = false; // landed — the persist effect saves the spot
       scrubAudio.value = false;
     };
     window.addEventListener("mousemove", onMove);
@@ -906,6 +900,7 @@ export function Timeline() {
                     onResizeCommit={handleResizeCommit}
                     onClick={() => {
                       selectedCaptionIndex.value = block.index;
+                      isPlaying.value = false; // any user seek stops playback (#43)
                       playbackTime.value = block.start;
                     }}
                     onDblClick={() => {
