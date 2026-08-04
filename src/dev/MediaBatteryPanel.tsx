@@ -1,12 +1,12 @@
-// Phase-0 mediabunny spike. Runs a metadata/decode/seek battery over media
+// Phase-0 media battery. Runs a metadata/decode/seek battery over media
 // files through both candidate byte sources — UrlSource (asset protocol,
 // range requests) and CustomSource (Rust read_file_range IPC) — and reports
 // per-step timings. Three entry points: "pick file + run" (manual, one file),
-// "run all fixtures" (everything in test-media/mediabunny-spike, report saved
-// to RESULTS.md), and auto mode (VITE_SPIKE_AUTO=1: run all on launch, save,
+// "run all fixtures" (everything in test-media/battery, report saved
+// to RESULTS.md), and auto mode (VITE_BATTERY_AUTO=1: run all on launch, save,
 // then force-quit the app — used for unattended battery runs). Throwaway
 // evaluation harness: nothing here touches playback, the store, or project
-// files. Loaded lazily by MediaSpike so mediabunny stays out of startup.
+// files. Loaded lazily by MediaBattery so mediabunny stays out of startup.
 import { useEffect, useReducer, useRef, useState } from "preact/hooks";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -33,7 +33,7 @@ import { daemonStatus } from "../store/app";
 // the decoder set the app ships with, instead of registering its own.
 void loadMediabunny();
 
-const AUTO = import.meta.env.VITE_SPIKE_AUTO === "1";
+const AUTO = import.meta.env.VITE_BATTERY_AUTO === "1";
 
 type LogLine = { kind: "head" | "info" | "ok" | "err"; text: string };
 type Figure = { label: string; canvas: HTMLCanvasElement };
@@ -81,7 +81,7 @@ type SourceMetrics = {
 };
 type FileResult = { file: string; sizeMB?: number; sources: SourceMetrics[] };
 
-const SPIKE_EXTS = [
+const BATTERY_EXTS = [
   "mp4", "m4v", "m4a", "mov", "webm", "mkv", "ts", "m2ts", "mts",
   "ogg", "ogv", "oga", "opus", "mp3", "wav", "aac", "flac",
   // Deliberately outside mediabunny's container list, to see the failure mode:
@@ -128,7 +128,7 @@ function CanvasFigure({ figure }: { figure: Figure }) {
   );
 }
 
-export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
+export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
   const lines = useRef<LogLine[]>([]);
   const figures = useRef<Figure[]>([]);
   const [, bump] = useReducer((c: number) => c + 1, 0);
@@ -496,7 +496,8 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
   const engineSmoke = async (path: string): Promise<string> => {
     const name = basename(path);
     const canvas = document.createElement("canvas");
-    const player = await createMediabunnyPlayer({ path, canvas });
+    let endedCount = 0;
+    const player = await createMediabunnyPlayer({ path, canvas, onEnded: () => endedCount++ });
     // Every smoke fixture is decodable SDR content — a rescue verdict here
     // means the engine wrongly declined a file it should own (phase 3: the
     // engine is the default player).
@@ -557,21 +558,79 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       const restartT = player.currentTime();
       const restartOk = restartT > 0.2 && restartT < 1.5;
 
+      // Issue #42: seeking to the end WHILE PLAYING is playback ending — the
+      // engine must pause AND report it (onEnded), or the transport shows
+      // "playing" forever. (The paused park above must NOT have fired it.)
+      const endedBefore = endedCount;
+      player.seek(player.duration); // still playing from the restart leg
+      await wait(200);
+      const endSeekOk = !player.isPlaying() && endedCount === endedBefore + 1;
+
       const clockOk = clockT > 0.8 && clockT < 1.6;
-      const pass = clockOk && framesOk && raceOk && seekOk && stopOk && restartOk;
+      const pass = clockOk && framesOk && raceOk && seekOk && stopOk && restartOk && endSeekOk;
       return `${name}: dur=${player.duration.toFixed(2)}s clock@1.2s=${clockT.toFixed(2)}${clockOk ? "" : " ←CLOCK"}`
         + ` frames=${framesOk ? "advance" : "FROZEN"}`
         + ` seek+play=${raceOk ? "ok" : "FROZEN/STALLED"}`
         + ` seek(${target.toFixed(2)})→${seekT.toFixed(2)}${seekOk ? "" : " ←SEEK"}`
         + ` seek+pause=${stopOk ? "stops" : `KEEPS PLAYING(${stopT.toFixed(2)})`}`
         + ` restart@end→${restartT.toFixed(2)}${restartOk ? "" : " ←RESTART"}`
+        + ` seekEnd@play=${endSeekOk ? "ended" : `NO ONENDED(playing=${player.isPlaying()},fired=${endedCount - endedBefore})`}`
         + `${pass ? " PASS" : " FAIL"}`;
     } finally {
       player.dispose();
     }
   };
 
-  const buildReport = (all: FileResult[], sanity: string[] = [], parity: string[] = [], engine: string[] = []): string => {
+  /** Issue #44 diagnostics. Two questions per format: (a) what decoded
+   *  chunks compose a 60 ms grain window (count/sizes/span — the trim math's
+   *  inputs), and (b) what a grain FETCH COSTS, cold vs warm, at a position
+   *  deep in the file — the seek-cost axis that 5 s fixtures can't show
+   *  (MP3 is index-less; WAV is sample-addressable). */
+  const grainProbe = async (path: string): Promise<string> => {
+    const name = basename(path);
+    const { Input, ALL_FORMATS, UrlSource, AudioBufferSink } = await loadMediabunny();
+    const input = new Input({ formats: ALL_FORMATS, source: new UrlSource(convertFileSrc(path)) });
+    try {
+      const track = await input.getPrimaryAudioTrack();
+      if (!track || !(await track.canDecode())) return `${name}: no decodable audio`;
+      const duration = Math.max(0, (await track.computeDuration()) - Math.max(await track.getFirstTimestamp(), 0));
+      const sink = new AudioBufferSink(track);
+      // Deep position for long fixtures, shallow for the 5 s ones.
+      const start = duration > 60 ? Math.min(250, duration - 10) : 1.0;
+      const end = start + 0.06;
+
+      const fetchWindow = async () => {
+        const t0 = performance.now();
+        const parts: string[] = [];
+        let firstTs = Infinity;
+        let lastEnd = -Infinity;
+        let n = 0;
+        for await (const { buffer, timestamp } of sink.buffers(start, end)) {
+          n++;
+          firstTs = Math.min(firstTs, timestamp);
+          lastEnd = Math.max(lastEnd, timestamp + buffer.duration);
+          parts.push(`${timestamp.toFixed(3)}s+${(buffer.duration * 1000).toFixed(1)}ms`);
+        }
+        return { ms: performance.now() - t0, parts, firstTs, lastEnd, n };
+      };
+
+      const cold = await fetchWindow(); // first touch: pays any index walk
+      const warm = await fetchWindow(); // repeat at the same spot
+      const near = performance.now();
+      // A short step away — the frame-step pattern (index should stay warm).
+      for await (const wb of sink.buffers(start + 0.5, start + 0.56)) void wb;
+      const stepMs = performance.now() - near;
+
+      return `${name}: window[${start.toFixed(3)}..${end.toFixed(3)}] chunks=${cold.n}`
+        + ` decodedSpan=[${cold.firstTs.toFixed(3)}..${cold.lastEnd.toFixed(3)}]`
+        + ` fetch cold=${cold.ms.toFixed(0)}ms warm=${warm.ms.toFixed(0)}ms step=${stepMs.toFixed(0)}ms`
+        + ` ${cold.parts.join(" ")}`;
+    } finally {
+      input.dispose();
+    }
+  };
+
+  const buildReport = (all: FileResult[], sanity: string[] = [], parity: string[] = [], engine: string[] = [], grains: string[] = []): string => {
     const row = (r: FileResult, m: SourceMetrics) => {
       const v = m.video;
       const a = m.audio;
@@ -592,7 +651,7 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       return `| ${cells.join(" | ")} |`;
     };
     return [
-      "# mediabunny spike — battery results",
+      "# media battery — battery results",
       "",
       `- generated: ${new Date().toISOString()}`,
       `- userAgent: ${navigator.userAgent}`,
@@ -615,6 +674,10 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       "",
       ...(engine.length ? engine.map((s) => `- ${s}`) : ["- (not run)"]),
       "",
+      "## Grain window probe (issue #44)",
+      "",
+      ...(grains.length ? grains.map((s) => `- ${s}`) : ["- (not run)"]),
+      "",
       "## Raw data",
       "",
       "```json",
@@ -630,16 +693,16 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
     setRunning(true);
     try {
       await loadMediabunny(); // decoders must be registered before canDecode checks
-      const dir = await invoke<string>("spike_fixture_dir");
+      const dir = await invoke<string>("battery_fixture_dir");
       const listing = await invoke<{ files: string[]; folders: { name: string; media: string[] }[] }>(
         "collect_dropped_media",
-        { paths: [dir], exts: SPIKE_EXTS },
+        { paths: [dir], exts: BATTERY_EXTS },
       );
       const files = [...listing.files, ...listing.folders.flatMap((f) => f.media)].sort();
       push("info", `fixture dir: ${dir}`);
       push("info", `WebCodecs: VideoDecoder=${"VideoDecoder" in window} AudioDecoder=${"AudioDecoder" in window}`);
       if (files.length === 0) {
-        push("err", "no fixtures found — run `npm run spike:media` first");
+        push("err", "no fixtures found — run `npm run battery:media` first");
         return;
       }
       push("info", `${files.length} fixtures`);
@@ -748,8 +811,23 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
         push(line.includes("FAIL") ? "err" : "ok", `  ${line}`);
       }
 
+      // Grain window anatomy per audio format (issue #44 diagnostics).
+      push("head", "━━ grain window probe (#44: chunking per format) ━━");
+      const grains: string[] = [];
+      for (const path of files) {
+        const name = basename(path);
+        // Any mp3/wav in the fixture dir gets probed — drop a REAL-WORLD file
+        // in before running to compare it against the synthetic fixtures.
+        if (!/\.mp3$|\.wav$|^aac\.m4a$|^lossless\.flac$/.test(name)) continue;
+        if (isStale()) return;
+        const line = await withTimeout(grainProbe(path), 60_000, `grain probe ${name}`)
+          .catch((e) => `${name}: probe failed — ${errText(e)}`);
+        grains.push(line);
+        push("info", `  ${line}`);
+      }
+
       if (isStale()) return;
-      const saved = await invoke<string>("save_spike_report", { content: buildReport(all, sanity, parity, engine) });
+      const saved = await invoke<string>("save_battery_report", { content: buildReport(all, sanity, parity, engine, grains) });
       push("head", `━━ report saved → ${saved} ━━`);
     } catch (e) {
       push("err", `run all — FAILED: ${errText(e)}`);
@@ -762,7 +840,7 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
     const picked = await open({
       multiple: false,
       filters: [
-        { name: "Media (spike superset)", extensions: SPIKE_EXTS },
+        { name: "Media (battery superset)", extensions: BATTERY_EXTS },
         { name: "All files", extensions: ["*"] },
       ],
     });
@@ -820,7 +898,7 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderBottom: "1px solid #3a4150" }}>
-        <strong style={{ color: "#e8b64c" }}>mediabunny spike</strong>
+        <strong style={{ color: "#e8b64c" }}>media battery</strong>
         <button onClick={() => void runOne()} disabled={running} style={{ padding: "2px 10px" }}>
           pick file + run
         </button>
@@ -833,8 +911,8 @@ export function MediaSpikePanel({ onClose }: { onClose: () => void }) {
       <div ref={scroller} style={{ flex: 1, overflow: "auto", padding: 10 }}>
         {lines.current.length === 0 && (
           <div style={{ opacity: 0.6 }}>
-            "run all fixtures" sweeps test-media/mediabunny-spike (generate with
-            `npm run spike:media`) through both byte sources and saves RESULTS.md
+            "run all fixtures" sweeps test-media/battery (generate with
+            `npm run battery:media`) through both byte sources and saves RESULTS.md
             next to the fixtures. "pick file + run" tests a single file of your
             choosing. Battery: format probe, tracks, exact duration, first-frame
             decode, 8-thumbnail strip, random-seek latency, frame stepping, audio

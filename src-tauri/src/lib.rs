@@ -768,32 +768,32 @@ fn collect_dropped_media(paths: Vec<String>, exts: Vec<String>) -> DroppedMedia 
     DroppedMedia { files, folders, skipped }
 }
 
-/// Dev-only helpers for the mediabunny spike battery. Debug builds resolve the
+/// Dev-only helpers for the media battery. Debug builds resolve the
 /// fixture dir from the build machine's checkout (CARGO_MANIFEST_DIR); release
-/// builds compile the path out entirely and refuse the commands — the spike UI
+/// builds compile the path out entirely and refuse the commands — the battery UI
 /// that calls them is itself compiled out of production bundles.
 #[tauri::command]
-fn spike_fixture_dir() -> Result<String, String> {
+fn battery_fixture_dir() -> Result<String, String> {
     #[cfg(debug_assertions)]
     {
         Ok(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
-            .map(|repo| repo.join("test-media").join("mediabunny-spike"))
+            .map(|repo| repo.join("test-media").join("battery"))
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned())
     }
     #[cfg(not(debug_assertions))]
     {
-        Err("spike_fixture_dir is dev-only".into())
+        Err("battery_fixture_dir is dev-only".into())
     }
 }
 
 #[tauri::command]
-fn save_spike_report(content: String) -> Result<String, String> {
+fn save_battery_report(content: String) -> Result<String, String> {
     #[cfg(debug_assertions)]
     {
-        let dir = std::path::PathBuf::from(spike_fixture_dir()?);
+        let dir = std::path::PathBuf::from(battery_fixture_dir()?);
         std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
         let path = dir.join("RESULTS.md");
         std::fs::write(&path, content).map_err(|e| format!("write: {e}"))?;
@@ -802,7 +802,7 @@ fn save_spike_report(content: String) -> Result<String, String> {
     #[cfg(not(debug_assertions))]
     {
         let _ = content;
-        Err("save_spike_report is dev-only".into())
+        Err("save_battery_report is dev-only".into())
     }
 }
 
@@ -1713,8 +1713,8 @@ pub fn run() {
             file_mtime,
             file_size,
             read_file_range,
-            spike_fixture_dir,
-            save_spike_report,
+            battery_fixture_dir,
+            save_battery_report,
             compute_relative_path,
             resolve_relative_path,
             generate_peaks,

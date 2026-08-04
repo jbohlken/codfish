@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint:encoding": "node scripts/check-no-fffd.mjs",
-    "spike:media": "node scripts/make-spike-media.mjs"
+    "battery:media": "node scripts/make-battery-media.mjs"
   },
   "dependencies": {
     "@mediabunny/ac3": "^1.51.0",

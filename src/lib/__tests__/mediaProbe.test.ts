@@ -86,7 +86,7 @@ describe("snapFps", () => {
 
 describe("normalizeDuration", () => {
   it("subtracts a positive container start offset (MPEG-TS)", () => {
-    // The spike's h264-aac.ts: computeDuration 6.480, firstTimestamp 1.4453.
+    // The battery's h264-aac.ts: computeDuration 6.480, firstTimestamp 1.4453.
     expect(normalizeDuration(6.48, 1.4453333)).toBeCloseTo(5.0346667, 6);
   });
 
