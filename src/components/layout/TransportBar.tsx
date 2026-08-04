@@ -24,14 +24,22 @@ export function TransportBar() {
   const isMuted = muted.value;
   if (!media) return null;
 
+  // Any user seek stops playback (#43) — play is always an explicit action.
+  const goToStart = () => {
+    isPlaying.value = false;
+    playbackTime.value = 0;
+  };
+
   const goToEnd = () => {
     const dur = timelineDuration.peek();
-    if (dur) playbackTime.value = dur;
+    if (!dur) return;
+    isPlaying.value = false;
+    playbackTime.value = dur;
   };
 
   return (
     <div class="transport-bar">
-      <button class="timeline-btn" onClick={() => { playbackTime.value = 0; }} data-tooltip="Go to start">
+      <button class="timeline-btn" onClick={goToStart} data-tooltip="Go to start">
         <SkipBack size={14} weight="fill" />
       </button>
       <button class="timeline-btn" onClick={() => stepPlayhead(-1)} data-tooltip="Previous frame (←)">

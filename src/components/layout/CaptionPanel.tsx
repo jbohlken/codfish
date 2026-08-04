@@ -822,6 +822,7 @@ export function CaptionPanel() {
                 onClick={() => {
                   editingIndex.value = null;
                   selectedCaptionIndex.value = block.index;
+                  isPlaying.value = false; // any user seek stops playback (#43)
                   playbackTime.value = block.start;
                   revealCaptionTick.value++; // reveal in the timeline, even if already active
                 }}
