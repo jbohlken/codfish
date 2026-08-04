@@ -285,6 +285,37 @@ export async function createMediabunnyPlayer(opts: {
           if (disposed || seq !== grainSeq) return;
         }
         if (disposed || playing || seq !== grainSeq || collected.length === 0) return;
+        // Build the grain as ONE contiguous buffer instead of scheduling a
+        // node per decoded chunk. Per-chunk nodes start at sub-sample offsets
+        // — a discontinuity risk at every seam — and seam count depends on
+        // the format's chunk anatomy (MP3: ~24 ms chunks = 3-4 seams per
+        // grain; WAV: 0-1), which made MP3 grains audibly buzzy/fragmented
+        // (issue #44). One buffer, one node, one envelope: seamless by
+        // construction, identical output for any container.
+        const rate = collected[0].buffer.sampleRate;
+        const channels = collected[0].buffer.numberOfChannels;
+        const grainStartSample = Math.round(nativeStart * rate);
+        const totalSamples = Math.round((grainEnd - nativeStart) * rate);
+        if (totalSamples <= 0) return;
+        const grainBuffer = audioContext.createBuffer(channels, totalSamples, rate);
+        for (const { buffer, timestamp } of collected) {
+          // Decoder timestamps are sample-grid-aligned; rounding recovers the
+          // exact sample index, so adjacent chunks land truly gapless.
+          const chunkStartSample = Math.round(timestamp * rate);
+          for (let ch = 0; ch < channels; ch++) {
+            const src = buffer.getChannelData(Math.min(ch, buffer.numberOfChannels - 1));
+            let dst = chunkStartSample - grainStartSample;
+            let srcOff = 0;
+            if (dst < 0) {
+              srcOff = -dst;
+              dst = 0;
+            }
+            const count = Math.min(src.length - srcOff, totalSamples - dst);
+            if (count > 0) {
+              grainBuffer.getChannelData(ch).set(src.subarray(srcOff, srcOff + count), dst);
+            }
+          }
+        }
         stopGrain();
         const g = audioContext.createGain();
         g.connect(gain);
@@ -293,17 +324,11 @@ export async function createMediabunnyPlayer(opts: {
         g.gain.linearRampToValueAtTime(1, now + GRAIN_FADE);
         g.gain.setValueAtTime(1, now + grainSec - GRAIN_FADE);
         g.gain.linearRampToValueAtTime(0, now + grainSec);
-        const nodes: AudioBufferSourceNode[] = [];
-        for (const { buffer, timestamp } of collected) {
-          const rel = timestamp - nativeStart;
-          const remaining = grainEnd - Math.max(timestamp, nativeStart);
-          if (remaining <= 0) continue;
-          const node = audioContext.createBufferSource();
-          node.buffer = buffer;
-          node.connect(g);
-          node.start(now + Math.max(rel, 0), rel < 0 ? -rel : 0, remaining);
-          nodes.push(node);
-        }
+        const node = audioContext.createBufferSource();
+        node.buffer = grainBuffer;
+        node.connect(g);
+        node.start(now);
+        const nodes: AudioBufferSourceNode[] = [node];
         grainGain = g;
         grainNodes = nodes;
         grainNativeStart = nativeStart;
@@ -410,6 +435,13 @@ export async function createMediabunnyPlayer(opts: {
         // advance it past this value and veto the resume.
         const gen = resumeGen;
         nativeAtStart = startTs + Math.max(0, Math.min(seconds, duration));
+        // Seeking to the end DURING playback is playback ending — the resume
+        // below correctly declines, but without this the UI never learns:
+        // isPlaying stays true and the transport shows "playing" while the
+        // engine sits parked (the element path gets this free via 'ended').
+        if (wasPlaying && nativeAtStart >= nativeEnd) {
+          onEnded?.();
+        }
         void startFrameIterator().then(() => {
           if (!disposed && wasPlaying && gen === resumeGen && nativeAtStart < nativeEnd) {
             void this.play();
