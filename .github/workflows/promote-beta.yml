@@ -10,9 +10,15 @@ name: Promote beta manifest
 # pointer, which excludes prereleases). Doing this on PUBLISH — not at build
 # time — guarantees the release's installer assets are already downloadable,
 # so beta.json never points at draft URLs that 404 for end users.
+# Trigger on `published`, NOT [released, prereleased]: GitHub documents that
+# publishing a DRAFT as a pre-release fires only `published` — `prereleased`
+# does not fire for drafts. Our release-app workflow always creates the
+# release as a draft, so [released, prereleased] silently never ran for betas
+# (bitten on v0.7.0-beta.1; that manifest was promoted by hand). `published`
+# fires exactly once for every publish, draft or not, stable or pre.
 on:
   release:
-    types: [released, prereleased]
+    types: [published]
 
 permissions:
   contents: write
