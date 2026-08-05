@@ -14,7 +14,7 @@ import {
   VIDEO_EXTS,
 } from "../../lib/project";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, cursorPosition } from "@tauri-apps/api/window";
 import {
   buildBinForest,
   sortBins,
@@ -84,24 +84,15 @@ function createDragGhost(label: string): HTMLElement {
   return ghost;
 }
 
-// Resolve an OS file-drop position (from Tauri's drag-drop event) to a target
-// in the project panel: a bin (its data-bin-id), the panel itself (ROOT_DROP =
-// top level), or null when the drop is outside the panel or no project is
-// open. Reuses the same hit-test shape as the in-app pointer drag.
-// `scale` is the divisor that converts the event position to the CSS pixels
-// elementFromPoint expects — and it is PLATFORM-DEPENDENT, because the
-// position Tauri labels PhysicalPosition isn't physical everywhere (verified
-// against wry 0.55.1 + tauri-runtime-wry sources):
-// - Windows: WebView2 reports true physical client px → divide by the
-//   WINDOW's scale factor (not window.devicePixelRatio, which can disagree
-//   on scaled displays).
-// - macOS: wry passes NSDraggingInfo's draggingLocation through unconverted —
-//   already-logical view points, y-flipped — so the correct divisor is 1;
-//   dividing by the Retina scale factor halved every coordinate and
-//   hit-tested the wrong element.
-function osDropTargetAt(pos: { x: number; y: number }, scale: number): string | null {
+// Resolve an OS file-drop point (CSS px, top-left of the webview viewport) to
+// a target in the project panel: a bin (its data-bin-id), the panel itself
+// (ROOT_DROP = top level), or null when the drop is outside the panel or no
+// project is open. Reuses the same hit-test shape as the in-app pointer drag.
+// Callers own the platform-specific conversion to CSS px — see the drag-drop
+// effect below for why that differs per OS.
+function osDropTargetAt(pos: { x: number; y: number }): string | null {
   if (!project.peek()) return null;
-  const el = document.elementFromPoint(pos.x / scale, pos.y / scale) as HTMLElement | null;
+  const el = document.elementFromPoint(pos.x, pos.y) as HTMLElement | null;
   if (!el) return null;
   const binEl = el.closest("[data-bin-id]");
   if (binEl) return binEl.getAttribute("data-bin-id");
@@ -375,32 +366,88 @@ export function ProjectPanel() {
     let unlisten: (() => void) | undefined;
     let unlistenScale: (() => void) | undefined;
     let disposed = false;
-    // Physical→CSS divisor (see osDropTargetAt): 1 on macOS (positions arrive
-    // logical), the window scale factor elsewhere. Cache it (it's async) and
-    // track moves between monitors; fall back to devicePixelRatio until the
-    // real factor arrives.
+    // Converting the event position to the CSS px elementFromPoint expects is
+    // platform-specific, because the position Tauri labels PhysicalPosition
+    // isn't trustworthy everywhere (verified against wry 0.55.1 +
+    // tauri-runtime-wry sources):
+    // - Windows: WebView2 reports true physical client px → divide by the
+    //   WINDOW's scale factor (not window.devicePixelRatio, which can
+    //   disagree on scaled displays). Straightforward and correct.
+    // - macOS: wry passes NSDraggingInfo's draggingLocation through with a
+    //   hand-rolled bottom-left→top-left flip that leaves the y off by a
+    //   constant (its own synthetic-mouse path uses convertPoint_fromView
+    //   instead — the drag path forgot). So the event position is IGNORED on
+    //   macOS: each enter/over hit-tests ground truth instead — tao's global
+    //   cursorPosition minus the window's content-area origin, both physical
+    //   screen px from the same source. The drop then consumes whatever
+    //   target is currently highlighted, so the import target is exactly
+    //   what the user saw under the cursor at release (a fresh query at drop
+    //   time could sample the cursor mid-flick, milliseconds AFTER release).
     const isMac = navigator.userAgent.includes("Macintosh");
-    let scale = isMac ? 1 : window.devicePixelRatio || 1;
+    let scale = window.devicePixelRatio || 1;
+    // Serializes the async macOS queries: only the newest may write the
+    // highlight, and drop/leave bump it so a stale in-flight query can't
+    // resurrect a highlight after the drag ended.
+    let querySeq = 0;
     try {
       const win = getCurrentWindow();
-      if (!isMac) {
-        win.scaleFactor().then((s) => { scale = s; }).catch(() => {});
-        win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
-          .then((un) => { if (disposed) un(); else unlistenScale = un; })
+      win.scaleFactor().then((s) => { scale = s; }).catch(() => {});
+      win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
+        .then((un) => { if (disposed) un(); else unlistenScale = un; })
+        .catch(() => {});
+      // Content-area origin (physical screen px), cached per drag session —
+      // the window can't move while it's the drop target of a Finder drag.
+      let contentOrigin: { x: number; y: number } | null = null;
+      const macCssPoint = async () => {
+        const [cur, origin] = await Promise.all([
+          cursorPosition(),
+          contentOrigin ? Promise.resolve(contentOrigin) : win.innerPosition(),
+        ]);
+        contentOrigin = origin;
+        return { x: (cur.x - origin.x) / scale, y: (cur.y - origin.y) / scale };
+      };
+      const macUpdateHighlight = () => {
+        const seq = ++querySeq;
+        macCssPoint()
+          .then((css) => {
+            if (!disposed && seq === querySeq) dropTarget.value = osDropTargetAt(css);
+          })
           .catch(() => {});
-      }
+      };
       getCurrentWebview()
         .onDragDropEvent((event) => {
           const p = event.payload;
           if (p.type === "leave") {
+            querySeq++;
+            contentOrigin = null;
             dropTarget.value = null;
           } else if (p.type === "drop") {
-            const target = osDropTargetAt(p.position, scale);
+            querySeq++;
+            let target = isMac
+              ? dropTarget.peek()
+              : osDropTargetAt({ x: p.position.x / scale, y: p.position.y / scale });
             dropTarget.value = null;
+            contentOrigin = null;
+            if (isMac && target === null) {
+              // Instant drop before any over-query resolved: fall back to a
+              // fresh query (the mid-flick risk beats dropping the drop).
+              void macCssPoint()
+                .then((css) => {
+                  const t = osDropTargetAt(css);
+                  if (t !== null) void importDrop(p.paths, t === ROOT_DROP ? undefined : t);
+                })
+                .catch(() => {});
+              return;
+            }
             if (target !== null) void importDrop(p.paths, target === ROOT_DROP ? undefined : target);
           } else {
             // enter / over
-            dropTarget.value = osDropTargetAt(p.position, scale);
+            if (isMac) {
+              if (p.type === "enter") contentOrigin = null; // window may have moved since the last drag
+              macUpdateHighlight();
+            } else {
+              dropTarget.value = osDropTargetAt({ x: p.position.x / scale, y: p.position.y / scale });
+            }
           }
         })
         .then((un) => { if (disposed) un(); else unlisten = un; })
