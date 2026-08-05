@@ -1491,6 +1491,16 @@ body.rows-dragging * {
   flex-direction: column;
   background: var(--tl-bg);
   overflow: hidden;
+  /* Scrub drags are native text-selection drags as far as the browser is
+     concerned (mousedown isn't preventDefault'ed — deliberately: that would
+     also stop the caption editor's textarea from blurring on a timeline
+     click). The selection was invisible while WebKit painted its highlight
+     under the composited canvas; the #41 layer fix made it show. Nothing in
+     the timeline is meant to be selectable text — turn it off wholesale.
+     -webkit- prefix: WKWebView on the macOS 13.4 floor predates unprefixed
+     support. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .timeline-toolbar {
