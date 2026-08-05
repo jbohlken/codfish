@@ -11,4 +11,4 @@ export const LANGUAGE_SELECTION_ENABLED: boolean = false;
 // tested but parked for the 0.7.0 release. Gates both the timeline-toolbar
 // toggle and the fish itself (a stale codfish:codometer localStorage value must
 // not summon it while parked). Flip to true to ship it.
-export const CODOMETER_ENABLED: boolean = false;
+export const CODOMETER_ENABLED: boolean = true;
