@@ -84,14 +84,21 @@ function createDragGhost(label: string): HTMLElement {
   return ghost;
 }
 
-// Resolve an OS file-drop position (physical px, from Tauri's drag-drop event)
-// to a target in the project panel: a bin (its data-bin-id), the panel itself
-// (ROOT_DROP = top level), or null when the drop is outside the panel or no
-// project is open. Reuses the same hit-test shape as the in-app pointer drag.
-// `scale` is the WINDOW's scale factor — Tauri produced the physical position
-// with it, so it (not window.devicePixelRatio, which can disagree on macOS
-// scaled/Retina displays and put the hit-test at the wrong spot) converts back
-// to the CSS pixels elementFromPoint expects.
+// Resolve an OS file-drop position (from Tauri's drag-drop event) to a target
+// in the project panel: a bin (its data-bin-id), the panel itself (ROOT_DROP =
+// top level), or null when the drop is outside the panel or no project is
+// open. Reuses the same hit-test shape as the in-app pointer drag.
+// `scale` is the divisor that converts the event position to the CSS pixels
+// elementFromPoint expects — and it is PLATFORM-DEPENDENT, because the
+// position Tauri labels PhysicalPosition isn't physical everywhere (verified
+// against wry 0.55.1 + tauri-runtime-wry sources):
+// - Windows: WebView2 reports true physical client px → divide by the
+//   WINDOW's scale factor (not window.devicePixelRatio, which can disagree
+//   on scaled displays).
+// - macOS: wry passes NSDraggingInfo's draggingLocation through unconverted —
+//   already-logical view points, y-flipped — so the correct divisor is 1;
+//   dividing by the Retina scale factor halved every coordinate and
+//   hit-tested the wrong element.
 function osDropTargetAt(pos: { x: number; y: number }, scale: number): string | null {
   if (!project.peek()) return null;
   const el = document.elementFromPoint(pos.x / scale, pos.y / scale) as HTMLElement | null;
@@ -368,16 +375,20 @@ export function ProjectPanel() {
     let unlisten: (() => void) | undefined;
     let unlistenScale: (() => void) | undefined;
     let disposed = false;
-    // The drop position is in physical pixels, scaled by the WINDOW's scale
-    // factor. Cache it (it's async) and track moves between monitors; fall back
-    // to devicePixelRatio until the real factor arrives.
-    let scale = window.devicePixelRatio || 1;
+    // Physical→CSS divisor (see osDropTargetAt): 1 on macOS (positions arrive
+    // logical), the window scale factor elsewhere. Cache it (it's async) and
+    // track moves between monitors; fall back to devicePixelRatio until the
+    // real factor arrives.
+    const isMac = navigator.userAgent.includes("Macintosh");
+    let scale = isMac ? 1 : window.devicePixelRatio || 1;
     try {
       const win = getCurrentWindow();
-      win.scaleFactor().then((s) => { scale = s; }).catch(() => {});
-      win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
-        .then((un) => { if (disposed) un(); else unlistenScale = un; })
-        .catch(() => {});
+      if (!isMac) {
+        win.scaleFactor().then((s) => { scale = s; }).catch(() => {});
+        win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
+          .then((un) => { if (disposed) un(); else unlistenScale = un; })
+          .catch(() => {});
+      }
       getCurrentWebview()
         .onDragDropEvent((event) => {
           const p = event.payload;
