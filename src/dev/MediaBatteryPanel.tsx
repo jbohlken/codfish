@@ -492,8 +492,45 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
     return h;
   };
 
-  /** Play/seek a real engine instance against a fixture; returns a report line. */
-  const engineSmoke = async (path: string): Promise<string> => {
+  /** Output pipeline latency — the number the engine's presentation clock
+   *  compensates by. The KEY diagnostic is whether the platform reports
+   *  outputLatency at all: Chromium (WebView2) does and updates it per
+   *  device; WebKit (WKWebView) historically doesn't, in which case the
+   *  compensation silently degrades to the old feed-clock behavior and a
+   *  Bluetooth A/V offset on macOS stays unfixable from our side. Plays a
+   *  short silent buffer first — Chromium may report a placeholder until the
+   *  device pipeline actually spins up. */
+  const measureLatency = async (): Promise<{ line: string; totalSec: number }> => {
+    const ctx = new AudioContext();
+    try {
+      if (ctx.state === "suspended") {
+        await Promise.race([ctx.resume(), new Promise<void>((r) => setTimeout(r, 1000))]);
+      }
+      if (ctx.state === "running") {
+        const silent = ctx.createBufferSource();
+        silent.buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.1), ctx.sampleRate);
+        silent.connect(ctx.destination);
+        silent.start();
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      const supported = typeof ctx.outputLatency === "number";
+      const base = ctx.baseLatency || 0;
+      const output = supported ? ctx.outputLatency || 0 : 0;
+      const line = `output latency: base=${(base * 1000).toFixed(1)}ms `
+        + `output=${supported ? `${(output * 1000).toFixed(1)}ms` : "UNSUPPORTED (presentation clock uncompensated!)"}`
+        + ` (ctx ${ctx.state} @ ${ctx.sampleRate}Hz)`;
+      return { line, totalSec: base + output };
+    } finally {
+      void ctx.close();
+    }
+  };
+
+  /** Play/seek a real engine instance against a fixture; returns a report
+   *  line. `latSec` is the measured output latency: the engine's public
+   *  clock now reports the AUDIBLE position (feed − latency), so every
+   *  elapsed-time assertion must expect that much less progress — otherwise
+   *  a Bluetooth-output run (Mac + AirPods: ~150-300 ms) false-fails. */
+  const engineSmoke = async (path: string, latSec = 0): Promise<string> => {
     const name = basename(path);
     const canvas = document.createElement("canvas");
     let endedCount = 0;
@@ -521,7 +558,7 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
       await wait(400);
       const rh = canvasHash(canvas);
       await wait(400);
-      const raceOk = player.currentTime() > target + 0.5
+      const raceOk = player.currentTime() > target + 0.5 - latSec
         && (!player.hasVideo || canvasHash(canvas) !== rh);
       player.pause();
 
@@ -556,7 +593,10 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
       await player.play();
       await wait(500);
       const restartT = player.currentTime();
-      const restartOk = restartT > 0.2 && restartT < 1.5;
+      // Lower bound floors at 0.02 — with a deep pipe the audible position
+      // may legitimately still be near 0 after 500 ms; the upper bound is
+      // what catches "didn't restart" (it would read ≈ duration).
+      const restartOk = restartT > Math.max(0.02, 0.2 - latSec) && restartT < 1.5;
 
       // Issue #42: seeking to the end WHILE PLAYING is playback ending — the
       // engine must pause AND report it (onEnded), or the transport shows
@@ -566,7 +606,7 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
       await wait(200);
       const endSeekOk = !player.isPlaying() && endedCount === endedBefore + 1;
 
-      const clockOk = clockT > 0.8 && clockT < 1.6;
+      const clockOk = clockT > 0.8 - latSec && clockT < 1.6;
       const pass = clockOk && framesOk && raceOk && seekOk && stopOk && restartOk && endSeekOk;
       return `${name}: dur=${player.duration.toFixed(2)}s clock@1.2s=${clockT.toFixed(2)}${clockOk ? "" : " ←CLOCK"}`
         + ` frames=${framesOk ? "advance" : "FROZEN"}`
@@ -799,13 +839,19 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
       // (real usage always has a click; auto mode does not).
       push("head", "━━ engine smoke (lib/mediabunnyPlayer) ━━");
       const engine: string[] = [];
+      // Output latency first: it's a report line in its own right (the
+      // WKWebView-support question) AND the slack the smoke assertions need
+      // now that the engine's clock reports the audible position.
+      const lat = await measureLatency().catch((e) => ({ line: `output latency: FAILED — ${errText(e)}`, totalSec: 0 }));
+      engine.push(lat.line);
+      push("info", lat.line);
       for (const path of files) {
         const name = basename(path);
         // Engine-default (phase 3) means the everyday formats ride the engine
         // too — smoke the controls alongside the formats the engine unlocked.
         if (!/prores-hq|h264-aac\.mkv|^aac\.m4a$|^control-|^vbr\.mp3$/.test(name)) continue;
         if (isStale()) return;
-        const line = await withTimeout(engineSmoke(path), 30_000, `engine smoke ${name}`)
+        const line = await withTimeout(engineSmoke(path, lat.totalSec), 30_000, `engine smoke ${name}`)
           .catch((e) => `${name}: FAIL — ${errText(e)}`);
         engine.push(line);
         push(line.includes("FAIL") ? "err" : "ok", `  ${line}`);

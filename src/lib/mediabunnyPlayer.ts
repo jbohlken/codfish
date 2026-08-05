@@ -136,6 +136,25 @@ export async function createMediabunnyPlayer(opts: {
     const nativeClock = () =>
       playing ? audioContext.currentTime - ctxAtStart + nativeAtStart : nativeAtStart;
 
+    // What's AUDIBLE right now — the feed clock minus the output pipeline's
+    // depth. audioContext.currentTime advances when samples are HANDED to the
+    // output pipeline, not when they reach the ear; on wireless outputs the
+    // pipe is deep (Bluetooth ~150-300 ms), so video frames, the public
+    // playhead, and end-of-media detection must all lag the feed clock by
+    // that depth to stay in sync with what the user hears (the <video>
+    // element does this compensation internally). Latency is read live —
+    // device switches mid-session change it. Clamped at nativeAtStart: right
+    // after play() nothing is audible yet, so presentation holds at the
+    // start position while the pipe fills. Silent clips skip compensation
+    // (nothing to sync to; delaying frames would just make play feel laggy).
+    // Where the platform reports no outputLatency (WebKit, historically),
+    // this degrades to the uncompensated feed clock — today's behavior.
+    const presentationClock = () => {
+      if (!playing || !audioSink) return nativeClock();
+      const latency = (audioContext.outputLatency || 0) + (audioContext.baseLatency || 0);
+      return Math.max(nativeAtStart, nativeClock() - latency);
+    };
+
     const drawFrame = (frame: WrappedCanvas) => {
       if (!ctx2d) return;
       ctx2d.clearRect(0, 0, canvas.width, canvas.height);
@@ -164,7 +183,7 @@ export async function createMediabunnyPlayer(opts: {
       while (frameIterator) {
         const frame = (await frameIterator.next()).value ?? null;
         if (!frame || disposed || id !== asyncId) return;
-        if (frame.timestamp <= nativeClock()) {
+        if (frame.timestamp <= presentationClock()) {
           drawFrame(frame);
         } else {
           nextFrame = frame;
@@ -356,7 +375,10 @@ export async function createMediabunnyPlayer(opts: {
     const pause = () => {
       resumeGen++;
       if (!playing) return;
-      nativeAtStart = nativeClock();
+      // Park at the presentation position, not the feed position: the user
+      // pauses on what they HEARD, and on a high-latency output the feed
+      // clock is up to a pipe-depth ahead of that.
+      nativeAtStart = presentationClock();
       playing = false;
       asyncId++;
       stopAudio();
@@ -367,12 +389,12 @@ export async function createMediabunnyPlayer(opts: {
     // state still settles when the window is hidden.
     const render = () => {
       if (disposed) return;
-      if (playing && nativeClock() >= nativeEnd) {
+      if (playing && presentationClock() >= nativeEnd) {
         pause();
         nativeAtStart = nativeEnd;
         onEnded?.();
       }
-      if (nextFrame && nextFrame.timestamp <= nativeClock()) {
+      if (nextFrame && nextFrame.timestamp <= presentationClock()) {
         drawFrame(nextFrame);
         nextFrame = null;
         void pullNextFrame();
@@ -392,7 +414,7 @@ export async function createMediabunnyPlayer(opts: {
       duration,
       hasVideo: videoTrack !== null,
       hasAudio: audioTrack !== null,
-      currentTime: () => Math.max(0, Math.min(nativeClock() - startTs, duration)),
+      currentTime: () => Math.max(0, Math.min(presentationClock() - startTs, duration)),
       isPlaying: () => playing,
       async play() {
         if (disposed || playing) return;
