@@ -111,7 +111,7 @@ async function debugDropMath(
   eventPos: { x: number; y: number },
   css: { x: number; y: number },
   scale: number,
-  titlebarCss: number,
+  frameOffset: { x: number; y: number },
 ) {
   try {
     const win = getCurrentWindow();
@@ -122,7 +122,7 @@ async function debugDropMath(
     ]);
     dropDebugCss.value = css;
     dropDebug.value = [
-      `hit-test css=(${css.x.toFixed(0)}, ${css.y.toFixed(0)})  scale=${scale}  titlebar=${titlebarCss.toFixed(1)}`,
+      `hit-test css=(${css.x.toFixed(0)}, ${css.y.toFixed(0)})  scale=${scale}  frameOffset=(${frameOffset.x.toFixed(1)}, ${frameOffset.y.toFixed(1)})`,
       `event pos=(${eventPos.x.toFixed(0)}, ${eventPos.y.toFixed(0)})  event/scale=(${(eventPos.x / scale).toFixed(0)}, ${(eventPos.y / scale).toFixed(0)})`,
       `cursor=(${cur.x}, ${cur.y})  inner=(${inner.x}, ${inner.y})  outer=(${outer.x}, ${outer.y})`,
       `cursor-inner /scale=(${((cur.x - inner.x) / scale).toFixed(0)}, ${((cur.y - inner.y) / scale).toFixed(0)})  cursor-outer /scale=(${((cur.x - outer.x) / scale).toFixed(0)}, ${((cur.y - outer.y) / scale).toFixed(0)})`,
@@ -399,6 +399,7 @@ export function ProjectPanel() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let unlistenScale: (() => void) | undefined;
+    let removeCalibrate: (() => void) | undefined;
     let disposed = false;
     // Converting the event position to the CSS px elementFromPoint expects is
     // platform-specific, because the position Tauri labels PhysicalPosition
@@ -410,12 +411,12 @@ export function ProjectPanel() {
     //   disagree on scaled displays). Straightforward and correct.
     // - macOS: the event position is LOGICAL points measured from the window
     //   FRAME's top-left — CSS px shifted down by the titlebar. (Overlay
-    //   measurement: event pos == (cursorPosition − outerPosition)/scale,
-    //   and tao's innerPosition == outerPosition — it returns the frame
-    //   origin too, which is why hit-testing "ground truth" via cursor−inner
-    //   had the IDENTICAL offset.) Correction is exact: subtract the
-    //   titlebar height, (outerSize − innerSize)/scale, from y. x needs
-    //   nothing — macOS windows have no side borders.
+    //   measurement: event pos == (cursorPosition − outerPosition)/scale.)
+    //   And the titlebar height is NOT readable from tao: innerPosition ==
+    //   outerPosition (frame origin) AND innerSize == outerSize (overlay
+    //   measured the difference as 0.0) — every "content" API actually
+    //   reports the frame. So the offset is CALIBRATED from ground truth
+    //   instead: see `calibrate` below.
     const isMac = navigator.userAgent.includes("Macintosh");
     let scale = window.devicePixelRatio || 1;
     try {
@@ -424,22 +425,40 @@ export function ProjectPanel() {
       win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
         .then((un) => { if (disposed) un(); else unlistenScale = un; })
         .catch(() => {});
-      // Titlebar height in CSS px (macOS only). Fetched at listener setup
-      // and refreshed on every drag-enter — cheap, and covers monitor/scale
-      // moves between drags. Until the first query lands, 28 (the standard
-      // macOS titlebar in points) beats 0 by construction.
-      let titlebarCss = isMac ? 28 : 0;
-      const refreshTitlebar = () => {
-        void Promise.all([win.outerSize(), win.innerSize()])
-          .then(([o, i]) => {
-            titlebarCss = Math.max(0, o.height - i.height) / (scale || 1);
+      // macOS frame→content offset in CSS px, CALIBRATED from a real mouse
+      // event: a pointerdown's clientX/Y is the cursor's true CSS point
+      // (DOM truth, no Tauri involved), and tao can report where the cursor
+      // and the window frame sit on screen at that same instant — the
+      // cursor is stationary at click time, so the async sample is
+      // faithful. offset = (cursorScreen − frameScreen)/scale − clientCSS.
+      // This dodges every lying window API at once; it self-heals on the
+      // next click after a monitor/scale change. Until the first click,
+      // the standard 28 pt titlebar (x: 0 — macOS windows have no side
+      // borders) covers the drag-before-first-click case on a stock window.
+      let frameOffset = { x: 0, y: 28 };
+      let lastCalibration = -Infinity;
+      const calibrate = (e: PointerEvent) => {
+        const now = performance.now();
+        if (now - lastCalibration < 2000) return;
+        lastCalibration = now;
+        const cssX = e.clientX;
+        const cssY = e.clientY;
+        void Promise.all([cursorPosition(), win.outerPosition()])
+          .then(([cur, out]) => {
+            frameOffset = {
+              x: (cur.x - out.x) / (scale || 1) - cssX,
+              y: (cur.y - out.y) / (scale || 1) - cssY,
+            };
           })
           .catch(() => {});
       };
-      if (isMac) refreshTitlebar();
+      if (isMac) window.addEventListener("pointerdown", calibrate, { capture: true, passive: true });
+      removeCalibrate = isMac
+        ? () => window.removeEventListener("pointerdown", calibrate, { capture: true })
+        : undefined;
       const toCss = (pos: { x: number; y: number }) =>
         isMac
-          ? { x: pos.x, y: pos.y - titlebarCss }
+          ? { x: pos.x - frameOffset.x, y: pos.y - frameOffset.y }
           : { x: pos.x / scale, y: pos.y / scale };
       getCurrentWebview()
         .onDragDropEvent((event) => {
@@ -452,10 +471,9 @@ export function ProjectPanel() {
             if (target !== null) void importDrop(p.paths, target === ROOT_DROP ? undefined : target);
           } else {
             // enter / over
-            if (isMac && p.type === "enter") refreshTitlebar();
             const css = toCss(p.position);
             dropTarget.value = osDropTargetAt(css);
-            if (import.meta.env.DEV) void debugDropMath(p.position, css, scale, titlebarCss);
+            if (import.meta.env.DEV) void debugDropMath(p.position, css, scale, frameOffset);
           }
         })
         .then((un) => { if (disposed) un(); else unlisten = un; })
@@ -463,7 +481,7 @@ export function ProjectPanel() {
     } catch {
       // not running in a Tauri webview
     }
-    return () => { disposed = true; unlisten?.(); unlistenScale?.(); };
+    return () => { disposed = true; unlisten?.(); unlistenScale?.(); removeCalibrate?.(); };
   }, []);
 
   // Clear any leftover filter when a different project is opened — a stale
