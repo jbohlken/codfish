@@ -99,40 +99,6 @@ function osDropTargetAt(pos: { x: number; y: number }): string | null {
   return el.closest(".project-panel") ? ROOT_DROP : null;
 }
 
-// DEV-only diagnostic for the Finder-drop offset saga: a crosshair at the
-// exact point we hit-test plus every raw number feeding it, updated live
-// during an OS drag. HOLD THE DRAG STILL over a landmark and compare the
-// crosshair to the real cursor: the delta (and which line disagrees with
-// reality) identifies the lying coordinate source. Values stick after the
-// drag ends so they can be read/photographed. Zero cost in prod builds.
-const dropDebug = signal<string[] | null>(null);
-const dropDebugCss = signal<{ x: number; y: number } | null>(null);
-async function debugDropMath(
-  eventPos: { x: number; y: number },
-  css: { x: number; y: number },
-  scale: number,
-  frameOffset: { x: number; y: number },
-) {
-  try {
-    const win = getCurrentWindow();
-    const [cur, inner, outer] = await Promise.all([
-      cursorPosition(),
-      win.innerPosition(),
-      win.outerPosition(),
-    ]);
-    dropDebugCss.value = css;
-    dropDebug.value = [
-      `hit-test css=(${css.x.toFixed(0)}, ${css.y.toFixed(0)})  scale=${scale}  frameOffset=(${frameOffset.x.toFixed(1)}, ${frameOffset.y.toFixed(1)})`,
-      `event pos=(${eventPos.x.toFixed(0)}, ${eventPos.y.toFixed(0)})  event/scale=(${(eventPos.x / scale).toFixed(0)}, ${(eventPos.y / scale).toFixed(0)})`,
-      `cursor=(${cur.x}, ${cur.y})  inner=(${inner.x}, ${inner.y})  outer=(${outer.x}, ${outer.y})`,
-      `cursor-inner /scale=(${((cur.x - inner.x) / scale).toFixed(0)}, ${((cur.y - inner.y) / scale).toFixed(0)})  cursor-outer /scale=(${((cur.x - outer.x) / scale).toFixed(0)}, ${((cur.y - outer.y) / scale).toFixed(0)})`,
-      `viewport=(${window.innerWidth}, ${window.innerHeight})  dpr=${window.devicePixelRatio}`,
-    ];
-  } catch (e) {
-    dropDebug.value = [`debug query failed: ${String(e)}`];
-  }
-}
-
 // Panel resize handles for both side panels live in ./PanelResizeHandle.
 
 // ── Sort & filter ───────────────────────────────────────────────────────────
@@ -471,9 +437,7 @@ export function ProjectPanel() {
             if (target !== null) void importDrop(p.paths, target === ROOT_DROP ? undefined : target);
           } else {
             // enter / over
-            const css = toCss(p.position);
-            dropTarget.value = osDropTargetAt(css);
-            if (import.meta.env.DEV) void debugDropMath(p.position, css, scale, frameOffset);
+            dropTarget.value = osDropTargetAt(toCss(p.position));
           }
         })
         .then((un) => { if (disposed) un(); else unlisten = un; })
@@ -1138,42 +1102,6 @@ export function ProjectPanel() {
 
   return (
     <div class="panel project-panel">
-      {import.meta.env.DEV && dropDebug.value && (
-        <>
-          {dropDebugCss.value && (
-            <div
-              style={{
-                position: "fixed",
-                left: `${dropDebugCss.value.x - 11}px`,
-                top: `${dropDebugCss.value.y - 11}px`,
-                width: "22px",
-                height: "22px",
-                border: "2px solid #ff3860",
-                borderRadius: "50%",
-                boxShadow: "0 0 0 1px #fff",
-                pointerEvents: "none",
-                zIndex: 99999,
-                transform: "translateZ(0)",
-              }}
-            />
-          )}
-          <pre
-            style={{
-              position: "fixed",
-              right: "8px",
-              bottom: "8px",
-              margin: 0,
-              padding: "6px 8px",
-              background: "rgba(0,0,0,0.85)",
-              color: "#7fdc7f",
-              font: "11px/1.5 monospace",
-              zIndex: 99999,
-              pointerEvents: "none",
-              transform: "translateZ(0)",
-            }}
-          >{dropDebug.value.join("\n")}</pre>
-        </>
-      )}
       <div class="panel-header">
         <span class="panel-header-title">Project</span>
         {proj && (
