@@ -14,7 +14,7 @@ import {
   VIDEO_EXTS,
 } from "../../lib/project";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, cursorPosition } from "@tauri-apps/api/window";
 import {
   buildBinForest,
   sortBins,
@@ -84,17 +84,15 @@ function createDragGhost(label: string): HTMLElement {
   return ghost;
 }
 
-// Resolve an OS file-drop position (physical px, from Tauri's drag-drop event)
-// to a target in the project panel: a bin (its data-bin-id), the panel itself
+// Resolve an OS file-drop point (CSS px, top-left of the webview viewport) to
+// a target in the project panel: a bin (its data-bin-id), the panel itself
 // (ROOT_DROP = top level), or null when the drop is outside the panel or no
 // project is open. Reuses the same hit-test shape as the in-app pointer drag.
-// `scale` is the WINDOW's scale factor — Tauri produced the physical position
-// with it, so it (not window.devicePixelRatio, which can disagree on macOS
-// scaled/Retina displays and put the hit-test at the wrong spot) converts back
-// to the CSS pixels elementFromPoint expects.
-function osDropTargetAt(pos: { x: number; y: number }, scale: number): string | null {
+// Callers own the platform-specific conversion to CSS px — see the drag-drop
+// effect below for why that differs per OS.
+function osDropTargetAt(pos: { x: number; y: number }): string | null {
   if (!project.peek()) return null;
-  const el = document.elementFromPoint(pos.x / scale, pos.y / scale) as HTMLElement | null;
+  const el = document.elementFromPoint(pos.x, pos.y) as HTMLElement | null;
   if (!el) return null;
   const binEl = el.closest("[data-bin-id]");
   if (binEl) return binEl.getAttribute("data-bin-id");
@@ -367,10 +365,25 @@ export function ProjectPanel() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let unlistenScale: (() => void) | undefined;
+    let removeCalibrate: (() => void) | undefined;
     let disposed = false;
-    // The drop position is in physical pixels, scaled by the WINDOW's scale
-    // factor. Cache it (it's async) and track moves between monitors; fall back
-    // to devicePixelRatio until the real factor arrives.
+    // Converting the event position to the CSS px elementFromPoint expects is
+    // platform-specific, because the position Tauri labels PhysicalPosition
+    // isn't trustworthy everywhere (verified against wry 0.55.1 +
+    // tauri-runtime-wry sources, then MEASURED with the dev overlay,
+    // 2026-08-05):
+    // - Windows: WebView2 reports true physical client px → divide by the
+    //   WINDOW's scale factor (not window.devicePixelRatio, which can
+    //   disagree on scaled displays). Straightforward and correct.
+    // - macOS: the event position is LOGICAL points measured from the window
+    //   FRAME's top-left — CSS px shifted down by the titlebar. (Overlay
+    //   measurement: event pos == (cursorPosition − outerPosition)/scale.)
+    //   And the titlebar height is NOT readable from tao: innerPosition ==
+    //   outerPosition (frame origin) AND innerSize == outerSize (overlay
+    //   measured the difference as 0.0) — every "content" API actually
+    //   reports the frame. So the offset is CALIBRATED from ground truth
+    //   instead: see `calibrate` below.
+    const isMac = navigator.userAgent.includes("Macintosh");
     let scale = window.devicePixelRatio || 1;
     try {
       const win = getCurrentWindow();
@@ -378,18 +391,53 @@ export function ProjectPanel() {
       win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
         .then((un) => { if (disposed) un(); else unlistenScale = un; })
         .catch(() => {});
+      // macOS frame→content offset in CSS px, CALIBRATED from a real mouse
+      // event: a pointerdown's clientX/Y is the cursor's true CSS point
+      // (DOM truth, no Tauri involved), and tao can report where the cursor
+      // and the window frame sit on screen at that same instant — the
+      // cursor is stationary at click time, so the async sample is
+      // faithful. offset = (cursorScreen − frameScreen)/scale − clientCSS.
+      // This dodges every lying window API at once; it self-heals on the
+      // next click after a monitor/scale change. Until the first click,
+      // the standard 28 pt titlebar (x: 0 — macOS windows have no side
+      // borders) covers the drag-before-first-click case on a stock window.
+      let frameOffset = { x: 0, y: 28 };
+      let lastCalibration = -Infinity;
+      const calibrate = (e: PointerEvent) => {
+        const now = performance.now();
+        if (now - lastCalibration < 2000) return;
+        lastCalibration = now;
+        const cssX = e.clientX;
+        const cssY = e.clientY;
+        void Promise.all([cursorPosition(), win.outerPosition()])
+          .then(([cur, out]) => {
+            frameOffset = {
+              x: (cur.x - out.x) / (scale || 1) - cssX,
+              y: (cur.y - out.y) / (scale || 1) - cssY,
+            };
+          })
+          .catch(() => {});
+      };
+      if (isMac) window.addEventListener("pointerdown", calibrate, { capture: true, passive: true });
+      removeCalibrate = isMac
+        ? () => window.removeEventListener("pointerdown", calibrate, { capture: true })
+        : undefined;
+      const toCss = (pos: { x: number; y: number }) =>
+        isMac
+          ? { x: pos.x - frameOffset.x, y: pos.y - frameOffset.y }
+          : { x: pos.x / scale, y: pos.y / scale };
       getCurrentWebview()
         .onDragDropEvent((event) => {
           const p = event.payload;
           if (p.type === "leave") {
             dropTarget.value = null;
           } else if (p.type === "drop") {
-            const target = osDropTargetAt(p.position, scale);
+            const target = osDropTargetAt(toCss(p.position));
             dropTarget.value = null;
             if (target !== null) void importDrop(p.paths, target === ROOT_DROP ? undefined : target);
           } else {
             // enter / over
-            dropTarget.value = osDropTargetAt(p.position, scale);
+            dropTarget.value = osDropTargetAt(toCss(p.position));
           }
         })
         .then((un) => { if (disposed) un(); else unlisten = un; })
@@ -397,7 +445,7 @@ export function ProjectPanel() {
     } catch {
       // not running in a Tauri webview
     }
-    return () => { disposed = true; unlisten?.(); unlistenScale?.(); };
+    return () => { disposed = true; unlisten?.(); unlistenScale?.(); removeCalibrate?.(); };
   }, []);
 
   // Clear any leftover filter when a different project is opened — a stale

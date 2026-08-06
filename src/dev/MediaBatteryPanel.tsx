@@ -635,27 +635,67 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
       if (!track || !(await track.canDecode())) return `${name}: no decodable audio`;
       const duration = Math.max(0, (await track.computeDuration()) - Math.max(await track.getFirstTimestamp(), 0));
       const sink = new AudioBufferSink(track);
-      // Deep position for long fixtures, shallow for the 5 s ones.
+      // Deep position for long fixtures, shallow for the 5 s ones. Window
+      // mirrors the engine's fixed GRAIN_SEC (80 ms).
       const start = duration > 60 ? Math.min(250, duration - 10) : 1.0;
-      const end = start + 0.06;
+      const GRAIN = 0.08;
+      const end = start + GRAIN;
 
-      const fetchWindow = async () => {
+      // `from` < start = decoder pre-roll: MP3 frames depend on the previous
+      // frames' bit reservoir, so a cold seek decodes its first frame(s) to
+      // SILENCE. Fetching early and discarding the pre-window samples warms
+      // the decoder; the sweep below measures the dose each format needs.
+      const fetchWindow = async (from = start) => {
         const t0 = performance.now();
         const parts: string[] = [];
+        const collected: { buffer: AudioBuffer; timestamp: number }[] = [];
         let firstTs = Infinity;
         let lastEnd = -Infinity;
         let n = 0;
-        for await (const { buffer, timestamp } of sink.buffers(start, end)) {
+        for await (const wb of sink.buffers(Math.max(0, from), end)) {
           n++;
-          firstTs = Math.min(firstTs, timestamp);
-          lastEnd = Math.max(lastEnd, timestamp + buffer.duration);
-          parts.push(`${timestamp.toFixed(3)}s+${(buffer.duration * 1000).toFixed(1)}ms`);
+          collected.push(wb);
+          firstTs = Math.min(firstTs, wb.timestamp);
+          lastEnd = Math.max(lastEnd, wb.timestamp + wb.buffer.duration);
+          parts.push(`${wb.timestamp.toFixed(3)}s+${(wb.buffer.duration * 1000).toFixed(1)}ms`);
         }
-        return { ms: performance.now() - t0, parts, firstTs, lastEnd, n };
+        return { ms: performance.now() - t0, parts, firstTs, lastEnd, n, collected };
+      };
+
+      // Assemble the window EXACTLY like the engine's grain builder (grid-
+      // aligned copy into one contiguous buffer) and measure how much of it
+      // is actually non-silent — the number behind "this format's grains
+      // sound shorter". Leading/trailing silence here means the sink didn't
+      // cover the requested window, not an engine bug.
+      const audibleSpan = (collected: { buffer: AudioBuffer; timestamp: number }[]): string => {
+        if (collected.length === 0) return "audible=NONE";
+        const rate = collected[0].buffer.sampleRate;
+        const total = Math.round(GRAIN * rate);
+        const startSample = Math.round(start * rate);
+        const mono = new Float32Array(total);
+        for (const { buffer, timestamp } of collected) {
+          const src = buffer.getChannelData(0);
+          let dst = Math.round(timestamp * rate) - startSample;
+          let off = 0;
+          if (dst < 0) { off = -dst; dst = 0; }
+          const count = Math.min(src.length - off, total - dst);
+          for (let i = 0; i < count; i++) mono[dst + i] = src[off + i];
+        }
+        let first = -1;
+        let last = -1;
+        for (let i = 0; i < total; i++) {
+          if (Math.abs(mono[i]) > 1e-4) { if (first < 0) first = i; last = i; }
+        }
+        if (first < 0) return "SILENT";
+        return `[${((first / rate) * 1000).toFixed(1)}..${((last + 1) / rate * 1000).toFixed(1)}]`;
       };
 
       const cold = await fetchWindow(); // first touch: pays any index walk
       const warm = await fetchWindow(); // repeat at the same spot
+      // Pre-roll dose sweep: how far ahead must the fetch start for the
+      // window to come back fully audible?
+      const pre100 = await fetchWindow(start - 0.1);
+      const pre500 = await fetchWindow(start - 0.5);
       const near = performance.now();
       // A short step away — the frame-step pattern (index should stay warm).
       for await (const wb of sink.buffers(start + 0.5, start + 0.56)) void wb;
@@ -663,6 +703,7 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
 
       return `${name}: window[${start.toFixed(3)}..${end.toFixed(3)}] chunks=${cold.n}`
         + ` decodedSpan=[${cold.firstTs.toFixed(3)}..${cold.lastEnd.toFixed(3)}]`
+        + ` audible plain=${audibleSpan(cold.collected)} pre100=${audibleSpan(pre100.collected)} pre500=${audibleSpan(pre500.collected)} of ${GRAIN * 1000}ms`
         + ` fetch cold=${cold.ms.toFixed(0)}ms warm=${warm.ms.toFixed(0)}ms step=${stepMs.toFixed(0)}ms`
         + ` ${cold.parts.join(" ")}`;
     } finally {
@@ -864,7 +905,9 @@ export function MediaBatteryPanel({ onClose }: { onClose: () => void }) {
         const name = basename(path);
         // Any mp3/wav in the fixture dir gets probed — drop a REAL-WORLD file
         // in before running to compare it against the synthetic fixtures.
-        if (!/\.mp3$|\.wav$|^aac\.m4a$|^lossless\.flac$/.test(name)) continue;
+        // control mp4 included: the field repro for grain-length parity was
+        // "a 30 fps MP4 vs its own MP3 extraction".
+        if (!/\.mp3$|\.wav$|^aac\.m4a$|^lossless\.flac$|^control-h264-aac\.mp4$/.test(name)) continue;
         if (isStale()) return;
         const line = await withTimeout(grainProbe(path), 60_000, `grain probe ${name}`)
           .catch((e) => `${name}: probe failed — ${errText(e)}`);

@@ -155,6 +155,9 @@ export function EnginePlayer({ media, onRescue }: {
   useEffect(() => {
     if (stepTick === lastStepTick.current) return;
     lastStepTick.current = stepTick;
+    // Frame-length blips (1/fps), Premiere's model. `fps` is timelineFps, so
+    // fps-less media (MP3 etc.) blips at the captioning profile's rate — an
+    // MP4 and its own MP3 extraction sound identical on the same profile.
     playerRef.current?.playGrain(playbackTime.peek(), 1 / fps);
   }, [stepTick, fps]);
 

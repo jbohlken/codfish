@@ -61,10 +61,12 @@ export interface MediabunnyPlayer {
   setVolume(value: number): void;
   /** Play one short, click-free grain of audio at a zero-based position —
    *  the frame-step blip primitive. `durationSec` defaults to ~60 ms and is
-   *  clamped to [30, 120] ms; pass 1/fps to blip exactly the stepped frame.
-   *  Paused-state only; a newer grain supersedes an in-flight one, so
-   *  rapid-fire calls are safe. No-op while playing or for clips without
-   *  decodable audio. */
+   *  clamped to [30, 120] ms; pass 1/fps to blip exactly the stepped frame
+   *  (Premiere's model — for fps-less media the caller's timelineFps already
+   *  falls back to the captioning profile's rate, so an MP3 blips the same
+   *  as an MP4 cut on the same profile). Paused-state only; a newer grain
+   *  supersedes an in-flight one, so rapid-fire calls are safe. No-op while
+   *  playing or for clips without decodable audio. */
   playGrain(seconds: number, durationSec?: number): void;
   dispose(): void;
 }
@@ -133,6 +135,15 @@ export async function createMediabunnyPlayer(opts: {
     let audioIterator: AsyncGenerator<{ buffer: AudioBuffer; timestamp: number }, void, unknown> | null = null;
     const queuedNodes = new Set<AudioBufferSourceNode>();
 
+    // MP3 frames borrow bits from their predecessors (the bit reservoir), so
+    // a decode starting cold at T yields SILENCE until the decoder warms up.
+    // Probe-measured (battery grain probe, pre-roll dose sweep): CBR MP3
+    // loses its first ~24 ms, VBR MP3 decodes an entire 80 ms window to
+    // silence and needs ~500 ms of warm-up. So every audio fetch starts this
+    // far early and discards the pre-target output — formats that don't need
+    // it are unaffected, and the extra decode costs single-digit ms.
+    const DECODER_PREROLL_SEC = 0.5;
+
     const nativeClock = () =>
       playing ? audioContext.currentTime - ctxAtStart + nativeAtStart : nativeAtStart;
 
@@ -198,6 +209,11 @@ export async function createMediabunnyPlayer(opts: {
       const id = asyncId;
       for await (const { buffer, timestamp } of audioIterator) {
         if (disposed || id !== asyncId) return;
+        // Decoder pre-roll: chunks entirely before the start position exist
+        // only to warm the decoder — never schedule them. (A chunk straddling
+        // the start is handled below: node.start()'s offset form plays just
+        // its in-window tail.)
+        if (timestamp + buffer.duration <= nativeAtStart) continue;
         const node = audioContext.createBufferSource();
         node.buffer = buffer;
         node.connect(gain);
@@ -232,11 +248,17 @@ export async function createMediabunnyPlayer(opts: {
     };
 
     // ── Scrub grains ───────────────────────────────────────────────────────
-    // A grain is a ~60 ms window of decoded audio played through its own gain
-    // node with fast attack/release ramps (no clicks). One grain at a time:
-    // a new one fades the old out; requests arriving while a fetch is in
-    // flight coalesce to the latest (trailing edge), so pointer-move-rate
-    // calls produce the classic NLE zipper, not a backlog.
+    // A grain is a short window of decoded audio played through its own gain
+    // node with fast attack/release ramps (no clicks). Frame steps pass
+    // 1/fps (frame-length blips, Premiere's model); scrubs use this default.
+    // History note: MP3 grains once sounded far shorter than the same
+    // content as MP4 — that was NEVER the requested length (timelineFps
+    // gives fps-less media the profile default, so both asked for 1/fps);
+    // it was decoder-priming silence eating the grain's head, fixed by
+    // DECODER_PREROLL_SEC below. One grain at a time: a new one fades the
+    // old out; requests arriving while a fetch is in flight coalesce to the
+    // latest (trailing edge), so pointer-move-rate calls produce the classic
+    // NLE zipper, not a backlog.
     const GRAIN_SEC = 0.06;
     const GRAIN_FADE = 0.008;
     let grainSeq = 0;
@@ -299,8 +321,11 @@ export async function createMediabunnyPlayer(opts: {
         if (disposed || playing || audioContext.state !== "running" || seq !== grainSeq) return;
         const grainEnd = Math.min(nativeStart + grainSec, nativeEnd);
         const collected: { buffer: AudioBuffer; timestamp: number }[] = [];
-        for await (const wb of audioSink.buffers(nativeStart, grainEnd)) {
-          collected.push(wb);
+        for await (const wb of audioSink.buffers(Math.max(0, nativeStart - DECODER_PREROLL_SEC), grainEnd)) {
+          // Pre-roll chunks warm the decoder but carry no grain audio; the
+          // copy below would clamp them anyway — dropping them here keeps
+          // `collected` window-sized.
+          if (wb.timestamp + wb.buffer.duration > nativeStart) collected.push(wb);
           if (disposed || seq !== grainSeq) return;
         }
         if (disposed || playing || seq !== grainSeq || collected.length === 0) return;
@@ -443,7 +468,7 @@ export async function createMediabunnyPlayer(opts: {
           // again would cancel a seek's still-in-flight frame-iterator
           // restart (seek() is fire-and-forget), freezing video while audio
           // plays — the seek-then-immediately-play race.
-          audioIterator = audioSink.buffers(nativeClock());
+          audioIterator = audioSink.buffers(Math.max(0, nativeClock() - DECODER_PREROLL_SEC));
           void runAudioIterator();
         }
       },

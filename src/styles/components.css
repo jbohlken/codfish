@@ -1491,6 +1491,16 @@ body.rows-dragging * {
   flex-direction: column;
   background: var(--tl-bg);
   overflow: hidden;
+  /* Scrub drags are native text-selection drags as far as the browser is
+     concerned (mousedown isn't preventDefault'ed — deliberately: that would
+     also stop the caption editor's textarea from blurring on a timeline
+     click). The selection was invisible while WebKit painted its highlight
+     under the composited canvas; the #41 layer fix made it show. Nothing in
+     the timeline is meant to be selectable text — turn it off wholesale.
+     -webkit- prefix: WKWebView on the macOS 13.4 floor predates unprefixed
+     support. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .timeline-toolbar {
@@ -1799,6 +1809,12 @@ body.rows-dragging * {
   background: var(--tl-playhead);
   pointer-events: none;
   z-index: 10;
+  /* Force a composited layer (#41, second attempt). The z-index pin alone
+     wasn't enough on macOS: the canvas is GPU-composited and WebKit fails to
+     promote a plain absolutely positioned element overlapping it, so the
+     canvas layer paints on top regardless of stacking order. Once BOTH are
+     composited, layer order follows z-index. */
+  transform: translateZ(0);
 }
 
 .timeline-playhead::before {
@@ -1832,6 +1848,7 @@ body.rows-dragging * {
   margin-left: -13px; /* center the fish on the reader position */
   pointer-events: none;
   z-index: 10; /* alongside the playhead line */
+  transform: translateZ(0); /* same WebKit compositing promotion as the playhead (#41) */
 }
 
 /* The swim (bob + tilt) is a JS-driven transform on this wrapper — a phase
@@ -1892,6 +1909,7 @@ body.rows-dragging * {
   );
   pointer-events: none;
   z-index: 11;
+  transform: translateZ(0); /* same WebKit compositing promotion as the playhead (#41) */
 }
 
 .timeline-resize-indicator--snapped {
