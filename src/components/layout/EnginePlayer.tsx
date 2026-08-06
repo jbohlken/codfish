@@ -155,8 +155,11 @@ export function EnginePlayer({ media, onRescue }: {
   useEffect(() => {
     if (stepTick === lastStepTick.current) return;
     lastStepTick.current = stepTick;
-    playerRef.current?.playGrain(playbackTime.peek(), 1 / fps);
-  }, [stepTick, fps]);
+    // No duration passed — grain size is the engine's one fixed constant.
+    // Sizing blips to 1/fps made the same audio sound different depending on
+    // the container's frame grid (a 30 fps MP4 vs its MP3 extraction).
+    playerRef.current?.playGrain(playbackTime.peek());
+  }, [stepTick]);
 
   return (
     <canvas
