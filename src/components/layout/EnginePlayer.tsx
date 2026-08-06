@@ -155,11 +155,11 @@ export function EnginePlayer({ media, onRescue }: {
   useEffect(() => {
     if (stepTick === lastStepTick.current) return;
     lastStepTick.current = stepTick;
-    // No duration passed — grain size is the engine's one fixed constant.
-    // Sizing blips to 1/fps made the same audio sound different depending on
-    // the container's frame grid (a 30 fps MP4 vs its MP3 extraction).
-    playerRef.current?.playGrain(playbackTime.peek());
-  }, [stepTick]);
+    // Frame-length blips (1/fps), Premiere's model. `fps` is timelineFps, so
+    // fps-less media (MP3 etc.) blips at the captioning profile's rate — an
+    // MP4 and its own MP3 extraction sound identical on the same profile.
+    playerRef.current?.playGrain(playbackTime.peek(), 1 / fps);
+  }, [stepTick, fps]);
 
   return (
     <canvas

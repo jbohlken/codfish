@@ -60,14 +60,14 @@ export interface MediabunnyPlayer {
    *  engine's master gain node. */
   setVolume(value: number): void;
   /** Play one short, click-free grain of audio at a zero-based position —
-   *  the frame-step blip primitive. Grain length is ONE fixed size for every
-   *  format, frame rate, and caller (deliberately not parameterized: sizing
-   *  grains to 1/fps made a 30 fps clip blip differently from its own audio
-   *  extraction, and caption-editing usefulness doesn't depend on the frame
-   *  grid). Paused-state only; a newer grain supersedes an in-flight one, so
-   *  rapid-fire calls are safe. No-op while playing or for clips without
-   *  decodable audio. */
-  playGrain(seconds: number): void;
+   *  the frame-step blip primitive. `durationSec` defaults to ~60 ms and is
+   *  clamped to [30, 120] ms; pass 1/fps to blip exactly the stepped frame
+   *  (Premiere's model — for fps-less media the caller's timelineFps already
+   *  falls back to the captioning profile's rate, so an MP3 blips the same
+   *  as an MP4 cut on the same profile). Paused-state only; a newer grain
+   *  supersedes an in-flight one, so rapid-fire calls are safe. No-op while
+   *  playing or for clips without decodable audio. */
+  playGrain(seconds: number, durationSec?: number): void;
   dispose(): void;
 }
 
@@ -248,23 +248,22 @@ export async function createMediabunnyPlayer(opts: {
     };
 
     // ── Scrub grains ───────────────────────────────────────────────────────
-    // A grain is a FIXED-length window of decoded audio played through its
-    // own gain node with fast attack/release ramps (no clicks). One size for
-    // everything — media type, frame rate, bitrate — tuned for caption work
-    // (sizing steps to 1/fps made a 30 fps MP4 blip differently from its own
-    // MP3 extraction). The default is a starting point; the localStorage
-    // override exists to tune it BY EAR (read at player creation — reopen
-    // the clip after changing it):
-    //   localStorage.setItem("codfish:grainMs", "45")
-    // Clamped to [20, 200] ms. Once a value wins, it becomes the default.
-    const GRAIN_SEC = Math.max(0.02, Math.min(
-      (Number(localStorage.getItem("codfish:grainMs")) || 80) / 1000,
-      0.2,
-    ));
+    // A grain is a short window of decoded audio played through its own gain
+    // node with fast attack/release ramps (no clicks). Frame steps pass
+    // 1/fps (frame-length blips, Premiere's model); scrubs use this default.
+    // History note: MP3 grains once sounded far shorter than the same
+    // content as MP4 — that was NEVER the requested length (timelineFps
+    // gives fps-less media the profile default, so both asked for 1/fps);
+    // it was decoder-priming silence eating the grain's head, fixed by
+    // DECODER_PREROLL_SEC below. One grain at a time: a new one fades the
+    // old out; requests arriving while a fetch is in flight coalesce to the
+    // latest (trailing edge), so pointer-move-rate calls produce the classic
+    // NLE zipper, not a backlog.
+    const GRAIN_SEC = 0.06;
     const GRAIN_FADE = 0.008;
     let grainSeq = 0;
     let grainBusy = false;
-    let grainPending: number | null = null;
+    let grainPending: { t: number; dur: number } | null = null;
     let grainGain: GainNode | null = null;
     let grainNodes: AudioBufferSourceNode[] = [];
     let grainNativeStart = -1;
@@ -291,11 +290,11 @@ export async function createMediabunnyPlayer(opts: {
       setTimeout(() => g.disconnect(), 60);
     };
 
-    const playGrainAt = async (publicT: number) => {
+    const playGrainAt = async (publicT: number, durationSec = GRAIN_SEC) => {
       if (!audioSink || disposed || playing) return;
-      const grainSec = GRAIN_SEC;
+      const grainSec = Math.max(0.03, Math.min(durationSec, 0.12));
       if (grainBusy) {
-        grainPending = publicT;
+        grainPending = { t: publicT, dur: grainSec };
         return;
       }
       grainBusy = true;
@@ -304,12 +303,10 @@ export async function createMediabunnyPlayer(opts: {
         const nativeStart = startTs + Math.max(0, Math.min(publicT, Math.max(0, duration - 0.01)));
         // Re-trigger at (nearly) the same spot while the current grain still
         // sounds — e.g. stepping against the clamped end — would stutter;
-        // skip it. ABSOLUTE threshold, small enough that a real frame step at
-        // any sane rate (5 ms ≈ sub-frame past 200 fps) always clears it —
-        // it must not scale with the grain now that grains outlast high-rate
-        // frame durations.
+        // skip it. Threshold is relative to the grain so consecutive frame
+        // steps (one grain-length apart) are never mistaken for wiggle.
         if (
-          Math.abs(nativeStart - grainNativeStart) < 0.005
+          Math.abs(nativeStart - grainNativeStart) < grainSec * 0.25
           && audioContext.currentTime - grainStartedAt < grainLen
         ) {
           return;
@@ -386,7 +383,7 @@ export async function createMediabunnyPlayer(opts: {
         if (grainPending !== null && !disposed && !playing) {
           const next = grainPending;
           grainPending = null;
-          void playGrainAt(next);
+          void playGrainAt(next.t, next.dur);
         }
       }
     };
@@ -501,8 +498,8 @@ export async function createMediabunnyPlayer(opts: {
       setVolume(value) {
         gain.gain.value = Math.max(0, Math.min(1, value));
       },
-      playGrain(seconds) {
-        void playGrainAt(seconds);
+      playGrain(seconds, durationSec) {
+        void playGrainAt(seconds, durationSec);
       },
       dispose() {
         if (disposed) return;
