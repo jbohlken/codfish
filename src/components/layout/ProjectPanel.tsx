@@ -111,6 +111,7 @@ async function debugDropMath(
   eventPos: { x: number; y: number },
   css: { x: number; y: number },
   scale: number,
+  titlebarCss: number,
 ) {
   try {
     const win = getCurrentWindow();
@@ -121,7 +122,7 @@ async function debugDropMath(
     ]);
     dropDebugCss.value = css;
     dropDebug.value = [
-      `hit-test css=(${css.x.toFixed(0)}, ${css.y.toFixed(0)})  scale=${scale}`,
+      `hit-test css=(${css.x.toFixed(0)}, ${css.y.toFixed(0)})  scale=${scale}  titlebar=${titlebarCss.toFixed(1)}`,
       `event pos=(${eventPos.x.toFixed(0)}, ${eventPos.y.toFixed(0)})  event/scale=(${(eventPos.x / scale).toFixed(0)}, ${(eventPos.y / scale).toFixed(0)})`,
       `cursor=(${cur.x}, ${cur.y})  inner=(${inner.x}, ${inner.y})  outer=(${outer.x}, ${outer.y})`,
       `cursor-inner /scale=(${((cur.x - inner.x) / scale).toFixed(0)}, ${((cur.y - inner.y) / scale).toFixed(0)})  cursor-outer /scale=(${((cur.x - outer.x) / scale).toFixed(0)}, ${((cur.y - outer.y) / scale).toFixed(0)})`,
@@ -402,90 +403,59 @@ export function ProjectPanel() {
     // Converting the event position to the CSS px elementFromPoint expects is
     // platform-specific, because the position Tauri labels PhysicalPosition
     // isn't trustworthy everywhere (verified against wry 0.55.1 +
-    // tauri-runtime-wry sources):
+    // tauri-runtime-wry sources, then MEASURED with the dev overlay,
+    // 2026-08-05):
     // - Windows: WebView2 reports true physical client px → divide by the
     //   WINDOW's scale factor (not window.devicePixelRatio, which can
     //   disagree on scaled displays). Straightforward and correct.
-    // - macOS: wry passes NSDraggingInfo's draggingLocation through with a
-    //   hand-rolled bottom-left→top-left flip that leaves the y off by a
-    //   constant (its own synthetic-mouse path uses convertPoint_fromView
-    //   instead — the drag path forgot). So the event position is IGNORED on
-    //   macOS: each enter/over hit-tests ground truth instead — tao's global
-    //   cursorPosition minus the window's content-area origin, both physical
-    //   screen px from the same source. The drop then consumes whatever
-    //   target is currently highlighted, so the import target is exactly
-    //   what the user saw under the cursor at release (a fresh query at drop
-    //   time could sample the cursor mid-flick, milliseconds AFTER release).
+    // - macOS: the event position is LOGICAL points measured from the window
+    //   FRAME's top-left — CSS px shifted down by the titlebar. (Overlay
+    //   measurement: event pos == (cursorPosition − outerPosition)/scale,
+    //   and tao's innerPosition == outerPosition — it returns the frame
+    //   origin too, which is why hit-testing "ground truth" via cursor−inner
+    //   had the IDENTICAL offset.) Correction is exact: subtract the
+    //   titlebar height, (outerSize − innerSize)/scale, from y. x needs
+    //   nothing — macOS windows have no side borders.
     const isMac = navigator.userAgent.includes("Macintosh");
     let scale = window.devicePixelRatio || 1;
-    // Serializes the async macOS queries: only the newest may write the
-    // highlight, and drop/leave bump it so a stale in-flight query can't
-    // resurrect a highlight after the drag ended.
-    let querySeq = 0;
     try {
       const win = getCurrentWindow();
       win.scaleFactor().then((s) => { scale = s; }).catch(() => {});
       win.onScaleChanged(({ payload }) => { scale = payload.scaleFactor; })
         .then((un) => { if (disposed) un(); else unlistenScale = un; })
         .catch(() => {});
-      // Content-area origin (physical screen px), cached per drag session —
-      // the window can't move while it's the drop target of a Finder drag.
-      let contentOrigin: { x: number; y: number } | null = null;
-      const macCssPoint = async () => {
-        const [cur, origin] = await Promise.all([
-          cursorPosition(),
-          contentOrigin ? Promise.resolve(contentOrigin) : win.innerPosition(),
-        ]);
-        contentOrigin = origin;
-        return { x: (cur.x - origin.x) / scale, y: (cur.y - origin.y) / scale };
-      };
-      const macUpdateHighlight = (eventPos: { x: number; y: number }) => {
-        const seq = ++querySeq;
-        macCssPoint()
-          .then((css) => {
-            if (!disposed && seq === querySeq) {
-              dropTarget.value = osDropTargetAt(css);
-              if (import.meta.env.DEV) void debugDropMath(eventPos, css, scale);
-            }
+      // Titlebar height in CSS px (macOS only). Fetched at listener setup
+      // and refreshed on every drag-enter — cheap, and covers monitor/scale
+      // moves between drags. Until the first query lands, 28 (the standard
+      // macOS titlebar in points) beats 0 by construction.
+      let titlebarCss = isMac ? 28 : 0;
+      const refreshTitlebar = () => {
+        void Promise.all([win.outerSize(), win.innerSize()])
+          .then(([o, i]) => {
+            titlebarCss = Math.max(0, o.height - i.height) / (scale || 1);
           })
           .catch(() => {});
       };
+      if (isMac) refreshTitlebar();
+      const toCss = (pos: { x: number; y: number }) =>
+        isMac
+          ? { x: pos.x, y: pos.y - titlebarCss }
+          : { x: pos.x / scale, y: pos.y / scale };
       getCurrentWebview()
         .onDragDropEvent((event) => {
           const p = event.payload;
           if (p.type === "leave") {
-            querySeq++;
-            contentOrigin = null;
             dropTarget.value = null;
           } else if (p.type === "drop") {
-            querySeq++;
-            let target = isMac
-              ? dropTarget.peek()
-              : osDropTargetAt({ x: p.position.x / scale, y: p.position.y / scale });
+            const target = osDropTargetAt(toCss(p.position));
             dropTarget.value = null;
-            contentOrigin = null;
-            if (isMac && target === null) {
-              // Instant drop before any over-query resolved: fall back to a
-              // fresh query (the mid-flick risk beats dropping the drop).
-              void macCssPoint()
-                .then((css) => {
-                  const t = osDropTargetAt(css);
-                  if (t !== null) void importDrop(p.paths, t === ROOT_DROP ? undefined : t);
-                })
-                .catch(() => {});
-              return;
-            }
             if (target !== null) void importDrop(p.paths, target === ROOT_DROP ? undefined : target);
           } else {
             // enter / over
-            if (isMac) {
-              if (p.type === "enter") contentOrigin = null; // window may have moved since the last drag
-              macUpdateHighlight(p.position);
-            } else {
-              const css = { x: p.position.x / scale, y: p.position.y / scale };
-              dropTarget.value = osDropTargetAt(css);
-              if (import.meta.env.DEV) void debugDropMath(p.position, css, scale);
-            }
+            if (isMac && p.type === "enter") refreshTitlebar();
+            const css = toCss(p.position);
+            dropTarget.value = osDropTargetAt(css);
+            if (import.meta.env.DEV) void debugDropMath(p.position, css, scale, titlebarCss);
           }
         })
         .then((un) => { if (disposed) un(); else unlisten = un; })
