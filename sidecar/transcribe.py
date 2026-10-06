@@ -47,7 +47,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 # ── stdout protocol setup ─────────────────────────────────────────────────────
 # Force UTF-8 so non-ASCII paths don't blow up on Windows.
@@ -121,6 +121,40 @@ with contextlib.redirect_stdout(sys.stderr):
             _orig_popen_init(self, *args, **kwargs)
 
         subprocess.Popen.__init__ = _patched_popen_init  # type: ignore[method-assign]
+
+    # macOS: matplotlib (dragged in by pyannote → lightning → torchmetrics)
+    # builds its font cache on first import by parsing
+    # `system_profiler -xml SPFontsDataType`, and does `d["_items"]` with no
+    # guard. On some Macs (seen on a managed work machine) that plist has no
+    # "_items" key, so the import dies with KeyError and takes model loading
+    # with it. Import font_manager here, once, with plistlib.loads wrapped so
+    # a malformed result raises InvalidFileException — which matplotlib
+    # already catches, falling back to scanning the font directories. After
+    # the first run the cache (~/.matplotlib/fontlist-*.json) is reused and
+    # system_profiler isn't called again.
+    if sys.platform == "darwin":
+        import plistlib
+
+        _orig_plist_loads = plistlib.loads
+
+        def _guarded_plist_loads(*args, **kwargs):
+            result = _orig_plist_loads(*args, **kwargs)
+            if not (
+                isinstance(result, list)
+                and len(result) == 1
+                and isinstance(result[0], dict)
+                and "_items" in result[0]
+            ):
+                raise plistlib.InvalidFileException()
+            return result
+
+        plistlib.loads = _guarded_plist_loads
+        try:
+            import matplotlib.font_manager  # noqa: E402, F401
+        except ImportError:
+            pass
+        finally:
+            plistlib.loads = _orig_plist_loads
 
     import torch  # noqa: E402
     import whisperx  # noqa: E402
